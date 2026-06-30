@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "skills": {
+    "academic-ppt-style": {
+      "source": "dream-rec/academic-ppt-skill",
+      "sourceType": "github",
+      "skillPath": "skills/academic-ppt-style/SKILL.md",
+      "computedHash": "41f78b24f31c9ea330ecdb0665de4d32c2ddbba7ecb2a6c76c3d35259746bef2"
+    }
+  }
+}

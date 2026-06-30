@@ -1,0 +1,17 @@
+.venv/
+node_modules/
+dist/
+build/
+tsconfig.tsbuildinfo
+__pycache__/
+*.pyc
+.DS_Store
+.dreampaper/
+*.log
+PaperBananaBench/
+PaperBanana-AIMSLab/
+.trellis/
+.cursor/
+.codex
+.agents
+AGENTS.md

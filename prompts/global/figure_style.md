@@ -1,0 +1,2 @@
+Create publication-quality scientific figures with clear structure, readable labels, restrained colors, and no decorative clutter. Template images are few-shot references for layout, composition, information density, and visual intent. They are not base images to copy or edit directly. Do not add a paper caption unless the user explicitly asks for one. Do not turn the figure title into a large in-image headline unless requested.
+
