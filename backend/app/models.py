@@ -46,6 +46,9 @@ class AppConfig(BaseModel):
     version: int = 1
     active_design_profile: str = "design-default"
     active_implement_profile: str = "implement-default"
+    proxy_url: str | None = "http://127.0.0.1:7890"
+    ppt_page_plan_concurrency: int | None = Field(default=None, ge=1, le=20)
+    ppt_image_concurrency: int | None = Field(default=None, ge=1, le=20)
     model_profiles: list[ModelProfile] = Field(default_factory=list)
 
 
@@ -53,6 +56,9 @@ class PublicAppConfig(BaseModel):
     version: int = 1
     active_design_profile: str
     active_implement_profile: str
+    proxy_url: str | None = None
+    ppt_page_plan_concurrency: int | None = None
+    ppt_image_concurrency: int | None = None
     model_profiles: list[PublicModelProfile]
 
 
@@ -91,7 +97,8 @@ class PaperFigurePayload(BaseModel):
 
 class PptSlidePayload(BaseModel):
     template_asset_id: str
-    material_text: str
+    material_text: str = ""
+    material_asset_ids: list[str] = Field(default_factory=list, max_length=10)
     page_count: int = Field(default=1, ge=1, le=20)
     custom_prompt: str | None = None
 
@@ -106,13 +113,22 @@ class JobImage(BaseModel):
     url: str
 
 
+class JobEvent(BaseModel):
+    stage: str
+    message: str
+    status: Literal["pending", "running", "succeeded", "failed"] = "running"
+    timestamp: str
+
+
 class JobRecord(BaseModel):
     id: str
     mode: JobMode
     status: Literal["queued", "running", "succeeded", "failed"]
     message: str | None = None
+    stage: str = "queued"
     created_at: str
     updated_at: str
     images: list[JobImage] = Field(default_factory=list)
+    events: list[JobEvent] = Field(default_factory=list)
     internal_artifacts: dict[str, Any] = Field(default_factory=dict)
 

@@ -31,11 +31,14 @@ class AssetStore:
         self.index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2), encoding="utf-8")
         return AssetUploadResponse(id=asset_id, filename=upload.filename or filename, mime_type=mime_type, url=f"/api/assets/{asset_id}")
 
-    def get(self, asset_id: str) -> tuple[Path, str]:
+    def metadata(self, asset_id: str) -> dict[str, str]:
         index = self._load_index()
         if asset_id not in index:
             raise HTTPException(status_code=404, detail="Asset not found")
-        item = index[asset_id]
+        return index[asset_id]
+
+    def get(self, asset_id: str) -> tuple[Path, str]:
+        item = self.metadata(asset_id)
         return self.root / item["path"], item.get("mime_type") or "application/octet-stream"
 
     def response(self, asset_id: str) -> FileResponse:

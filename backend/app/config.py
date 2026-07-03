@@ -11,8 +11,23 @@ def app_home() -> Path:
     return Path(os.getenv("DREAMPAPER_HOME", "~/.dreampaper")).expanduser()
 
 
+DEFAULT_PROXY_URL = "http://127.0.0.1:7890"
+
+
+def normalize_proxy_url(proxy_url: str | None) -> str | None:
+    value = (proxy_url or "").strip()
+    if not value:
+        return None
+    if "://" not in value:
+        if value.isdigit():
+            return f"http://127.0.0.1:{value}"
+        return f"http://{value}"
+    return value
+
+
 def default_config() -> AppConfig:
     return AppConfig(
+        proxy_url=DEFAULT_PROXY_URL,
         model_profiles=[
             ModelProfile(
                 id="design-default",
@@ -34,9 +49,10 @@ def default_config() -> AppConfig:
                 timeout_seconds=300,
                 max_retries=1,
                 output_defaults={
-                    "size": "3840x2160",
-                    "quality": "high",
+                    "size": "1200x675",
+                    "quality": "auto",
                     "output_format": "png",
+                    "response_format": "b64_json",
                     "aspect_ratio": "16:9",
                     "image_size": "4K",
                     "thinking_level": "high",
@@ -67,7 +83,7 @@ class ConfigStore:
             if not next_profile.api_key:
                 next_profile = next_profile.model_copy(update={"api_key": keys_by_id.get(profile.id)})
             profiles.append(next_profile)
-        saved = incoming.model_copy(update={"model_profiles": profiles})
+        saved = incoming.model_copy(update={"model_profiles": profiles, "proxy_url": normalize_proxy_url(incoming.proxy_url)})
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.path.write_text(saved.model_dump_json(indent=2), encoding="utf-8")
         try:
@@ -82,8 +98,14 @@ class ConfigStore:
             version=config.version,
             active_design_profile=config.active_design_profile,
             active_implement_profile=config.active_implement_profile,
+            proxy_url=normalize_proxy_url(config.proxy_url),
+            ppt_page_plan_concurrency=config.ppt_page_plan_concurrency,
+            ppt_image_concurrency=config.ppt_image_concurrency,
             model_profiles=[self._public_profile(profile) for profile in config.model_profiles],
         )
+
+    def proxy_url(self) -> str | None:
+        return normalize_proxy_url(self.load().proxy_url)
 
     def active_profile(self, role: str) -> ModelProfile:
         config = self.load()
