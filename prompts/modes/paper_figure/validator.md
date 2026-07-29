@@ -8,7 +8,10 @@ Common checks:
 
 Diagram checks:
 - `diagram_spec` contains modules, entities, connections, flow direction, grouping hierarchy, arrow routing, and label strategy.
+- Modules and connections should reflect multi-stage structure when the user brief is multi-step (avoid over-collapsed 3–4 box pipelines).
 - Connections preserve source/target direction and avoid hallucinated modules or reversed flows.
+- `grouping_hierarchy` should describe stages/lanes when multiple phases exist.
+- `implement_prompt` should describe multi-stage layout comparable to academic system figures, not a single row of empty cards.
 
 Plot/chart checks:
 - `plot_spec` contains chart type, data fields, axes, units, series/categories, legend, statistical annotations, and data integrity rules.

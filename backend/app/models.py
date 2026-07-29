@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field
 
 DesignProtocol = Literal["openai_chat", "openai_responses", "anthropic_messages"]
 ImplementProtocol = Literal["image2", "banana2", "banna2"]
-ModelRole = Literal["design", "implement"]
+SearchProtocol = Literal["duckduckgo_html", "tavily", "openai_chat"]
+ModelRole = Literal["design", "implement", "search"]
 JobMode = Literal["paper_figure", "ppt_slide"]
 
 
@@ -15,7 +16,7 @@ class ModelProfile(BaseModel):
     id: str
     role: ModelRole
     name: str
-    protocol: DesignProtocol | ImplementProtocol
+    protocol: DesignProtocol | ImplementProtocol | SearchProtocol
     base_url: str
     model: str
     api_key: str | None = None
@@ -46,6 +47,7 @@ class AppConfig(BaseModel):
     version: int = 1
     active_design_profile: str = "design-default"
     active_implement_profile: str = "implement-default"
+    active_search_profile: str = "search-default"
     proxy_url: str | None = "http://127.0.0.1:7890"
     ppt_page_plan_concurrency: int | None = Field(default=None, ge=1, le=20)
     ppt_image_concurrency: int | None = Field(default=None, ge=1, le=20)
@@ -56,6 +58,7 @@ class PublicAppConfig(BaseModel):
     version: int = 1
     active_design_profile: str
     active_implement_profile: str
+    active_search_profile: str = "search-default"
     proxy_url: str | None = None
     ppt_page_plan_concurrency: int | None = None
     ppt_image_concurrency: int | None = None

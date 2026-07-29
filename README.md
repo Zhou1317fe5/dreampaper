@@ -1,76 +1,116 @@
-# dreampaper
+<p align="center">
+  <img src="static/favor.png" width="112" alt="dreampaper logo">
+</p>
 
-`dreampaper` 是一个本地运行的论文配图和 PPT 单页图片生成工具。首版使用 FastAPI + React，通过浏览器访问本机服务，支持 `paper_figure` 和 `ppt_slide` 两种工作流。
+<h1 align="center">DreamPaper</h1>
 
-## 功能概览
+<p align="center"><strong>本地科研配图与学术幻灯片，从模板到成图一步到位。</strong></p>
 
-- Paper figure：从 `PaperBananaBench` 手动选择 1-3 张 template 作为 few-shot 参考，输入图名和章节/方法描述后生成论文配图。
-- PPT slide：上传一张单页 PPT template 图片，输入资料和页数后生成有序单页图片。
-- 模型配置：design model 和 implement model 分开配置，支持自定义协议、`base_url`、`api_key` 和模型名。
-- 本地持久化：模型配置保存到 `~/.dreampaper/config.json`，不会写入仓库文件。
-- 输出控制：`image2` 使用尺寸、质量和输出格式；`banana2` 使用宽高比、清晰度、thinking level 和 mime type。
+<p align="center">
+  <img alt="Python 3.10+" src="https://img.shields.io/badge/Python-3.10%2B-3776AB?logo=python&logoColor=white">
+  <img alt="FastAPI 0.115+" src="https://img.shields.io/badge/FastAPI-0.115%2B-009688?logo=fastapi&logoColor=white">
+  <img alt="React 19" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black">
+  <img alt="Vite 7" src="https://img.shields.io/badge/Vite-7-646CFF?logo=vite&logoColor=white">
+  <img alt="TypeScript 5.8" src="https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white">
+</p>
+
+<p align="center">English: <a href="README_EN.md">README_EN.md</a></p>
+
+---
+
+## 核心优势
+
+- **模板驱动**：科研图以 PaperBananaBench 参考图作 few-shot；幻灯片以你上传的母版锁定版式与配色
+- **两阶段设计**：先抽结构 / 母版，再填内容，减少「抄模板文案」与样式漂移
+- **模型自选**：Design / Implement / Search 分配置，兼容 OpenAI / Anthropic / image2 / banana2 等协议
+- **幻灯片视觉 grounding**：从资料中识别产品与仪器，检索外观描述，引导制图模型画实物而非文字方框
+- **全程本地**：配置与产物落在 `~/.dreampaper/`，密钥不进仓库
+
+---
+
+## 效果展示
+
+### Web UI
+
+| 科研图 | 幻灯片 | 设置 |
+| --- | --- | --- |
+| ![figure ui](examples/ui/figure.jpg) | ![slide ui](examples/ui/slide.jpg) | ![settings ui](examples/ui/settings.jpg) |
+
+### 科研绘图
+
+|  |  |  |  |
+| --- | --- | --- | --- |
+| ![fig1](examples/figure/paper_figure_1.png) | ![fig2](examples/figure/paper_figure_2.png) | ![fig3](examples/figure/paper_figure_3.png) | ![fig4](examples/figure/paper_figure_4.png) |
+
+### 幻灯片
+
+|  |  |  |
+| --- | --- | --- |
+| ![sA1](examples/slide/slideA_1.png) | ![sA2](examples/slide/slideA_2.png) | ![sA3](examples/slide/slideA_3.png) |
+| ![sB1](examples/slide/slideB_1.png) | ![sB2](examples/slide/slideB_2.png) | ![sB3](examples/slide/slideB_3.png) |
+| ![sC1](examples/slide/slideC_1.png) | ![sC2](examples/slide/slideC_2.png) | ![sC3](examples/slide/slideC_3.png) |
+
+---
+
+## 准备 Template 库（科研图）
+
+本仓库**不附带** PaperBananaBench。科研图模式需要本地参考图库。
+
+1. 下载 [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench)（约 266MB）
+2. 解压到仓库根目录，结构如下：
+
+```text
+dream-paper/
+  PaperBananaBench/
+    diagram/
+      ref.json
+      images/…
+    plot/
+      ref.json
+      images/…
+```
+
+3. 重启后端后，科研图页即可选择 1–3 张 template
+
+> 仅用幻灯片模式时可不下载。
+
+---
 
 ## 本地启动
 
-准备 Python 环境并安装后端依赖：
-
 ```bash
 python3 -m venv .venv
-source .venv/bin/activate
+source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
-```
-
-安装前端依赖：
-
-```bash
 npm install
 ```
 
-启动后端：
-
 ```bash
+# 终端 1 — 后端
 uvicorn backend.app.main:app --reload --host 127.0.0.1 --port 8000
-```
 
-启动前端：
-
-```bash
+# 终端 2 — 前端
 npm run dev
 ```
 
-打开 Vite 输出的本地地址，通常是 `http://127.0.0.1:5173`。
+打开 http://127.0.0.1:5173
 
-## 模型配置
+---
 
-进入页面左侧的“模型配置”，分别填写：
+## 使用
 
-- Design model：选择 `openai_responses`、`openai_chat` 或 `anthropic_messages`，填写 `base_url`、模型名和 API key。
-- Implement model：选择 `image2` 或 `banana2`，填写 `base_url`、模型名、API key 和输出控制项。
+1. **设置**：配置 Design / Implement（及可选 Search、代理、并发），保存  
+2. **科研图**：选 template → 填标题与方法 → 生成  
+3. **幻灯片**：上传母版图 → 填资料与页数 → 生成  
 
-配置保存后写入 `~/.dreampaper/config.json`。前端再次读取配置时 API key 默认脱敏，只显示是否已配置和末尾提示。
+| 路径 | 内容 |
+| --- | --- |
+| `~/.dreampaper/config.json` | 模型配置 |
+| `~/.dreampaper/assets/` | 上传文件 |
+| `~/.dreampaper/jobs/` | 任务记录与出图 |
 
-## 基本工作流
+---
 
-### Paper figure
+## 致谢
 
-1. 选择 `Paper figure`。
-2. 输入 figure title 和章节/方法描述。
-3. 在 template gallery 中选择 1-3 张参考图。
-4. 可调整宽高比、布局跟随和风格强度。
-5. 点击生成后等待任务完成，在结果区查看图片。
-
-### PPT slide
-
-1. 选择 `PPT slide`。
-2. 上传一张单页 PPT template 图片。
-3. 输入资料/描述和目标页数。
-4. 点击生成后，系统先分析母版元素，再按页码顺序生成图片。
-5. 结果区按页面展示最终图片。
-
-## 本地文件
-
-- 配置文件：`~/.dreampaper/config.json`
-- 上传素材：`~/.dreampaper/assets/`
-- 任务记录和生成图片：`~/.dreampaper/jobs/`
-
-这些文件都在用户本机目录中，不应提交到仓库。
+科研图 template 来自 [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench)（[PaperBanana](https://github.com/dwzhu-pku/PaperBanana)）。

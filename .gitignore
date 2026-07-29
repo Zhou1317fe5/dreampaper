@@ -6,12 +6,28 @@ tsconfig.tsbuildinfo
 __pycache__/
 *.pyc
 .DS_Store
-.dreampaper/
 *.log
+
+# 本地密钥与运行产物（永远不入库）
+.dreampaper/
+.env
+.env.*
+!.env.example
+*.pem
+id_rsa
+id_ed25519
+
+# 大数据 / 第三方基准（需用户自行下载）
 PaperBananaBench/
 PaperBanana-AIMSLab/
+
+# 本地 agent / 编辑器
 .trellis/
 .cursor/
 .codex
 .agents
+.claude/
 AGENTS.md
+
+# 桌面端（Tauri）改造尚未完成，本仓库当前只发布网页版
+src-tauri/

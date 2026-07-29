@@ -18,6 +18,10 @@ class ModelAdapterError(RuntimeError):
 
 SENSITIVE_HEADER_NAMES = {"authorization", "x-api-key", "x-goog-api-key"}
 RETRY_STATUS_CODES = {429, 500, 502, 503, 504}
+# 制图网关（如 WisArt）同步出图时 nginx 常在 60–300s 返回 502，需更长读超时与退避重试
+DEFAULT_CONNECT_TIMEOUT_SECONDS = 30.0
+MIN_IMAGE_TIMEOUT_SECONDS = 120
+MAX_BACKOFF_SECONDS = 30
 
 
 def _redact_header_value(name: str, value: str) -> str:
@@ -82,10 +86,47 @@ def image_to_b64(path) -> str:
     return base64.b64encode(path.read_bytes()).decode("ascii")
 
 
+def build_timeout(timeout_seconds: int | float | None, *, minimum: int | None = None) -> httpx.Timeout:
+    """分离 connect / read 超时：连接宜短，读超时覆盖同步出图等待。"""
+    read = float(timeout_seconds or 120)
+    if minimum is not None:
+        read = max(read, float(minimum))
+    return httpx.Timeout(
+        connect=DEFAULT_CONNECT_TIMEOUT_SECONDS,
+        read=read,
+        write=min(60.0, read),
+        pool=DEFAULT_CONNECT_TIMEOUT_SECONDS,
+    )
+
+
 def create_async_client(timeout: httpx.Timeout, proxy_url: str | None = None) -> httpx.AsyncClient:
     if proxy_url:
         return httpx.AsyncClient(timeout=timeout, proxy=proxy_url)
     return httpx.AsyncClient(timeout=timeout)
+
+
+def retry_backoff_seconds(attempt: int, status_code: int | None = None) -> float:
+    base = min(2**attempt, MAX_BACKOFF_SECONDS)
+    # 网关 502/503 往往表示上游仍在出图或短暂过载，多等一会再重试
+    if status_code in {502, 503, 504}:
+        return min(10 * (attempt + 1), MAX_BACKOFF_SECONDS)
+    if status_code == 429:
+        return min(15 * (attempt + 1), MAX_BACKOFF_SECONDS)
+    return float(base)
+
+
+def format_http_error(kind: str, status_code: int, body: str) -> str:
+    snippet = (body or "").strip().replace("\n", " ")[:280]
+    if status_code == 502:
+        return (
+            f"{kind} failed: HTTP 502 Bad Gateway. "
+            "上游网关在同步等待出图时断开（图片可能已在服务端生成）。"
+            "请提高 implement 超时（建议 ≥600s）、增加重试，并优先使用 response_format=url。"
+            f" body={snippet}"
+        )
+    if status_code in {503, 504}:
+        return f"{kind} failed: HTTP {status_code}. 上游维护或超时，请稍后重试。 body={snippet}"
+    return f"{kind} failed: HTTP {status_code} {snippet}"
 
 
 async def post_json_with_retries(
@@ -95,19 +136,25 @@ async def post_json_with_retries(
     headers: dict[str, str],
     timeout_seconds: int | None = None,
     proxy_url: str | None = None,
+    *,
+    minimum_timeout: int | None = None,
 ) -> httpx.Response:
     merged_headers = {"Content-Type": "application/json", **profile.headers, **headers}
     attempts = max(1, profile.max_retries + 1)
     effective_timeout = timeout_seconds or profile.timeout_seconds
-    timeout = httpx.Timeout(effective_timeout)
+    timeout = build_timeout(effective_timeout, minimum=minimum_timeout)
     last_error: httpx.TimeoutException | httpx.TransportError | None = None
+    last_response: httpx.Response | None = None
 
     for attempt in range(attempts):
         try:
             async with create_async_client(timeout, proxy_url) as client:
                 response = await client.post(url, json=payload, headers=merged_headers)
+            last_response = response
             if response.status_code not in RETRY_STATUS_CODES or attempt == attempts - 1:
                 return response
+            await asyncio.sleep(retry_backoff_seconds(attempt, response.status_code))
+            continue
         except httpx.TimeoutException as exc:
             last_error = exc
             if attempt == attempts - 1:
@@ -116,12 +163,17 @@ async def post_json_with_retries(
             last_error = exc
             if attempt == attempts - 1:
                 break
-        await asyncio.sleep(min(2**attempt, 8))
+        await asyncio.sleep(retry_backoff_seconds(attempt))
 
     if isinstance(last_error, httpx.TimeoutException):
-        raise ModelAdapterError(f"模型请求超时：{int(effective_timeout)} 秒内未收到响应") from last_error
+        raise ModelAdapterError(
+            f"模型请求超时：读超时 {int(timeout.read)} 秒内未收到完整响应。"
+            "同步制图接口可能需要更长时间，请在 Model 配置中提高 implement 超时。"
+        ) from last_error
     if last_error is not None:
         raise ModelAdapterError(f"模型请求网络错误：{last_error.__class__.__name__}") from last_error
+    if last_response is not None:
+        return last_response
     raise ModelAdapterError("模型请求失败：未收到有效响应")
 
 
@@ -263,37 +315,90 @@ class ImplementClient:
         defaults = {key: value for key, value in {**profile.output_defaults, **output_overrides}.items() if value not in (None, "")}
         headers = {"Authorization": f"Bearer {require_api_key(profile)}"}
         image_fields = self._image2_fields(defaults)
+        # 同步出图可能远超 design 超时；image2 强制至少 2 分钟读超时
+        timeout = build_timeout(profile.timeout_seconds, minimum=MIN_IMAGE_TIMEOUT_SECONDS)
         if reference_images:
             url = f"{base}/images/edits"
             files = [("image", (img["filename"], base64.b64decode(img["b64"]), img["mime_type"])) for img in reference_images]
             data = {"model": profile.model, "prompt": prompt, **{key: str(value) for key, value in image_fields.items()}}
-            async with create_async_client(httpx.Timeout(profile.timeout_seconds), proxy_url) as client:
-                response = await client.post(url, data=data, files=files, headers={**profile.headers, **headers})
+            response = await self._post_multipart_with_retries(profile, url, data, files, headers, timeout, proxy_url)
         else:
             url = f"{base}/images/generations"
             payload = {"model": profile.model, "prompt": prompt, **image_fields}
-            response = await post_json_with_retries(profile, url, payload, headers, proxy_url=proxy_url)
+            response = await post_json_with_retries(
+                profile,
+                url,
+                payload,
+                headers,
+                proxy_url=proxy_url,
+                minimum_timeout=MIN_IMAGE_TIMEOUT_SECONDS,
+            )
         if response.status_code >= 400:
-            raise ModelAdapterError(f"Image request failed: HTTP {response.status_code} {response.text[:400]}")
-        data = response.json()
-        image = data.get("data", [{}])[0]
+            raise ModelAdapterError(format_http_error("Image request", response.status_code, response.text))
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise ModelAdapterError(f"Image response is not JSON: {response.text[:200]}") from exc
+        image = data.get("data", [{}])[0] if isinstance(data.get("data"), list) and data.get("data") else {}
+        if not isinstance(image, dict):
+            image = {}
         if image.get("b64_json"):
             return image["b64_json"]
         if image.get("url"):
-            async with create_async_client(httpx.Timeout(profile.timeout_seconds), proxy_url) as client:
+            async with create_async_client(timeout, proxy_url) as client:
                 image_response = await client.get(image["url"])
             if image_response.status_code >= 400:
-                raise ModelAdapterError(f"Image download failed: HTTP {image_response.status_code}")
+                raise ModelAdapterError(format_http_error("Image download", image_response.status_code, image_response.text))
             return base64.b64encode(image_response.content).decode("ascii")
         raise ModelAdapterError("Image response did not contain b64_json or url")
 
+    async def _post_multipart_with_retries(
+        self,
+        profile: ModelProfile,
+        url: str,
+        data: dict[str, str],
+        files: list[Any],
+        headers: dict[str, str],
+        timeout: httpx.Timeout,
+        proxy_url: str | None,
+    ) -> httpx.Response:
+        attempts = max(1, profile.max_retries + 1)
+        last_error: httpx.TimeoutException | httpx.TransportError | None = None
+        last_response: httpx.Response | None = None
+        for attempt in range(attempts):
+            try:
+                async with create_async_client(timeout, proxy_url) as client:
+                    response = await client.post(url, data=data, files=files, headers={**profile.headers, **headers})
+                last_response = response
+                if response.status_code not in RETRY_STATUS_CODES or attempt == attempts - 1:
+                    return response
+                await asyncio.sleep(retry_backoff_seconds(attempt, response.status_code))
+                continue
+            except httpx.TimeoutException as exc:
+                last_error = exc
+                if attempt == attempts - 1:
+                    break
+            except httpx.TransportError as exc:
+                last_error = exc
+                if attempt == attempts - 1:
+                    break
+            await asyncio.sleep(retry_backoff_seconds(attempt))
+        if isinstance(last_error, httpx.TimeoutException):
+            raise ModelAdapterError(f"模型请求超时：读超时 {int(timeout.read)} 秒内未收到完整响应") from last_error
+        if last_error is not None:
+            raise ModelAdapterError(f"模型请求网络错误：{last_error.__class__.__name__}") from last_error
+        if last_response is not None:
+            return last_response
+        raise ModelAdapterError("模型请求失败：未收到有效响应")
+
     @staticmethod
     def _image2_fields(defaults: dict[str, Any]) -> dict[str, Any]:
+        # 默认 url：避免同步接口回传大体积 b64 时被 nginx 502 截断（WisArt 文档支持 url / b64_json）
         fields: dict[str, Any] = {
             "size": defaults.get("size") or "1200x675",
             "quality": defaults.get("quality") or "auto",
             "n": int(defaults.get("n") or 1),
-            "response_format": defaults.get("response_format") or "b64_json",
+            "response_format": defaults.get("response_format") or "url",
         }
         for key in ("background", "moderation", "output_format", "output_compression", "user"):
             if defaults.get(key) not in (None, ""):
@@ -325,9 +430,16 @@ class ImplementClient:
             "generation_config": {"thinking_level": defaults.get("thinking_level", "high")},
         }
         headers = {"x-goog-api-key": require_api_key(profile)}
-        response = await post_json_with_retries(profile, url, payload, headers, proxy_url=proxy_url)
+        response = await post_json_with_retries(
+            profile,
+            url,
+            payload,
+            headers,
+            proxy_url=proxy_url,
+            minimum_timeout=MIN_IMAGE_TIMEOUT_SECONDS,
+        )
         if response.status_code >= 400:
-            raise ModelAdapterError(f"Gemini image request failed: HTTP {response.status_code} {response.text[:400]}")
+            raise ModelAdapterError(format_http_error("Gemini image request", response.status_code, response.text))
         data = response.json()
         image = self._extract_gemini_image(data)
         if not image:

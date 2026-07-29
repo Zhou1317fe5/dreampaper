@@ -14,11 +14,13 @@ Hard consistency rule:
 Each page JSON must include a page-level `master_style_binding` that maps the global master fields into that page. The backend will prepend one identical master-style prefix to every page before calling the implement model, so `implement_prompt` should focus on page-specific body layout and content.
 
 Visual richness rule:
-- Use the `Visual Asset Search Context` as text-only evidence. It may contain product/tool/platform names, source URLs, source titles, and visual clues; it never means the implement model can see or use the actual network images.
-- When content benefits from it, add proportionate visual elements inside the body safe area: semantic icons, logo-like symbols, product/tool marks, device/equipment/object renders, material/sample illustrations, or application scene illustrations.
-- Prefer source-grounded product/tool visuals when reliable sources are listed. If a term has no reliable source, use a generic semantic icon or illustrative object instead of inventing a real brand logo.
-- Keep visuals academically restrained, aligned to the uploaded template palette and card/border style, and balanced with text. Avoid full-bleed decorative images, clip-art clutter, and fake random logos.
-- Every page must include `visual_element_plan` with `usage_decision`, `elements`, and `text_visual_balance`. `elements` may be empty only when `usage_decision` explicitly explains why no visual element should be used on that page.
+- Default to concrete visual depiction. A slide that draws the actual device, product, specimen, or scene communicates far better than one that writes the subject's name inside a rectangle. Treat "label in a box" as the fallback, not the default.
+- Use the `Visual Asset Search Context` as text-only evidence describing what subjects look like. It may contain product/tool/equipment names, source URLs, titles, and appearance clues; it never means the implement model can see or use the actual network images.
+- When a page mentions a physical or visually recognizable subject — instrument, device, chip, vehicle, robot, specimen, material, reactor, sensor, software product — plan a real depiction of it: overall shape and proportion, dominant materials and colors, defining structural features, and typical orientation. Write these appearance details into `implement_prompt`; the implement model has no other source for them.
+- Prefer source-grounded appearance when reliable sources are listed. When a term has no reliable source, still depict it generically from domain knowledge (a generic microscope, a generic drone) rather than degrading to a text-only card. Only avoid a specific brand logo when no reliable source describes it.
+- Recolor depicted objects into the uploaded template palette and match the template line weight and card/border style, so visuals read as part of the deck rather than pasted stock art.
+- Keep visuals academically restrained and balanced with text. Avoid full-bleed decorative images, clip-art clutter, and fabricated brand marks.
+- Every page must include `visual_element_plan` with `usage_decision`, `elements`, and `text_visual_balance`. `elements` may be empty only when the page is genuinely abstract and `usage_decision` explicitly explains why nothing can be depicted.
 
 Keyword emphasis rule:
 - Each page must include `emphasis_plan`.

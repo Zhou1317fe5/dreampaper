@@ -8,6 +8,7 @@ from typing import Any
 from backend.app.config import ConfigStore
 from backend.app.jobs import DesignSchemaError, JobManager
 from backend.app.prompts import PromptStore, compose_prompt
+from backend.app.search import SearchClient
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,8 +18,8 @@ PROMPT_ROOT = ROOT / "prompts"
 def long_figure_prompt(extra: str = "") -> str:
     return (
         "Create a publication quality academic paper figure with faithful grounded content and no hallucination. "
-        "Use concise visual abstraction, short labels, readable legible typography, high contrast, and a clean white background. "
-        "Use selected templates as reference style and layout inspiration only, never as editable base imagery. "
+        "Use multi-stage pipeline layout with grouped modules, short labels, readable legible typography, high contrast, and a clean white background. "
+        "Use selected templates as reference style density and layout inspiration only, never as editable base imagery. "
         "Avoid scope drift, gibberish, fake formulas, unreadable arrows, visual noise, and unsupported claims. "
         "Keep all modules and data encodings aligned with the user-provided section. "
         f"{extra}"
@@ -32,29 +33,63 @@ def valid_diagram_design() -> dict[str, Any]:
             "visual_type": "diagram",
             "aspect_ratio": "16:9",
             "template_usage": "balanced",
-            "layout_constraints": ["16:9 compact rectangular canvas", "left-to-right module rhythm"],
+            "layout_constraints": ["16:9 compact rectangular canvas", "left-to-right multi-stage module rhythm"],
             "semantic_constraints": ["all modules grounded in user method", "preserve flow direction"],
             "visual_constraints": ["high contrast", "publication friendly white background"],
-            "forbidden_errors": ["hallucination", "reversed flow", "scope violation", "text overload"],
+            "forbidden_errors": ["hallucination", "reversed flow", "scope violation", "text overload", "over-simplification"],
             "quality_rubric": {
                 "faithfulness": "ground every block in source text",
                 "conciseness": "use visual abstraction and keywords",
                 "readability": "legible labels and clear arrows",
                 "aesthetics": "restrained academic style",
             },
-            "visible_text": ["输入", "编码器", "输出"],
+            "content_inventory": [
+                "原始输入",
+                "解析",
+                "OCR",
+                "本地资产库",
+                "多模态编码",
+                "统一索引",
+                "混合检索",
+                "交叉重排",
+                "规划器",
+                "推理器",
+                "生成器",
+                "评估反馈",
+                "错误分析库",
+                "负样本挖掘",
+                "模型更新",
+            ],
+            "visible_text": ["输入", "解析", "编码", "检索", "重排", "生成", "评估", "反馈"],
             "diagram_spec": {
-                "modules": ["Input", "Encoder", "Output"],
-                "entities": ["data", "features"],
-                "connections": [{"source": "Input", "target": "Encoder", "meaning": "feature extraction"}],
-                "flow_direction": "left to right",
-                "grouping_hierarchy": "three top-level modules",
-                "arrow_routing": "straight arrows with minimal crossings",
-                "label_strategy": "short noun labels only",
+                "modules": ["输入", "解析", "OCR", "资产库", "编码", "索引", "检索", "重排", "规划", "推理", "生成", "评估", "反馈"],
+                "entities": ["文档", "向量", "证据包"],
+                "connections": [
+                    {"source": "输入", "target": "解析", "meaning": "原始资产"},
+                    {"source": "解析", "target": "OCR", "meaning": "扫描增强"},
+                    {"source": "OCR", "target": "资产库", "meaning": "三类资产"},
+                    {"source": "资产库", "target": "编码", "meaning": "结构化块"},
+                    {"source": "编码", "target": "索引", "meaning": "统一向量空间"},
+                    {"source": "索引", "target": "检索", "meaning": "候选召回"},
+                    {"source": "检索", "target": "重排", "meaning": "相关性过滤"},
+                    {"source": "重排", "target": "规划", "meaning": "Top-K 证据"},
+                    {"source": "规划", "target": "推理", "meaning": "子问题"},
+                    {"source": "推理", "target": "生成", "meaning": "链式结论"},
+                    {"source": "生成", "target": "评估", "meaning": "回答草稿"},
+                    {"source": "评估", "target": "反馈", "meaning": "难例回流"},
+                ],
+                "flow_direction": "left to right with bottom feedback branch",
+                "grouping_hierarchy": "五阶段外层 + 各阶段内部叶子模块；底部训练反馈支路",
+                "arrow_routing": "solid main path, dashed feedback",
+                "label_strategy": "short Chinese noun labels only",
             },
-            "implement_prompt": long_figure_prompt("Render three rounded modules connected by clean arrows and compact grouping."),
+            "implement_prompt": long_figure_prompt(
+                "MODULE DETAIL / 模块细节: stage-by-stage leaf modules. "
+                "Render a multi-stage pipeline with nested groups and solid/dashed arrows. "
+                "Keep OCR, dual-tower encoding, hybrid retrieval, rerank, planner, critic feedback."
+            ),
         },
-        "quality_checklist": ["faithful", "concise", "readable"],
+        "quality_checklist": ["faithful", "concise", "readable", "multi-stage", "detail-preserving"],
     }
 
 
@@ -147,18 +182,19 @@ def valid_pages() -> dict[str, Any]:
                     "background": "same white background",
                 },
                 "visual_element_plan": {
-                    "usage_decision": "Use one semantic workflow icon and one tool-like mark because the page explains a technical route.",
+                    "usage_decision": "Depict the actual bench setup and the processing device because the page explains a technical route.",
                     "elements": [
                         {
-                            "type": "icon",
-                            "subject": "数据处理流程",
-                            "source_reference": "generic semantic icon",
-                            "placement": "left side of each body card header",
-                            "style": "thin line icon in template crimson and gray palette",
-                            "size_ratio": "small, about 6% of body area per icon",
+                            "type": "object/device render",
+                            "subject": "数据采集设备",
+                            "appearance": "矮箱体主机，正面横向散热格栅，右上角圆形指示灯，顶部伸出短天线，深灰机身配红色装饰条",
+                            "source_reference": "domain knowledge, generic form",
+                            "placement": "left side of the first body card",
+                            "style": "recolored into template crimson and gray palette, thin line weight matching card borders",
+                            "size_ratio": "small, about 8% of body area",
                         }
                     ],
-                    "text_visual_balance": "Icons stay small and support three concise text cards without replacing content.",
+                    "text_visual_balance": "The device render anchors the first card while three concise text cards carry the detail.",
                 },
                 "emphasis_plan": {
                     "keywords": [
@@ -251,7 +287,6 @@ class PromptContractTests(unittest.TestCase):
     def test_contracts_expose_strengthened_fields(self) -> None:
         paper = JobManager._paper_contract()
         template = JobManager._template_analysis_contract()
-        pages = JobManager._ppt_pages_contract(2, {"aspect_ratio": "16:9", "image_size": "4K"})
         outline = JobManager._ppt_outline_contract(2)
         single_page = JobManager._ppt_single_page_contract(1)
         for token in ("diagram_spec", "plot_spec", "quality_rubric", "data_integrity_rules"):
@@ -259,14 +294,13 @@ class PromptContractTests(unittest.TestCase):
         for token in ("master_style_spec", "immutable_elements", "forbidden_deviations"):
             self.assertIn(token, template)
         for token in ("master_style_binding", "safe_margins", "module_style", "visual_element_plan", "emphasis_plan"):
-            self.assertIn(token, pages)
             self.assertIn(token, single_page)
         for token in ("deck_outline", "shared_prompt", "page_briefs"):
             self.assertIn(token, outline)
         self.assertIn("Do not write page-level implement_prompt", outline)
         self.assertNotIn('"implement_prompt":', outline)
-        self.assertNotIn("size=", pages)
-        self.assertIn("Do not put API output parameters", pages)
+        self.assertNotIn("size=", single_page)
+        self.assertIn("Do not put API output parameters", single_page)
 
     def test_validates_diagram_and_plot_contracts(self) -> None:
         JobManager._validate_paper_design(valid_diagram_design())
@@ -277,8 +311,15 @@ class PromptContractTests(unittest.TestCase):
             JobManager._validate_paper_design(invalid)
         copy_request = valid_diagram_design()
         copy_request["figure"]["implement_prompt"] = long_figure_prompt("Copy the template exactly as a base image.")
-        with self.assertRaises(ValueError):
+        with self.assertRaises(DesignSchemaError):
             JobManager._validate_paper_design(copy_request)
+        # 否定/禁止语气中的同名短语不应误杀（design model 常见写法）
+        boundary_ok = valid_diagram_design()
+        boundary_ok["figure"]["implement_prompt"] = long_figure_prompt(
+            "Do not copy the template. Never edit the template image or use the template as a base image. "
+            "Forbidden: copy the template, duplicate the template, trace the template, background edit."
+        )
+        JobManager._validate_paper_design(boundary_ok)
 
     def test_validates_template_analysis_and_pages(self) -> None:
         template_analysis = valid_template_analysis()
@@ -341,17 +382,86 @@ class PromptContractTests(unittest.TestCase):
         <a class="result__a" href="//duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.docker.com%2Fcompany%2Fnewsroom%2Fmedia-resources%2F">Docker Media Resources</a>
         <a class="result__snippet">Official Docker logos and brand resources.</a>
         '''
-        results = JobManager._parse_visual_asset_search_results(html_text)
+        results = SearchClient._parse_duckduckgo_html(html_text, max_results=3)
         self.assertEqual(results[0]["url"], "https://www.docker.com/company/newsroom/media-resources/")
         context_text = JobManager._visual_asset_context_text(
             {
                 "terms": ["Docker"],
-                "items": [{"term": "Docker", "query": "Docker official logo product render visual appearance", "results": results}],
+                "search_profile": {"protocol": "duckduckgo_html"},
+                "items": [{"term": "Docker", "query": "Docker official logo product appearance", "results": results}],
             }
         )
         self.assertIn("text-only evidence", context_text)
         self.assertIn("Docker Media Resources", context_text)
+        self.assertIn("duckduckgo_html", context_text)
         self.assertNotIn("base64", context_text.lower())
+
+    def test_extracts_chinese_object_terms(self) -> None:
+        """纯中文资料必须能抽出实物主体：英文大写启发式在这类文本上命中为 0。"""
+        material = (
+            "实验采用高分辨质谱仪对样品进行检测，随后使用离心机分离，"
+            "并通过六旋翼无人机完成野外采样。培养皿中的样品由机械臂转运。"
+        )
+        terms = JobManager._extract_visual_asset_terms(material)
+        self.assertTrue(any("质谱仪" in term for term in terms), terms)
+        self.assertIn("离心机", terms)
+        self.assertTrue(any("无人机" in term for term in terms), terms)
+        self.assertIn("培养皿", terms)
+        self.assertIn("机械臂", terms)
+
+    def test_chinese_object_nouns_keep_category_suffix(self) -> None:
+        """「检测设备」不能被类别后缀剥离规则削成「检测」，该规则只针对 Latin 前缀。"""
+        terms = JobManager._extract_visual_asset_terms("现场部署了一套检测设备，配合 PyTorch框架 完成推理。")
+        self.assertIn("检测设备", terms)
+        self.assertIn("PyTorch", terms)
+        self.assertNotIn("PyTorch框架", terms)
+
+    def test_english_inventory_items_stay_grounded(self) -> None:
+        """英文条目不能因归一化删空格而失配：曾导致所有英文 figure 必现 DesignSchemaError。"""
+        source = (
+            "RankRAG unifies context ranking and answer generation in one instruction-tuned LLM. "
+            "At inference, an external retriever first fetches a large top-N candidate set. "
+            "The same LLM then selects a high-quality top-k subset. "
+            "Training has two stages: Stage I supervised fine-tuning on general instruction data."
+        )
+        for raw in (
+            "External retriever",
+            "Top-N candidate contexts",
+            "Instruction-tuned LLM (shared)",
+            "High-quality top-k subset",
+            "Stage I supervised fine-tuning",
+        ):
+            item = JobManager._normalize_inventory_item(raw)
+            self.assertIn(" ", item, f"归一化不应删除空格: {item}")
+            self.assertTrue(JobManager._item_grounded_in_source(item, source), raw)
+
+    def test_chinese_inventory_tolerates_inserted_spaces(self) -> None:
+        """中文条目被模型插入空格时，去空白比对仍应命中原文。"""
+        item = JobManager._normalize_inventory_item("混合 检索")
+        self.assertTrue(JobManager._item_grounded_in_source(item, "本文采用混合检索与交叉重排流程"))
+        self.assertTrue(JobManager._item_present_in_output(item, "模块包含混合检索"))
+
+    def test_abstract_material_yields_no_visual_terms(self) -> None:
+        """纯理论内容不应抽出主体：数学人名会被大写启发式误判为产品。"""
+        material = (
+            "针对带非光滑正则项的复合优化问题，提出一种自适应步长的近端梯度算法。"
+            "通过构造 Lyapunov 函数证明算法在弱凸假设下收敛到稳定点，并给出 O(1/k) 收敛速率。"
+            "进一步用 Jacobian 与 Hessian 分析步长参数对收敛常数的影响。"
+        )
+        self.assertEqual(JobManager._extract_visual_asset_terms(material), [])
+
+    def test_search_query_splits_by_language(self) -> None:
+        self.assertIn("实物外观", JobManager._visual_asset_search_query("离心机"))
+        self.assertIn("official logo", JobManager._visual_asset_search_query("Docker"))
+
+    def test_implement_prompt_demands_real_depiction(self) -> None:
+        """制图提示词必须显式要求画实物，而不是用带文字的方框代替。"""
+        merged = JobManager._apply_ppt_master_prompt_prefix(valid_pages()["pages"], valid_template_analysis())
+        prompt = merged[0]["implement_prompt"]
+        self.assertIn("actual depictions of their subject", prompt)
+        self.assertIn("Do not substitute a labeled rectangle", prompt.replace("\n", " "))
+        self.assertIn("数据采集设备", prompt)
+        self.assertIn("散热格栅", prompt)
 
     def test_ppt_page_planner_context_is_compacted(self) -> None:
         full = json.dumps(valid_template_analysis(), ensure_ascii=False, indent=2)

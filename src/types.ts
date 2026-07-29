@@ -1,4 +1,4 @@
-export type ModelRole = 'design' | 'implement';
+export type ModelRole = 'design' | 'implement' | 'search';
 export type Mode = 'paper_figure' | 'ppt_slide';
 
 export interface ModelProfile {
@@ -22,6 +22,7 @@ export interface AppConfig {
   version: number;
   active_design_profile: string;
   active_implement_profile: string;
+  active_search_profile?: string;
   proxy_url?: string | null;
   ppt_page_plan_concurrency?: number | null;
   ppt_image_concurrency?: number | null;

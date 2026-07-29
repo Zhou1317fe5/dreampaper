@@ -23,7 +23,7 @@ export function saveConfig(config: AppConfig) {
 
 export function listTemplates(kind: string, q: string) {
   const params = new URLSearchParams();
-  if (kind !== 'all') params.set('kind', kind);
+  if (kind) params.set('kind', kind);
   if (q) params.set('q', q);
   params.set('limit', '60');
   return request<TemplateSummary[]>(`/api/templates?${params.toString()}`);

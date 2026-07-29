@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import base64
-import html
 import json
 import mimetypes
 import re
@@ -12,16 +11,14 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, quote_plus, unquote, urlparse
 from xml.etree import ElementTree
-
-import httpx
 
 from .adapters import DesignClient, ImplementClient, image_to_b64, parse_json_response, public_profile_snapshot, safe_error_message
 from .assets import AssetStore
 from .config import ConfigStore, app_home
 from .models import JobCreateRequest, JobEvent, JobImage, JobRecord, PaperFigurePayload, PptSlidePayload
 from .prompts import PromptStore, compose_prompt
+from .search import SearchClient
 from .templates import TemplateStore
 
 
@@ -95,54 +92,160 @@ PAGE_MASTER_BINDING_FIELDS = (
     "module_style",
     "background",
 )
-MASTER_PROMPT_KEYWORDS = {
-    "title_region": ("title region", "标题区"),
-    "safe_margins": ("safe margin", "safe area", "安全边距", "安全区"),
-    "header_footer": ("page number", "logo", "corner mark", "header", "footer", "页码", "角标", "页眉", "页脚"),
-    "divider_lines": ("divider", "separator", "分割线", "分隔线"),
-    "palette": ("palette", "color", "配色", "颜色"),
-    "typography": ("typography", "font", "字体", "字号"),
-    "module_style": ("module", "card", "border", "模块", "卡片", "边框"),
-    "background": ("background", "背景"),
-}
 PAGE_VISUAL_PLAN_FIELDS = ("usage_decision", "elements", "text_visual_balance")
-PAGE_VISUAL_ELEMENT_FIELDS = ("type", "subject", "source_reference", "placement", "style", "size_ratio")
+PAGE_VISUAL_ELEMENT_FIELDS = ("type", "subject", "appearance", "source_reference", "placement", "style", "size_ratio")
 PAGE_EMPHASIS_PLAN_FIELDS = ("keywords", "style_rules")
 PAGE_EMPHASIS_KEYWORD_FIELDS = ("text", "style", "reason")
-VISUAL_ASSET_SEARCH_TERM_LIMIT = 4
+VISUAL_ASSET_SEARCH_TERM_LIMIT = 8
 VISUAL_ASSET_SEARCH_RESULT_LIMIT = 3
-VISUAL_ASSET_SEARCH_TIMEOUT_SECONDS = 8
-VISUAL_ASSET_SEARCH_URL = "https://duckduckgo.com/html/"
+# 已知专有名词：命中即视为高价值视觉主体。列表不求穷尽，
+# 真正的覆盖面靠下面的中文后缀规则和大写启发式兜底。
 VISUAL_ASSET_KNOWN_TERMS = (
+    # AI / 框架
     "PyTorch",
     "TensorFlow",
+    "JAX",
+    "Keras",
+    "scikit-learn",
+    "OpenCV",
+    "Hugging Face",
+    "LangChain",
+    "Stable Diffusion",
+    "OpenAI",
+    "Claude",
+    "Gemini",
+    "Llama",
+    "Qwen",
+    "DeepSeek",
+    "Nano Banana",
+    "WisArt",
+    # 基础设施 / 云
     "Docker",
     "Kubernetes",
     "GitHub",
     "GitLab",
-    "OpenAI",
-    "Claude",
-    "Gemini",
-    "Nano Banana",
-    "WisArt",
-    "MATLAB",
-    "CUDA",
+    "Jenkins",
+    "Nginx",
+    "Kafka",
+    "Spark",
+    "Hadoop",
+    "Elasticsearch",
+    "AWS",
+    "Azure",
+    "GCP",
+    "阿里云",
+    "腾讯云",
+    "华为云",
+    # 数据库
+    "PostgreSQL",
+    "MongoDB",
+    "Redis",
+    "MySQL",
+    "SQLite",
+    "ClickHouse",
+    "Neo4j",
+    # 硬件 / 芯片 / 设备
     "NVIDIA",
+    "CUDA",
+    "Jetson",
     "Raspberry Pi",
     "Arduino",
+    "STM32",
+    "FPGA",
+    "Intel",
+    "AMD",
+    "ARM",
+    "树莓派",
+    # 科研仪器 / 实验设备
+    "SEM",
+    "TEM",
+    "AFM",
+    "XRD",
+    "XPS",
+    "NMR",
+    "MRI",
+    "CT",
+    "PCR",
+    "HPLC",
+    "扫描电镜",
+    "透射电镜",
+    "原子力显微镜",
+    "质谱仪",
+    "光谱仪",
+    "色谱仪",
+    "离心机",
+    "培养箱",
+    "示波器",
+    "激光器",
+    "光刻机",
+    "反应釜",
+    # 载具 / 机器人
+    "无人机",
+    "机械臂",
+    "机器人",
+    "自动驾驶",
+    "激光雷达",
+    "卫星",
+    # 工具软件
+    "MATLAB",
+    "Simulink",
+    "SolidWorks",
+    "AutoCAD",
+    "Blender",
     "Figma",
     "Notion",
     "Slack",
     "Jira",
     "Confluence",
-    "PostgreSQL",
-    "MongoDB",
-    "Redis",
-    "MySQL",
-    "AWS",
-    "Azure",
-    "GCP",
-    "Hugging Face",
+    "LaTeX",
+    "Origin",
+    "ImageJ",
+)
+# 中文实物名词后缀：中文资料里的可视化主体几乎都以这些字收尾。
+# 英文大写启发式对中文完全失效，必须靠后缀反向抽取，否则中文资料抽词数为 0。
+VISUAL_ASSET_CN_SUFFIXES = (
+    "无人机",
+    "机器人",
+    "机械臂",
+    "传感器",
+    "反应釜",
+    "培养皿",
+    "培养箱",
+    "显微镜",
+    "光谱仪",
+    "离心机",
+    "示波器",
+    "激光器",
+    "发动机",
+    "换热器",
+    "催化剂",
+    "电解槽",
+    "晶圆",
+    "芯片",
+    "电极",
+    "电池",
+    "薄膜",
+    "涂层",
+    "探头",
+    "模组",
+    "阵列",
+    "支架",
+    "导管",
+    "样机",
+    "样品",
+    "试剂",
+    "装置",
+    "设备",
+    "仪器",
+    "机床",
+    "产线",
+    "车间",
+    "卫星",
+    "雷达",
+    "天线",
+    "车辆",
+    "船舶",
+    "飞行器",
 )
 VISUAL_ASSET_TERM_STOPWORDS = {
     "A",
@@ -166,10 +269,36 @@ VISUAL_ASSET_TERM_STOPWORDS = {
     "The",
     "Use",
     "User",
+    # 数学/统计学人名与理论名：大写启发式会把它们当成产品，
+    # 检索「Lyapunov official logo」既浪费名额又可能让模型画出无意义的图形
+    "Bayes",
+    "Bayesian",
+    "Banach",
+    "Cauchy",
+    "Euler",
+    "Fourier",
+    "Gauss",
+    "Gaussian",
+    "Hessian",
+    "Hilbert",
+    "Jacobian",
+    "Lagrange",
+    "Laplace",
+    "Lipschitz",
+    "Lyapunov",
+    "Markov",
+    "Monte Carlo",
+    "Nash",
+    "Newton",
+    "Pareto",
+    "Poisson",
+    "Taylor",
+    "Bernoulli",
+    "Frobenius",
+    "Kullback",
+    "Leibler",
+    "Wasserstein",
 }
-SEARCH_RESULT_LINK_PATTERN = re.compile(r'<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="([^"]+)"[^>]*>(.*?)</a>', re.IGNORECASE | re.DOTALL)
-SEARCH_RESULT_SNIPPET_PATTERN = re.compile(r'<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</a>|<div[^>]+class="[^"]*result__snippet[^"]*"[^>]*>(.*?)</div>', re.IGNORECASE | re.DOTALL)
-HTML_TAG_PATTERN = re.compile(r"<[^>]+>")
 API_OUTPUT_PROMPT_PATTERN = re.compile(
     r"\b(?:size|quality|output_format|response_format|aspect_ratio|image_size|thinking_level|mime_type)\s*=\s*[^,.;\n]+[,.;]?\s*",
     re.IGNORECASE,
@@ -195,6 +324,7 @@ class JobManager:
         self.root = app_home() / "jobs"
         self.design = DesignClient()
         self.implement = ImplementClient()
+        self.search = SearchClient()
 
     def create(self, request: JobCreateRequest) -> JobRecord:
         job_id = uuid.uuid4().hex
@@ -242,6 +372,7 @@ class JobManager:
             self._mark_stage(job_id, "failed", error_message, status="failed", event_status="failed", internal_artifacts=artifacts)
 
     async def _run_paper(self, job_id: str, payload: PaperFigurePayload) -> None:
+        """科研图两阶段 design：①仅 template 结构规划 ②结构+用户内容 → implement_prompt。"""
         self._mark_stage(job_id, "paper_validate", "校验 Figure 输入")
         if not payload.template_ids:
             raise ValueError("Paper figure requires at least one template")
@@ -253,14 +384,7 @@ class JobManager:
         selected_template_metadata = [self._template_metadata(item) for item in selected]
         template_images = [self._template_image_payload(item) for item in selected]
         template_summary = json.dumps(selected_template_metadata, ensure_ascii=False, indent=2)
-        assets = [
-            self.prompts.load("global/system.md"),
-            self.prompts.load("global/figure_style.md"),
-            self.prompts.load("modes/paper_figure/design.md"),
-            self.prompts.load("modes/paper_figure/diagram_rules.md"),
-            self.prompts.load("modes/paper_figure/plot_rules.md"),
-            self.prompts.load("modes/paper_figure/validator.md"),
-        ]
+        system_prompt = self.prompts.load("global/system.md")["content"]
         user_context = {
             "Figure title": payload.figure_title.strip(),
             "Section description": payload.section_description.strip(),
@@ -271,36 +395,112 @@ class JobManager:
             "Custom prompt": payload.custom_prompt or "None",
         }
         network_context = {"proxy_url": proxy_url}
-        self._mark_stage(job_id, "paper_prompt", "拼接 design prompt")
-        user_prompt, prompt_assets = compose_prompt(
-            assets,
+
+        # —— Stage 1: 只看 template 图，抽取结构规划（不混入方法长文）——
+        structure_assets = [
+            self.prompts.load("global/system.md"),
+            self.prompts.load("global/figure_style.md"),
+            self.prompts.load("modes/paper_figure/structure.md"),
+        ]
+        self._mark_stage(job_id, "paper_structure_prompt", "拼接 template 结构分析 prompt")
+        structure_prompt, structure_prompt_assets = compose_prompt(
+            structure_assets,
             {
                 "Selected Template Metadata": template_summary,
-                "User Input": json.dumps(user_context, ensure_ascii=False, indent=2),
-                "Output Contract": self._paper_contract(),
+                "Task": (
+                    "Analyze the attached template figure image(s) only. "
+                    "Return a reusable structure_plan JSON. Do not invent the user's research content."
+                ),
+                "Output Contract": self._structure_plan_contract(),
             },
         )
-        design_request = self._design_request_summary(design_profile, prompt_assets, user_prompt, template_images)
+        structure_request = self._design_request_summary(
+            design_profile, structure_prompt_assets, structure_prompt, template_images
+        )
         self._merge_artifacts(
             job_id,
             {
                 "normalized_input": user_context,
                 "network": network_context,
                 "selected_templates": selected_template_metadata,
-                "prompt_assets": prompt_assets,
+                "pipeline": "paper_two_stage_structure_then_content",
+                "structure_model_request": structure_request,
+            },
+        )
+        self._mark_stage(job_id, "paper_structure", "调用 design model 分析 template 结构")
+        structure_text = await self.design.generate(
+            design_profile, system_prompt, structure_prompt, template_images, proxy_url=proxy_url
+        )
+        self._mark_stage(job_id, "paper_structure_parse", "解析并校验结构规划 JSON")
+        structure_json, structure_plan, structure_schema_retry = await self._parse_validate_or_fill_missing(
+            design_profile,
+            system_prompt,
+            structure_prompt,
+            structure_text,
+            template_images,
+            self._validate_structure_plan,
+            timeout_seconds=None,
+            proxy_url=proxy_url,
+        )
+        self._merge_artifacts(
+            job_id,
+            {
+                "structure_model_response": {"raw_text": structure_text, "parsed_json": structure_json},
+                "structure_plan": structure_plan,
+                "retries": {"structure_schema_fill": structure_schema_retry},
+            },
+        )
+
+        # —— Stage 2: 结构规划 + 用户内容 → 完整 design JSON（不再塞 template 图，避免内容被图面“带跑”）——
+        design_assets = [
+            self.prompts.load("global/system.md"),
+            self.prompts.load("global/figure_style.md"),
+            self.prompts.load("modes/paper_figure/design.md"),
+            self.prompts.load("modes/paper_figure/diagram_rules.md"),
+            self.prompts.load("modes/paper_figure/plot_rules.md"),
+            self.prompts.load("modes/paper_figure/validator.md"),
+        ]
+        self._mark_stage(job_id, "paper_prompt", "拼接内容填充与 implement prompt")
+        design_user_prompt, design_prompt_assets = compose_prompt(
+            design_assets,
+            {
+                "Structure Plan From Templates": json.dumps(structure_plan, ensure_ascii=False, indent=2),
+                "User Input": json.dumps(user_context, ensure_ascii=False, indent=2),
+                "Selected Template Metadata": template_summary,
+                "Output Contract": self._paper_contract(),
+            },
+        )
+        design_request = self._design_request_summary(
+            design_profile, design_prompt_assets, design_user_prompt, []
+        )
+        self._merge_artifacts(
+            job_id,
+            {
+                "prompt_assets": design_prompt_assets,
                 "design_model_request": design_request,
             },
         )
-        self._mark_stage(job_id, "paper_design", "调用 design model 生成制图方案")
-        design_text = await self.design.generate(design_profile, assets[0]["content"], user_prompt, template_images, proxy_url=proxy_url)
+        self._mark_stage(job_id, "paper_design", "调用 design model 映射内容并生成制图方案")
+        design_text = await self.design.generate(
+            design_profile, system_prompt, design_user_prompt, [], proxy_url=proxy_url
+        )
         self._mark_stage(job_id, "paper_parse", "解析并校验 design JSON")
+
+        def _validate_design_with_content(data: dict[str, Any]) -> None:
+            self._validate_paper_design(data)
+            self._validate_design_content_coverage(
+                data,
+                payload.figure_title.strip(),
+                payload.section_description.strip(),
+            )
+
         design_json, _, paper_schema_retry = await self._parse_validate_or_fill_missing(
             design_profile,
-            assets[0]["content"],
-            user_prompt,
+            system_prompt,
+            design_user_prompt,
             design_text,
-            template_images,
-            self._validate_paper_design,
+            [],
+            _validate_design_with_content,
             timeout_seconds=None,
             proxy_url=proxy_url,
         )
@@ -310,6 +510,8 @@ class JobManager:
         self._mark_stage(job_id, "paper_save", "保存生成图片")
         image = self._save_image(job_id, "paper_figure.png", image_b64)
         self._mark_stage(job_id, "completed", "任务完成", status="succeeded", event_status="succeeded", images=[image])
+        prev_retries = dict(self.get(job_id).internal_artifacts.get("retries") or {})
+        prev_retries["paper_schema_fill"] = paper_schema_retry
         self._update(
             job_id,
             internal_artifacts={
@@ -319,7 +521,7 @@ class JobManager:
                 "implement_model_request": self._implement_request_summary(implement_profile, implement_prompt, {}, 0),
                 "implement_model_response": self._image_response_summary(image, image_b64),
                 "implement_prompts": [implement_prompt],
-                "retries": {"design_json_repair": "attempted only on parse failure", "paper_schema_fill": paper_schema_retry},
+                "retries": prev_retries,
             },
         )
 
@@ -365,7 +567,6 @@ class JobManager:
                 "enabled": True,
                 "term_limit": VISUAL_ASSET_SEARCH_TERM_LIMIT,
                 "result_limit": VISUAL_ASSET_SEARCH_RESULT_LIMIT,
-                "timeout_seconds": VISUAL_ASSET_SEARCH_TIMEOUT_SECONDS,
             },
         }
         analyzer_assets = [
@@ -755,22 +956,41 @@ class JobManager:
 
     async def _build_visual_asset_context(self, material_context: str, proxy_url: str | None = None) -> dict[str, Any]:
         terms = self._extract_visual_asset_terms(material_context)
+        search_profile = self.config.active_profile("search")
+        search_meta = {
+            "profile_id": search_profile.id,
+            "protocol": search_profile.protocol,
+            "model": search_profile.model,
+            "base_url": search_profile.base_url,
+            "has_api_key": bool(search_profile.api_key),
+        }
         if not terms:
             return {
                 "enabled": True,
                 "degraded": True,
                 "terms": [],
                 "items": [],
+                "search_profile": search_meta,
                 "message": "No explicit product/tool/platform terms were detected; use generic semantic icons or object illustrations only when content benefits.",
             }
-        tasks = [self._search_visual_asset_term(term, proxy_url) for term in terms]
+        max_results = int((search_profile.output_defaults or {}).get("max_results") or VISUAL_ASSET_SEARCH_RESULT_LIMIT)
+        max_results = max(1, min(8, max_results))
+        tasks = [self._search_visual_asset_term(term, search_profile, proxy_url, max_results=max_results) for term in terms]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         items: list[dict[str, Any]] = []
         errors: list[str] = []
         for term, result in zip(terms, results, strict=False):
             if isinstance(result, Exception):
                 errors.append(f"{term}: {safe_error_message(result)}")
-                items.append({"term": term, "query": self._visual_asset_search_query(term), "results": [], "error": safe_error_message(result)})
+                items.append(
+                    {
+                        "term": term,
+                        "query": self._visual_asset_search_query(term),
+                        "results": [],
+                        "error": safe_error_message(result),
+                        "provider": search_profile.protocol,
+                    }
+                )
                 continue
             items.append(result)
         has_sources = any(item.get("results") for item in items)
@@ -780,43 +1000,77 @@ class JobManager:
             "terms": terms,
             "items": items,
             "errors": errors,
+            "search_profile": search_meta,
             "message": "Use only text summaries and source URLs; no network image is downloaded, cached, or passed to the implement model.",
         }
 
     @classmethod
     def _extract_visual_asset_terms(cls, material_context: str) -> list[str]:
+        """抽取值得用真实视觉呈现的主体。
+
+        三路来源按优先级合并：已知专有名词 → 中文实物名词 → 英文大写启发式。
+        中文一路是必需的：英文大写规则在纯中文资料上命中数为 0。
+        """
         text = material_context[:MATERIAL_TEXT_LIMIT]
-        candidates: list[str] = []
         lowered = text.lower()
-        for term in VISUAL_ASSET_KNOWN_TERMS:
-            if term.lower() in lowered:
-                candidates.append(term)
-        patterns = [
+
+        known: list[str] = [term for term in VISUAL_ASSET_KNOWN_TERMS if term.lower() in lowered]
+
+        # 中文实物名词：后缀前再吃 0-4 个汉字作为修饰语（如「高分辨质谱仪」）。
+        # 前缀不得跨越虚词/方位词，否则「扫描电镜对样品」会被抽成「描电镜对样品」。
+        suffix_group = "|".join(re.escape(suffix) for suffix in VISUAL_ASSET_CN_SUFFIXES)
+        boundary = "对与和及或的了在从由被把将用以为并中后前时上下等则若使可将其该本此这那每各"
+        chinese = [
+            match.group(0)
+            for match in re.finditer(
+                rf"(?:(?![{boundary}])[一-鿿]){{0,4}}(?:{suffix_group})", text
+            )
+        ]
+
+        english: list[str] = []
+        for pattern in (
             r"\b[A-Z][A-Za-z0-9.+#-]{1,}(?:\s+[A-Z0-9][A-Za-z0-9.+#-]{1,}){0,2}\b",
             r"\b[A-Z]{2,}(?:[-\s][A-Z0-9]{2,}){0,2}\b",
             r"\b[A-Za-z][A-Za-z0-9.+#-]{1,}\s*(?:平台|工具|框架|模型|软件|系统|设备)\b",
-        ]
-        for pattern in patterns:
-            candidates.extend(match.group(0) for match in re.finditer(pattern, text))
-        return cls._dedupe_visual_asset_terms(candidates)
+        ):
+            english.extend(match.group(0) for match in re.finditer(pattern, text))
+
+        # 按出现频次给中文名词排序，让反复提到的主体优先占用检索名额
+        chinese.sort(key=lambda term: text.count(term), reverse=True)
+        return cls._dedupe_visual_asset_terms([*known, *chinese, *english])
 
     @staticmethod
     def _dedupe_visual_asset_terms(candidates: list[str]) -> list[str]:
-        terms: list[str] = []
+        normalized: list[str] = []
         seen: set[str] = set()
+        stopwords_lower = {item.lower() for item in VISUAL_ASSET_TERM_STOPWORDS}
         for candidate in candidates:
             term = re.sub(r"\s+", " ", candidate).strip(" ,.;:()[]{}<>，。；：（）【】")
-            term = re.sub(r"\s*(平台|工具|框架|模型|软件|系统|设备)$", "", term).strip()
+            # 剥掉数量词与指示词前缀：「一套检测设备」→「检测设备」。
+            # 只剥通用量词，保留「六旋翼无人机」这类有描述意义的数词短语。
+            term = re.sub(r"^[一二三四五六七八九十百千两0-9]+[套台个批组种类款部只条张片辆架]", "", term)
+            term = re.sub(r"^(?:该|本|其|此|这|那|各|每|所述|上述|相应|对应)", "", term).strip()
+            # 只在「Latin 前缀 + 中文类别词」时剥类别后缀（PyTorch框架 → PyTorch）；
+            # 纯中文实物名词必须保留完整，否则「检测设备」会被削成「检测」
+            stripped = re.sub(r"\s*(平台|工具|框架|模型|软件|系统|设备)$", "", term).strip()
+            if stripped and stripped != term and re.search(r"[A-Za-z]", stripped):
+                term = stripped
             if len(term) < 2 or len(term) > 48:
                 continue
-            if term in VISUAL_ASSET_TERM_STOPWORDS:
-                continue
-            if term.lower() in {item.lower() for item in VISUAL_ASSET_TERM_STOPWORDS}:
+            if term.lower() in stopwords_lower:
                 continue
             key = term.lower()
             if key in seen:
                 continue
             seen.add(key)
+            normalized.append(term)
+
+        # 同源词只留最短的那个：短形通常是干净的中心词，长形往往粘了动词/方位词
+        # （「置于培养箱」→「培养箱」，「激光雷达传感器」→「激光雷达」）
+        terms: list[str] = []
+        for term in normalized:
+            if any(other != term and other in term for other in normalized):
+                continue
             terms.append(term)
             if len(terms) >= VISUAL_ASSET_SEARCH_TERM_LIMIT:
                 break
@@ -824,64 +1078,68 @@ class JobManager:
 
     @staticmethod
     def _visual_asset_search_query(term: str) -> str:
-        return f"{term} official logo product render visual appearance"
+        """中英文分流：中文主体查实物外观，英文主体多为软件/品牌，查官方标识与产品外观。"""
+        if re.search(r"[一-鿿]", term):
+            return f"{term} 实物外观 外形结构 产品图片 特征描述"
+        return f"{term} official logo product appearance what it looks like visual description"
 
-    async def _search_visual_asset_term(self, term: str, proxy_url: str | None = None) -> dict[str, Any]:
+    async def _search_visual_asset_term(
+        self,
+        term: str,
+        search_profile,
+        proxy_url: str | None = None,
+        *,
+        max_results: int = VISUAL_ASSET_SEARCH_RESULT_LIMIT,
+    ) -> dict[str, Any]:
         query = self._visual_asset_search_query(term)
-        timeout = httpx.Timeout(VISUAL_ASSET_SEARCH_TIMEOUT_SECONDS)
-        headers = {"User-Agent": "Mozilla/5.0 dreampaper visual asset context"}
-        async with httpx.AsyncClient(timeout=timeout, proxy=proxy_url, follow_redirects=True, headers=headers) as client:
-            response = await client.get(f"{VISUAL_ASSET_SEARCH_URL}?q={quote_plus(query)}")
-        if response.status_code >= 400:
-            return {"term": term, "query": query, "results": [], "error": f"HTTP {response.status_code}"}
-        return {"term": term, "query": query, "results": self._parse_visual_asset_search_results(response.text)}
-
-    @classmethod
-    def _parse_visual_asset_search_results(cls, html_text: str) -> list[dict[str, str]]:
-        links = SEARCH_RESULT_LINK_PATTERN.findall(html_text)
-        snippets = SEARCH_RESULT_SNIPPET_PATTERN.findall(html_text)
-        cleaned_snippets = [cls._clean_search_html(first or second) for first, second in snippets]
-        results: list[dict[str, str]] = []
-        for index, (href, title_html) in enumerate(links[:VISUAL_ASSET_SEARCH_RESULT_LIMIT]):
-            url = cls._normalize_search_result_url(html.unescape(href))
-            if not url.startswith(("http://", "https://")):
-                continue
-            results.append(
-                {
-                    "title": cls._clean_search_html(title_html),
-                    "url": url,
-                    "snippet": cleaned_snippets[index] if index < len(cleaned_snippets) else "",
-                }
+        try:
+            results = await self.search.search(
+                search_profile,
+                query,
+                max_results=max_results,
+                proxy_url=proxy_url,
             )
-        return results
-
-    @staticmethod
-    def _normalize_search_result_url(url: str) -> str:
-        parsed = urlparse(url)
-        query = parse_qs(parsed.query)
-        if "uddg" in query and query["uddg"]:
-            return unquote(query["uddg"][0])
-        return url
-
-    @staticmethod
-    def _clean_search_html(value: str) -> str:
-        text = HTML_TAG_PATTERN.sub(" ", value)
-        text = html.unescape(text)
-        text = re.sub(r"\s+", " ", text).strip()
-        return text[:260]
+            return {
+                "term": term,
+                "query": query,
+                "results": results,
+                "provider": search_profile.protocol,
+            }
+        except Exception as exc:
+            return {
+                "term": term,
+                "query": query,
+                "results": [],
+                "error": safe_error_message(exc),
+                "provider": getattr(search_profile, "protocol", "unknown"),
+            }
 
     @staticmethod
     def _visual_asset_context_text(context: dict[str, Any]) -> str:
         terms = context.get("terms") if isinstance(context.get("terms"), list) else []
+        provider = ""
+        if isinstance(context.get("search_profile"), dict):
+            provider = str(context["search_profile"].get("protocol") or "")
         if not terms:
             return (
-                "No specific product/tool/platform visual sources were identified from the material. "
-                "Use generic semantic icons, equipment/object illustrations, or abstract logo-like symbols only when they help the content. "
-                "Do not invent real brand logos."
+                "No specific product/tool/equipment terms were detected in the material. "
+                "Still prefer concrete visual representation over plain labeled rectangles: use recognizable object "
+                "silhouettes, equipment/device illustrations, schematic cutaways, or semantic icons that depict the "
+                "actual subject discussed on the page. Only fall back to a plain text card when the content is purely "
+                "abstract. Do not invent a specific real brand logo that you are not confident about."
             )
         lines = [
-            "Runtime visual asset search context. Use this as text-only evidence for product/tool visuals; no images are downloaded or passed to the implement model.",
-            "Prefer official or reliable sources. If no reliable source is listed for a term, use a generic semantic icon or illustrative object instead of inventing a real brand logo.",
+            "Runtime visual asset search context. Use this as text-only evidence describing what these subjects "
+            "actually look like; no images are downloaded or passed to the implement model.",
+            f"Search provider: {provider or 'configured search model'}.",
+            "GOAL: turn these subjects into real visual depictions on the slide instead of text inside a box. "
+            "A slide that draws the actual device/product/object reads far better than one that writes its name in a rectangle.",
+            "For each grounded term below, describe its concrete appearance in the implement prompt: overall shape and "
+            "proportion, dominant materials and colors, defining structural features, and typical orientation. "
+            "Recolor into the template palette rather than copying source colors verbatim.",
+            "If a term has no reliable source, still depict it generically from domain knowledge (a generic microscope, "
+            "a generic drone) rather than degrading to a text-only card. Only avoid rendering a specific brand logo "
+            "when no reliable source describes it.",
         ]
         for item in context.get("items", []):
             term = item.get("term")
@@ -890,7 +1148,10 @@ class JobManager:
             results = item.get("results") if isinstance(item.get("results"), list) else []
             if not results:
                 reason = item.get("error") or "no reliable result"
-                lines.append(f"  Source status: {reason}. Use generic semantic visual elements only.")
+                lines.append(
+                    f"  Source status: {reason}. Depict this subject generically from domain knowledge; "
+                    "avoid brand-specific marks."
+                )
                 continue
             for result in results:
                 lines.append(f"  Source: {result.get('title')} | {result.get('url')} | {result.get('snippet')}")
@@ -1055,15 +1316,190 @@ class JobManager:
 
     @classmethod
     def _validate_no_copy_request(cls, prompt: str) -> None:
+        """拒绝明确要求复制/编辑模板底图的 implement_prompt。
+
+        design model 常会在同一句里写「禁止 copy the template」；旧实现只看
+        短语前 24 字符，且把 ValueError 排除在 schema 修复重试之外，导致误杀。
+        这里按句子窗口判断否定/禁止语气，失败时抛 DesignSchemaError 以触发补全重试。
+        """
         lowered_prompt = prompt.lower()
-        negations = ("do not ", "don't ", "never ", "no ", "not ", "avoid ", "must not ", "cannot ", "禁止", "不要", "不得", "不能", "不可")
-        for phrase in FORBIDDEN_TEMPLATE_COPY_PHRASES:
-            start = lowered_prompt.find(phrase)
-            while start != -1:
-                prefix = lowered_prompt[max(0, start - 24) : start]
-                if not any(negation in prefix for negation in negations):
-                    raise ValueError("Implement prompt requests direct template copying or editing")
-                start = lowered_prompt.find(phrase, start + len(phrase))
+        negations = (
+            "do not ",
+            "don't ",
+            "dont ",
+            "never ",
+            " no ",
+            "not ",
+            "avoid ",
+            "must not ",
+            "cannot ",
+            "can't ",
+            "without ",
+            "rather than ",
+            "instead of ",
+            "forbid",
+            "forbidden",
+            "prohibit",
+            "refrain",
+            "禁止",
+            "不要",
+            "不得",
+            "不能",
+            "不可",
+            "严禁",
+            "避免",
+            "勿",
+        )
+        allow_context = (
+            "reference only",
+            "as reference",
+            "style only",
+            "layout only",
+            "not as base",
+            "not a base",
+            "not base image",
+            "inspiration only",
+            "few-shot",
+            "few shot",
+        )
+        sentences = re.split(r"(?<=[\.\!\?\n；;。！？])\s*|\n+", lowered_prompt)
+        for sentence in sentences:
+            if not sentence.strip():
+                continue
+            for phrase in FORBIDDEN_TEMPLATE_COPY_PHRASES:
+                start = 0
+                while True:
+                    idx = sentence.find(phrase, start)
+                    if idx == -1:
+                        break
+                    before = sentence[:idx]
+                    # 句首无空格时也要识别 leading "no "
+                    before_padded = f" {before}"
+                    negated = any(neg in before_padded for neg in negations) or any(
+                        sentence.lstrip().startswith(neg.strip()) for neg in negations if neg.strip()
+                    )
+                    contextual_allow = any(token in sentence for token in allow_context) and any(
+                        neg in sentence for neg in negations
+                    )
+                    if not negated and not contextual_allow:
+                        raise DesignSchemaError(
+                            "Implement prompt requests direct template copying or editing "
+                            f"(matched {phrase!r}). Rewrite implement_prompt so templates are "
+                            "style/layout reference only; never copy, trace, edit, or use as base image."
+                        )
+                    start = idx + len(phrase)
+
+    @classmethod
+    def _normalize_inventory_item(cls, value: Any) -> str:
+        # 只压缩连续空白，不能删除：删空格会把 "External retriever" 变成
+        # "Externalretriever"，使英文条目在原文中永远匹配不到。
+        # 中文分词空格的容错改由比对阶段的去空白版本承担。
+        return re.sub(r"\s+", " ", str(value or "")).strip()
+
+    @staticmethod
+    def _strip_ws(text: str) -> str:
+        return re.sub(r"\s+", "", text)
+
+    @classmethod
+    def _item_grounded_in_source(cls, item: str, source: str) -> bool:
+        """inventory 短标签是否可在原文中找到依据（允许子串，避免中文分词）。"""
+        if not item:
+            return False
+        if item in source or item.lower() in source.lower():
+            return True
+        # 去空白后再比一次：中文可能被模型插入空格，英文原文可能跨行断开
+        if cls._strip_ws(item).lower() in cls._strip_ws(source).lower():
+            return True
+        # 标签过长时：任意连续 4 字中文子串命中也算 grounded
+        cn_parts = re.findall(r"[\u4e00-\u9fff]{4,}", item)
+        if any(part in source for part in cn_parts):
+            return True
+        en_parts = re.findall(r"[A-Za-z][A-Za-z0-9\-+_/]{1,}", item)
+        if any(part.lower() in source.lower() for part in en_parts if len(part) >= 2):
+            return True
+        return False
+
+    @classmethod
+    def _item_present_in_output(cls, item: str, haystack: str) -> bool:
+        if not item:
+            return False
+        if item in haystack or item.lower() in haystack.lower():
+            return True
+        if cls._strip_ws(item).lower() in cls._strip_ws(haystack).lower():
+            return True
+        # 模块可能被缩短：检查 inventory 中较长的中文/英文片段
+        for part in re.findall(r"[\u4e00-\u9fff]{3,8}", item):
+            if part in haystack:
+                return True
+        for part in re.findall(r"[A-Za-z][A-Za-z0-9\-+_/]{2,}", item):
+            if part.lower() in haystack.lower():
+                return True
+        return False
+
+    @classmethod
+    def _validate_design_content_coverage(cls, design_json: dict[str, Any], title: str, section: str) -> None:
+        """以 content_inventory 为中心做保真，避免中文无空格全文被切成乱片段导致假阴性。"""
+        figure = design_json.get("figure") if isinstance(design_json.get("figure"), dict) else design_json
+        if not isinstance(figure, dict):
+            return
+        implement_prompt = cls._paper_implement_prompt(design_json)
+        source = f"{title}\n{section}".strip()
+        inventory_raw = figure.get("content_inventory") if isinstance(figure.get("content_inventory"), list) else []
+        inventory = [cls._normalize_inventory_item(item) for item in inventory_raw if cls._is_filled(item)]
+        # 去重保序
+        deduped: list[str] = []
+        seen: set[str] = set()
+        for item in inventory:
+            key = item.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            deduped.append(item)
+        inventory = deduped
+
+        diagram_spec = figure.get("diagram_spec") if isinstance(figure.get("diagram_spec"), dict) else {}
+        modules = diagram_spec.get("modules") if isinstance(diagram_spec.get("modules"), list) else []
+        modules_text = " ".join(str(item) for item in modules if cls._is_filled(item))
+        haystack = f"{implement_prompt}\n{modules_text}\n{' '.join(inventory)}\n{title}"
+
+        # 短方法文：只要求 prompt 足够长
+        if len(source) < 180:
+            if len(implement_prompt.strip()) < 360:
+                raise DesignSchemaError("implement_prompt too short; expand grounded operational detail from the user section")
+            return
+
+        if len(inventory) < 8:
+            raise DesignSchemaError(
+                "content_inventory too small for a rich method section; extract at least 8 short grounded "
+                "operation/component labels from the user text (e.g. OCR, BM25, 双塔编码, 交叉重排)"
+            )
+
+        # inventory 项本身必须能在用户原文中找到依据
+        ungrounded = [item for item in inventory if not cls._item_grounded_in_source(item, source)]
+        if len(ungrounded) > max(2, len(inventory) // 3):
+            raise DesignSchemaError(
+                "content_inventory contains too many items not grounded in the user section. "
+                f"Fix or remove: {', '.join(ungrounded[:10])}"
+            )
+
+        # implement_prompt / modules 应覆盖大部分 inventory（短标签），而不是原文长句碎片
+        missing = [item for item in inventory if not cls._item_present_in_output(item, haystack)]
+        covered = len(inventory) - len(missing)
+        coverage = covered / max(1, len(inventory))
+        if coverage < 0.55:
+            raise DesignSchemaError(
+                "implement_prompt/modules miss too many content_inventory items "
+                f"(coverage {coverage:.0%}). Re-include short labels such as: {', '.join(missing[:12])}"
+            )
+
+        detail_ok = any(
+            marker in implement_prompt.lower() or marker in implement_prompt
+            for marker in ("module detail", "模块细节", "per stage", "各阶段", "子模块", "leaf module")
+        )
+        if not detail_ok and ("阶段" not in implement_prompt or len(implement_prompt) < 450):
+            raise DesignSchemaError(
+                "implement_prompt must include a MODULE DETAIL / 模块细节 section listing leaf steps per stage"
+            )
 
     @classmethod
     def _validate_paper_design(cls, design_json: dict[str, Any]) -> None:
@@ -1072,8 +1508,10 @@ class JobManager:
             raise DesignSchemaError("Design model response must contain a figure object")
         cls._require_fields(figure, FIGURE_COMMON_FIELDS, "Paper figure")
         implement_prompt = cls._paper_implement_prompt(design_json)
-        if len(implement_prompt.strip()) < 220:
-            raise DesignSchemaError("Paper figure implement_prompt is too short for the strengthened contract")
+        if len(implement_prompt.strip()) < 360:
+            raise DesignSchemaError(
+                "Paper figure implement_prompt is too short; keep leaf-level operations from the user section"
+            )
         aspect_ratio = figure.get("aspect_ratio")
         if aspect_ratio and aspect_ratio not in FIGURE_ASPECT_RATIOS:
             raise ValueError(f"Invalid paper figure aspect_ratio: {aspect_ratio}")
@@ -1086,7 +1524,7 @@ class JobManager:
             {
                 "publication": ("publication", "academic", "paper", "论文", "出版"),
                 "faithfulness": ("faithful", "faithfulness", "grounded", "no hallucination", "忠实", "不虚构"),
-                "conciseness": ("concise", "abstraction", "short label", "简洁", "抽象"),
+                "conciseness": ("concise", "abstraction", "short label", "简洁", "抽象", "短标签"),
                 "readability": ("readable", "legible", "contrast", "可读", "对比"),
                 "template_boundary": ("template", "reference", "not copy", "参考", "模板"),
             },
@@ -1099,13 +1537,45 @@ class JobManager:
             if not isinstance(diagram_spec, dict):
                 raise DesignSchemaError("Diagram figure missing diagram_spec")
             cls._require_fields(diagram_spec, DIAGRAM_SPEC_FIELDS, "Diagram spec")
+            modules = diagram_spec.get("modules")
+            if not isinstance(modules, list) or len([m for m in modules if cls._is_filled(m)]) < 8:
+                raise DesignSchemaError(
+                    "Diagram modules too few; expand grounded leaf steps from the user section "
+                    "(need at least 8 named modules for multi-step methods)"
+                )
             connections = diagram_spec.get("connections")
-            if not isinstance(connections, list) or not connections:
-                raise DesignSchemaError("Diagram spec connections must be a non-empty list")
+            if not isinstance(connections, list) or len(connections) < 7:
+                raise DesignSchemaError(
+                    "Diagram connections too few; need at least 7 grounded edges for multi-stage flow"
+                )
             for index, connection in enumerate(connections, start=1):
                 if not isinstance(connection, dict):
                     raise DesignSchemaError(f"Diagram connection {index} must be an object")
                 cls._require_fields(connection, ("source", "target", "meaning"), f"Diagram connection {index}")
+            grouping = str(diagram_spec.get("grouping_hierarchy") or "").strip()
+            if len(grouping) < 12:
+                raise DesignSchemaError("Diagram grouping_hierarchy must describe multi-stage/lane structure")
+            lower_prompt = implement_prompt.lower()
+            complexity_markers = (
+                "stage",
+                "pipeline",
+                "multi",
+                "branch",
+                "group",
+                "layer",
+                "阶段",
+                "支路",
+                "分层",
+                "模块",
+                "流程",
+                "module detail",
+                "模块细节",
+            )
+            if not any(marker in lower_prompt or marker in implement_prompt for marker in complexity_markers):
+                raise DesignSchemaError(
+                    "implement_prompt must describe multi-stage/hierarchical flowchart layout "
+                    "with leaf module details from the user section"
+                )
             return
         if visual_type in {"plot", "chart"}:
             plot_spec = figure.get("plot_spec")
@@ -1297,66 +1767,7 @@ class JobManager:
         if template_analysis is not None:
             cls._validate_template_analysis(template_analysis)
         for page in sorted_pages:
-            if not isinstance(page, dict):
-                raise DesignSchemaError("Each PPT page must be an object")
-            cls._require_fields(
-                page,
-                (
-                    "page",
-                    "selected_template",
-                    "title",
-                    "slide_type",
-                    "body_layout_plan",
-                    "master_style_binding",
-                    "visual_element_plan",
-                    "emphasis_plan",
-                    "visible_text",
-                    "implement_prompt",
-                ),
-                f"Page {page.get('page')}",
-            )
-            binding = page.get("master_style_binding")
-            if not isinstance(binding, dict):
-                raise DesignSchemaError(f"Page {page.get('page')} missing master_style_binding object")
-            cls._require_fields(binding, PAGE_MASTER_BINDING_FIELDS, f"Page {page.get('page')} master_style_binding")
-            visual_plan = page.get("visual_element_plan")
-            if not isinstance(visual_plan, dict):
-                raise DesignSchemaError(f"Page {page.get('page')} missing visual_element_plan object")
-            cls._require_fields(visual_plan, PAGE_VISUAL_PLAN_FIELDS, f"Page {page.get('page')} visual_element_plan")
-            visual_elements = visual_plan.get("elements")
-            if not isinstance(visual_elements, list):
-                raise DesignSchemaError(f"Page {page.get('page')} visual_element_plan.elements must be a list")
-            if not visual_elements and "none" not in str(visual_plan.get("usage_decision") or "").lower() and "不用" not in str(visual_plan.get("usage_decision") or ""):
-                raise DesignSchemaError(f"Page {page.get('page')} visual_element_plan must list elements or explicitly justify using none")
-            for index, element in enumerate(visual_elements, start=1):
-                if not isinstance(element, dict):
-                    raise DesignSchemaError(f"Page {page.get('page')} visual element {index} must be an object")
-                cls._require_fields(element, PAGE_VISUAL_ELEMENT_FIELDS, f"Page {page.get('page')} visual element {index}")
-            emphasis_plan = page.get("emphasis_plan")
-            if not isinstance(emphasis_plan, dict):
-                raise DesignSchemaError(f"Page {page.get('page')} missing emphasis_plan object")
-            cls._require_fields(emphasis_plan, PAGE_EMPHASIS_PLAN_FIELDS, f"Page {page.get('page')} emphasis_plan")
-            keywords = emphasis_plan.get("keywords")
-            if not isinstance(keywords, list):
-                raise DesignSchemaError(f"Page {page.get('page')} emphasis_plan.keywords must be a list")
-            if len(keywords) > 5:
-                raise DesignSchemaError(f"Page {page.get('page')} emphasis_plan may highlight at most 5 key phrases")
-            for index, keyword in enumerate(keywords, start=1):
-                if not isinstance(keyword, dict):
-                    raise DesignSchemaError(f"Page {page.get('page')} emphasis keyword {index} must be an object")
-                cls._require_fields(keyword, PAGE_EMPHASIS_KEYWORD_FIELDS, f"Page {page.get('page')} emphasis keyword {index}")
-                text = str(keyword.get("text") or "").strip()
-                if len(text) > 24:
-                    raise DesignSchemaError(f"Page {page.get('page')} emphasis keyword {index} must be a short phrase")
-            visible_text = page.get("visible_text")
-            if not isinstance(visible_text, list) or any(not isinstance(item, str) or len(item.strip()) > 120 for item in visible_text):
-                raise DesignSchemaError(f"Page {page.get('page')} visible_text must be short strings")
-            prompt = page.get("implement_prompt")
-            if not isinstance(prompt, str) or len(prompt.strip()) < 80:
-                raise DesignSchemaError(f"Page {page.get('page')} missing usable page-specific implement_prompt")
-            if API_OUTPUT_PROMPT_PATTERN.search(prompt) or OUTPUT_SETTINGS_SENTENCE_PATTERN.search(prompt):
-                raise DesignSchemaError(f"Page {page.get('page')} implement_prompt must not include API output settings")
-            cls._validate_no_copy_request(prompt)
+            cls._validate_ppt_page_fields(page)
         return sorted_pages
 
     @classmethod
@@ -1415,6 +1826,11 @@ class JobManager:
                 f"Body layout plan: {page.get('body_layout_plan')}.",
                 f"Visual element plan: {cls._stringify_master_value(page.get('visual_element_plan'))}.",
                 f"Keyword emphasis plan: {cls._stringify_master_value(page.get('emphasis_plan'))}.",
+                "Render the planned visual elements as actual depictions of their subject — draw the device, product, "
+                "specimen, or scene itself with recognizable shape, structure and proportion. Do not substitute a "
+                "labeled rectangle, a bare text card, or a generic placeholder box for a subject that can be drawn.",
+                "Recolor every visual into the template palette and match the template line weight and card/border "
+                "style, so depicted objects read as part of the deck rather than pasted stock art.",
                 "Use visual elements only inside the body safe area. Keep them proportional to text, aligned to the template palette, and avoid inventing real brand logos when source context is missing.",
                 "Highlight only the planned key phrases using bold weight or the template primary/accent red; do not over-highlight full sentences.",
                 page_prompt,
@@ -1485,38 +1901,93 @@ class JobManager:
             }
         return defaults
 
+    @classmethod
+    def _validate_structure_plan(cls, data: dict[str, Any]) -> dict[str, Any]:
+        plan = data.get("structure_plan") if isinstance(data.get("structure_plan"), dict) else data
+        if not isinstance(plan, dict):
+            raise DesignSchemaError("Structure plan must be a JSON object under structure_plan")
+        required = (
+            "visual_family",
+            "primary_flow",
+            "lanes_or_stages",
+            "module_slots",
+            "connection_slots",
+            "grouping",
+            "information_density",
+            "layout_skeleton",
+        )
+        cls._require_fields(plan, required, "Structure plan")
+        stages = plan.get("lanes_or_stages")
+        if not isinstance(stages, list) or len(stages) < 2:
+            raise DesignSchemaError("Structure plan lanes_or_stages needs at least 2 stages/lanes")
+        slots = plan.get("module_slots")
+        if not isinstance(slots, list) or len(slots) < 6:
+            raise DesignSchemaError("Structure plan module_slots needs at least 6 abstract slots for template-like density")
+        edges = plan.get("connection_slots")
+        if not isinstance(edges, list) or len(edges) < 5:
+            raise DesignSchemaError("Structure plan connection_slots needs at least 5 abstract edges")
+        skeleton = str(plan.get("layout_skeleton") or "").strip()
+        if len(skeleton) < 80:
+            raise DesignSchemaError("Structure plan layout_skeleton is too short")
+        return plan
+
     @staticmethod
-    def _ppt_output_prompt_text(output: dict[str, Any]) -> str:
-        return ", ".join(f"{key}={value}" for key, value in output.items() if value not in (None, "")) or "use implement model defaults"
+    def _structure_plan_contract() -> str:
+        return """Return strict JSON only:
+{
+  "structure_plan": {
+    "visual_family": "pipeline|architecture|mechanism|comparison|multi-panel|other",
+    "canvas_ratio_hint": "16:9|4:3|1:1|inherit",
+    "primary_flow": "left-to-right|top-to-bottom|...",
+    "lanes_or_stages": [
+      {"name": "stage/lane abstract name", "role": "what this band does", "region": "top|middle|bottom|left|right", "slot_count": 3}
+    ],
+    "module_slots": [
+      {"id": "m1", "role": "abstract role e.g. encoder-like", "stage": "stage name", "region": "left-middle"}
+    ],
+    "connection_slots": [
+      {"from": "m1", "to": "m2", "style": "solid|dashed", "meaning_role": "data|control|feedback"}
+    ],
+    "grouping": "how panels/cards/nested boxes are organized",
+    "information_density": "high|medium",
+    "palette_and_rhythm": "short note on box style, color mood, spacing rhythm",
+    "layout_skeleton": "80+ chars free-text blueprint for later content filling (no user research claims)"
+  }
+}
+Use at least 2 lanes_or_stages, 6 module_slots, and 5 connection_slots. Roles must be abstract, not copied caption text."""
 
     @staticmethod
     def _paper_contract() -> str:
-        return """Return strict JSON only. Choose diagram/workflow/comparison/mechanism OR plot/chart and include the matching spec:
+        return """Return strict JSON only. Choose diagram/workflow/comparison/mechanism OR plot/chart.
+CRITICAL: Do not over-summarize the user section. Keep leaf operations (OCR, BM25, dual-tower, cross-encoder, Top-K, etc.) as modules or explicit sub-labels.
+Fill structure_plan layout with user content. Prefer the user brief language for on-figure labels (Chinese brief → Chinese labels).
+Contract:
 {
   "figure": {
     "title": "...",
     "visual_type": "diagram|workflow|comparison|mechanism|plot|chart",
     "aspect_ratio": "inherit|16:9|4:3|1:1|3:2|2:3|9:16",
     "template_usage": "strict|balanced|loose",
-    "layout_constraints": ["canvas, composition, hierarchy, spacing, and template-reference constraints"],
-    "semantic_constraints": ["faithfulness rules grounded in the user section"],
-    "visual_constraints": ["publication quality, palette, typography, contrast, readable layout"],
-    "forbidden_errors": ["hallucination", "reversed flow", "scope violation", "text overload", "direct template copying"],
+    "layout_constraints": ["canvas, composition, hierarchy, spacing, structure_plan alignment"],
+    "semantic_constraints": ["faithfulness rules grounded in the user section; no dropped subprocesses"],
+    "visual_constraints": ["publication quality, palette, typography, contrast, readable dense layout"],
+    "forbidden_errors": ["hallucination", "reversed flow", "scope violation", "text overload", "over-simplification", "direct template copying"],
     "quality_rubric": {
-      "faithfulness": "...",
-      "conciseness": "...",
+      "faithfulness": "retain user-listed operations",
+      "conciseness": "short labels, not fewer steps",
       "readability": "...",
       "aesthetics": "..."
     },
-    "visible_text": ["short labels only"],
+    "content_inventory": ["12-25 grounded operations/components extracted from user section"],
+    "visible_text": ["short labels covering inventory"],
     "diagram_spec": {
-      "modules": ["..."],
-      "entities": ["..."],
+      "modules": ["≥8 grounded short names covering inventory leaf steps"],
+      "entities": ["artifacts e.g. 文档块/证据包/索引"],
       "connections": [{"source": "...", "target": "...", "meaning": "..."}],
-      "flow_direction": "...",
-      "grouping_hierarchy": "...",
-      "arrow_routing": "...",
-      "label_strategy": "..."
+      "flow_direction": "left-to-right primary flow (or top-to-bottom)",
+      "grouping_hierarchy": "outer stages with nested leaf modules",
+      "arrow_routing": "solid data + dashed control/feedback",
+      "label_strategy": "keyword labels; keep leaf count"
     },
     "plot_spec": {
       "chart_type": "...",
@@ -1528,9 +1999,9 @@ class JobManager:
       "statistical_annotations": "none or supported annotations only",
       "data_integrity_rules": "No value distortion, misleading scales, label fabrication, wrong chart type, or unsupported statistics."
     },
-    "implement_prompt": "A complete image-generation prompt that explicitly covers publication quality, faithfulness, conciseness, readability, forbidden errors, and template boundary."
+    "implement_prompt": "Long bilingual-capable drawing brief WITH required sections: (1) canvas/layout (2) stage list (3) MODULE DETAIL / 模块细节 per stage listing every leaf module and edges (4) arrows (5) style (6) faithfulness/forbidden/template boundary. Must restate key user terms (OCR/BM25/双塔/重排/Top-K/… when present)."
   },
-  "quality_checklist": ["..."]
+  "quality_checklist": ["detail-preserving", "multi-stage", "faithful", "readable"]
 }
 Omit `diagram_spec` only for plot/chart. Omit `plot_spec` only for diagram/workflow/comparison/mechanism."""
 
@@ -1613,14 +2084,15 @@ Omit `diagram_spec` only for plot/chart. Omit `plot_spec` only for diagram/workf
       "background": "same background treatment"
     }},
     "visual_element_plan": {{
-      "usage_decision": "Use semantic icon/logo-like/product render/object visual elements when content benefits, or explicitly state none.",
+      "usage_decision": "Default to depicting real subjects. Name what will actually be drawn, or explicitly justify why this page is too abstract for any depiction.",
       "elements": [
         {{
-          "type": "icon|logo-like symbol|product/tool mark|object render|equipment illustration|material/sample image|scene illustration|none",
+          "type": "object/device render|specimen or material illustration|schematic cutaway|scene illustration|product/tool mark|logo-like symbol|semantic icon|none",
           "subject": "what the visual represents",
-          "source_reference": "source URL/title from Visual Asset Search Context, or generic semantic icon when no source is available",
+          "appearance": "Concrete look: overall shape and proportion, dominant materials and colors, defining structural features, typical orientation. The implement model has no other source for this.",
+          "source_reference": "source URL/title from Visual Asset Search Context, or 'domain knowledge, generic form' when no source is available",
           "placement": "where it sits inside the safe body area",
-          "style": "must match template palette, typography, card/border style, and academic restraint",
+          "style": "must be recolored into the template palette and match template line weight, card/border style, and academic restraint",
           "size_ratio": "small|medium|large with approximate body-area percentage"
         }}
       ],
@@ -1633,49 +2105,4 @@ Omit `diagram_spec` only for plot/chart. Omit `plot_spec` only for diagram/workf
     "visible_text": ["Simplified Chinese visible text only, short strings"],
     "implement_prompt": "Page-specific body instructions only. Start with: Create one 16:9 academic PowerPoint-style slide. Describe this page's variable body content, layout skeleton, visual/icon/object/product elements, diagrams/charts, keyword emphasis, and visible Chinese text. Do not repeat API output settings. Do not rely on the uploaded image or network images being available to the implement model."
   }}
-}}"""
-
-    @classmethod
-    def _ppt_pages_contract(cls, page_count: int, output: dict[str, Any] | None = None) -> str:
-        return f"""Return strict JSON only. Return exactly {page_count} pages. Every page must bind to the same template_analysis master_style_spec. Do not put API output parameters such as size, quality, output_format, response_format, aspect_ratio, image_size, thinking_level, or mime_type into any prompt text; those are supplied by API request fields.
-{{
-  "pages": [
-    {{
-      "page": 1,
-      "selected_template": "Template A|Template B|Template C-1|Template C-2|Template C-3|Template C-4|Template C-5|Template C-6|Template C-7",
-      "title": "...",
-      "slide_type": "...",
-      "body_layout_plan": "Describe the variable body skeleton inside the safe body area, including text/visual balance.",
-      "master_style_binding": {{
-        "title_region": "same extracted title region and title hierarchy",
-        "safe_margins": "same body safe area and no-overflow margins",
-        "header_footer": "same page number/logo/corner marks/header/footer behavior",
-        "divider_lines": "same divider/separator geometry and stroke",
-        "palette": "same background/primary/accent/neutral colors",
-        "typography": "same font hierarchy, weights, sizes, and alignment",
-        "module_style": "same card/frame/border/radius/fill/shadow/spacing rhythm",
-        "background": "same background treatment"
-      }},
-      "visual_element_plan": {{
-        "usage_decision": "Use semantic icon/logo-like/product render/object visual elements when content benefits, or explicitly state none when the page should remain text/chart only.",
-        "elements": [
-          {{
-            "type": "icon|logo-like symbol|product/tool mark|object render|equipment illustration|material/sample image|scene illustration|none",
-            "subject": "what the visual represents",
-            "source_reference": "source URL/title from Visual Asset Search Context, or generic semantic icon when no source is available",
-            "placement": "where it sits inside the safe body area",
-            "style": "must match template palette, typography, card/border style, and academic restraint",
-            "size_ratio": "small|medium|large with approximate body-area percentage"
-          }}
-        ],
-        "text_visual_balance": "Explain how visual elements and text remain proportionate and readable."
-      }},
-      "emphasis_plan": {{
-        "keywords": [{{"text": "short Chinese key phrase", "style": "bold|template-primary-red|template-accent-red", "reason": "why this phrase is emphasized"}}],
-        "style_rules": "Highlight only 2-5 short key phrases per page; never mark whole sentences or drift from template palette."
-      }},
-      "visible_text": ["Simplified Chinese visible text only"],
-      "implement_prompt": "Page-specific body instructions only. Start with: Create one 16:9 academic PowerPoint-style slide. Describe the variable body content, layout skeleton, visual/icon/object/product elements when useful, diagrams/charts, keyword emphasis, and visible Chinese text. Do not repeat API output settings. Do not rely on the uploaded image or network images being available to the implement model. Do not invent real brand logos when the visual asset context lacks a reliable source."
-    }}
-  ]
 }}"""
