@@ -90,11 +90,11 @@ impl<'a> JobService<'a> {
                 other => other.into(),
             })?;
         record.events = self.events_for_job(&record.id)?;
+        record.images = self.images_for_job(&record.id)?;
         Ok(record)
     }
 
-    pub fn list_jobs(&self, limit: usize, offset: usize) -> AppResult<Vec<JobRecord>> {
-        let conn = self.store.connection()?;
+    pub fn list_jobs(&self, limit: usize, offset: usize) -> AppResult<Vec<JobRecord>> {        let conn = self.store.connection()?;
         let mut stmt = conn.prepare(
             "SELECT id, mode, status, message, stage, created_at, updated_at FROM jobs ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
         )?;
@@ -114,12 +114,82 @@ impl<'a> JobService<'a> {
         let mut records = rows.collect::<Result<Vec<_>, _>>()?;
         for record in &mut records {
             record.events = self.events_for_job(&record.id)?;
+            record.images = self.images_for_job(&record.id)?;
         }
         Ok(records)
     }
 
-    fn events_for_job(&self, job_id: &str) -> AppResult<Vec<JobEvent>> {
+    /// 记录一个阶段：写 job_stages 并同步 jobs 的当前 stage/message。
+    pub fn mark_stage(&self, job_id: &str, stage: &str, message: &str, status: &str) -> AppResult<()> {
+        let now = Utc::now().to_rfc3339();
         let conn = self.store.connection()?;
+        conn.execute(
+            "INSERT INTO job_stages(job_id, stage, message, status, created_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![job_id, stage, message, status, now],
+        )?;
+        let job_status = match status {
+            "succeeded" | "failed" => status,
+            _ => "running",
+        };
+        conn.execute(
+            "UPDATE jobs SET status = ?1, stage = ?2, message = ?3, updated_at = ?4 WHERE id = ?5",
+            params![job_status, stage, message, now, job_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn payload(&self, job_id: &str) -> AppResult<serde_json::Value> {
+        let conn = self.store.connection()?;
+        let mut stmt = conn.prepare("SELECT payload_json FROM jobs WHERE id = ?1")?;
+        let raw: String = stmt
+            .query_row(params![job_id], |row| row.get(0))
+            .map_err(|error| match error {
+                rusqlite::Error::QueryReturnedNoRows => AppError::new("job_not_found", "Job not found"),
+                other => other.into(),
+            })?;
+        Ok(serde_json::from_str(&raw)?)
+    }
+
+    /// 成功收尾：落 result_json（含图片列表）并标记 completed。
+    pub fn finish(&self, job_id: &str, images: &[JobImage]) -> AppResult<()> {
+        let now = Utc::now().to_rfc3339();
+        let result = serde_json::json!({ "images": images });
+        let conn = self.store.connection()?;
+        conn.execute(
+            "UPDATE jobs SET status = 'succeeded', stage = 'completed', message = '任务完成', \
+             result_json = ?1, updated_at = ?2 WHERE id = ?3",
+            params![serde_json::to_string(&result)?, now, job_id],
+        )?;
+        drop(conn);
+        self.mark_stage(job_id, "completed", "任务完成", "succeeded")
+    }
+
+    pub fn fail(&self, job_id: &str, message: &str) -> AppResult<()> {
+        let now = Utc::now().to_rfc3339();
+        let error = serde_json::json!({ "message": message, "failed_at": now });
+        let conn = self.store.connection()?;
+        conn.execute(
+            "UPDATE jobs SET error_json = ?1, updated_at = ?2 WHERE id = ?3",
+            params![serde_json::to_string(&error)?, now, job_id],
+        )?;
+        drop(conn);
+        self.mark_stage(job_id, "failed", message, "failed")
+    }
+
+    fn images_for_job(&self, job_id: &str) -> AppResult<Vec<JobImage>> {
+        let conn = self.store.connection()?;
+        let mut stmt = conn.prepare("SELECT result_json FROM jobs WHERE id = ?1")?;
+        let raw: Option<String> = stmt
+            .query_row(params![job_id], |row| row.get(0))
+            .unwrap_or(None);
+        let Some(raw) = raw else {
+            return Ok(Vec::new());
+        };
+        let value: serde_json::Value = serde_json::from_str(&raw)?;
+        Ok(serde_json::from_value(value["images"].clone()).unwrap_or_default())
+    }
+
+    fn events_for_job(&self, job_id: &str) -> AppResult<Vec<JobEvent>> {        let conn = self.store.connection()?;
         let mut stmt = conn.prepare(
             "SELECT stage, message, status, created_at FROM job_stages WHERE job_id = ?1 ORDER BY id ASC",
         )?;
