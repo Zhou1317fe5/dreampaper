@@ -2,7 +2,10 @@ pub mod asset;
 pub mod config;
 pub mod doc;
 pub mod job;
+pub mod model;
+pub mod net;
 pub mod prompt;
+pub mod search;
 pub mod store;
 pub mod tpl;
 
