@@ -33,5 +33,5 @@ AGENTS.md
 tests/
 example.md
 
-# 桌面端（Tauri）改造尚未完成，本仓库当前只发布网页版
-src-tauri/
+# Rust 构建产物
+src-tauri/target/
