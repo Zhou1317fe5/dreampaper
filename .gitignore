@@ -35,3 +35,6 @@ example.md
 
 # Rust 构建产物
 src-tauri/target/
+
+# CI 归集的待发布安装包
+release-artifacts/

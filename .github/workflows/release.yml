@@ -1,0 +1,121 @@
+name: Release
+
+# 打 v* tag 触发。四个安装包必须走 CI：本机无法构建 Windows，
+# 且 macOS 双架构需要两台不同架构的 runner。
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "版本号（不带 v 前缀），仅用于手动试跑"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      # 一个平台失败不影响其他平台产包，便于单独重跑
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            label: Windows (setup + portable)
+            target: x86_64-pc-windows-msvc
+          - os: macos-13 # Intel runner
+            label: macOS Intel
+            target: x86_64-apple-darwin
+          - os: macos-14 # Apple Silicon runner
+            label: macOS Apple Silicon
+            target: aarch64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: 解析版本号
+        id: version
+        shell: bash
+        run: |
+          if [ -n "${{ github.event.inputs.version }}" ]; then
+            version="${{ github.event.inputs.version }}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "构建版本 $version"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      # Rust 编译是这条流水线的大头，缓存按 target 分键
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.target }}
+
+      - name: 安装前端依赖
+        run: npm ci
+
+      # 安装包内显示的版本必须跟 tag 一致，否则用户装完看到的还是 0.1.0
+      - name: 对齐 tag 与包内版本号
+        shell: bash
+        run: node .github/scripts/set-version.mjs "${{ steps.version.outputs.version }}"
+
+      - name: 构建安装包
+        shell: bash
+        env:
+          # 未购证书，做 ad-hoc 签名：不能消除 Gatekeeper 提示，
+          # 但能避免「已损坏，无法打开」这类更糟的报错。
+          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.os, 'macos') && '-' || '' }}
+        run: npm run tauri:build -- --target ${{ matrix.target }}
+
+      - name: 归集并重命名产物
+        id: collect
+        shell: bash
+        run: bash .github/scripts/collect-artifacts.sh "${{ matrix.target }}" "${{ steps.version.outputs.version }}"
+
+      - name: 上传到 Release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: release-artifacts/*
+          draft: true
+          fail_on_unmatched_files: true
+          body: |
+            ## DreamPaper ${{ steps.version.outputs.version }}
+
+            | 文件 | 平台 |
+            | --- | --- |
+            | `dreampaper-${{ steps.version.outputs.version }}-setup.exe` | Windows 安装版（创建桌面快捷方式） |
+            | `dreampaper-${{ steps.version.outputs.version }}-portable.exe` | Windows 便携版（免安装，需系统已有 WebView2） |
+            | `dreampaper-${{ steps.version.outputs.version }}-x64-mac.dmg` | macOS Intel |
+            | `dreampaper-${{ steps.version.outputs.version }}-arm64-mac.dmg` | macOS Apple Silicon |
+
+            ### 首次打开
+
+            安装包**未做代码签名**（未购买证书），因此：
+
+            - **macOS**：双击会提示「无法验证开发者」。请右键点击 App → 选择「打开」→ 再次点「打开」。只需操作一次。
+            - **Windows**：SmartScreen 会提示「已保护你的电脑」。点「更多信息」→「仍要运行」。
+            - **Windows 便携版**依赖系统的 WebView2 运行时。Win11 与 Win10 21H2 及以上已内置；更旧的系统请先装
+              [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) 或改用安装版。
+
+      # 非 tag 触发（手动试跑）时不发 Release，只留构建产物供下载检查
+      - name: 上传构建产物（试跑）
+        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: dreampaper-${{ matrix.target }}
+          path: release-artifacts/*
+          if-no-files-found: error

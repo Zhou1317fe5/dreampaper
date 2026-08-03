@@ -33,7 +33,9 @@
       "icons/icon.icns",
       "icons/icon.ico"
     ],
-    "resources": ["../prompts/**/*"],
+    "resources": {
+      "../prompts": "prompts"
+    },
     "windows": {
       "nsis": {
         "installMode": "currentUser"

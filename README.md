@@ -52,6 +52,35 @@
 
 ---
 
+## 桌面版下载
+
+不想配 Python 环境的话，直接下[最新 Release](../../releases/latest)。桌面版内置 Rust 后端，无需单独启动服务。
+
+| 文件 | 平台 |
+| --- | --- |
+| `dreampaper-*-setup.exe` | Windows 安装版（创建桌面快捷方式） |
+| `dreampaper-*-portable.exe` | Windows 便携版（免安装） |
+| `dreampaper-*-x64-mac.dmg` | macOS Intel |
+| `dreampaper-*-arm64-mac.dmg` | macOS Apple Silicon |
+
+### 首次打开
+
+安装包**未做代码签名**（未购买开发者证书），系统会拦一次：
+
+- **macOS**：双击提示「无法验证开发者」。右键点 App → 选「打开」→ 再点一次「打开」。只需操作一次。
+- **Windows**：SmartScreen 提示「已保护你的电脑」。点「更多信息」→「仍要运行」。
+- **Windows 便携版**依赖系统的 WebView2 运行时。Win11 与 Win10 21H2 及以上已内置；更旧的系统请先装
+  [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)，或改用安装版（会自动处理）。
+
+桌面版的配置与产物落在系统应用数据目录，而非 `~/.dreampaper/`：
+
+| 平台 | 路径 |
+| --- | --- |
+| macOS | `~/Library/Application Support/com.dreampaper.app/` |
+| Windows | `%APPDATA%\com.dreampaper.app\` |
+
+---
+
 ## 准备 Template 库（科研图）
 
 本仓库**不附带** PaperBananaBench。科研图模式需要本地参考图库。

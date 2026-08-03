@@ -52,6 +52,35 @@
 
 ---
 
+## Desktop downloads
+
+Prefer not to set up Python? Grab the [latest release](../../releases/latest). The desktop build embeds a Rust backend, so there is no separate server to start.
+
+| File | Platform |
+| --- | --- |
+| `dreampaper-*-setup.exe` | Windows installer (creates a desktop shortcut) |
+| `dreampaper-*-portable.exe` | Windows portable (no install) |
+| `dreampaper-*-x64-mac.dmg` | macOS Intel |
+| `dreampaper-*-arm64-mac.dmg` | macOS Apple Silicon |
+
+### First launch
+
+The bundles are **not code-signed** (no developer certificate purchased), so the OS will block them once:
+
+- **macOS**: double-clicking reports an unverified developer. Right-click the app → Open → Open again. One time only.
+- **Windows**: SmartScreen shows "Windows protected your PC". Click "More info" → "Run anyway".
+- The **Windows portable** build needs the WebView2 runtime. Windows 11 and Windows 10 21H2+ ship with it; on older systems install the
+  [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) first, or use the installer (which handles it).
+
+The desktop build stores config and outputs in the OS app-data directory rather than `~/.dreampaper/`:
+
+| Platform | Path |
+| --- | --- |
+| macOS | `~/Library/Application Support/com.dreampaper.app/` |
+| Windows | `%APPDATA%\com.dreampaper.app\` |
+
+---
+
 ## Template library (paper figures)
 
 This repo **does not ship** PaperBananaBench. Figure mode needs it locally.
