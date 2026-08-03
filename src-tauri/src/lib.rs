@@ -9,6 +9,9 @@ use tauri::Manager;
 
 pub fn run() {
     tauri::Builder::default()
+        // 模板包导入要的是磁盘上的目录路径，浏览器 file input 给不出来，
+        // 只能靠原生目录选择器。
+        .plugin(tauri_plugin_dialog::init())
         .register_uri_scheme_protocol("dp-asset", protocol::asset_response)
         .register_uri_scheme_protocol("dp-template", protocol::template_response)
         .setup(|app| {

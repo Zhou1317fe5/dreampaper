@@ -40,6 +40,13 @@ export interface TemplateSummary {
   image_url: string;
 }
 
+export interface TemplatePackSummary {
+  id: string;
+  name: string;
+  version?: string | null;
+  template_count: number;
+}
+
 export interface AssetUpload {
   id: string;
   filename: string;

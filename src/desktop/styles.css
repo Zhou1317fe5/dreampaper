@@ -1,0 +1,336 @@
+/*
+ * 桌面外壳骨架。只写「外层布局 + 模板库页」，其余一律沿用 ../styles.css，
+ * 这样网页版调色/控件样式的改动会自动同步过来，不必两处各改一遍。
+ *
+ * 桌面窗口宽度固定（最小 1100px），网页版的 min(100%, 1120px) 居中
+ * 在这里只会让两侧留白，所以内容区改为铺满并把密度调高一档。
+ */
+
+:root {
+  --side-w: 200px;
+}
+
+.desktop-shell {
+  display: grid;
+  grid-template-columns: var(--side-w) 1fr;
+  min-height: 100vh;
+  /* 桌面端寸土寸金，比网页版收紧一档 */
+  --shell-pad: 16px;
+  --shell-gap: 16px;
+  --panel-pad: 20px;
+  --stack-gap: 12px;
+}
+
+/* —— 侧栏 —— */
+
+.desktop-side {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-4);
+  padding: var(--space-4) var(--space-3);
+  border-right: 1px solid rgba(255, 255, 255, 0.7);
+  background: var(--soft-bg);
+  box-shadow: inset -10px 0 22px rgba(168, 146, 170, 0.07);
+  /* 侧栏不跟内容一起滚 */
+  position: sticky;
+  top: 0;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.desktop-brand {
+  display: flex;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 0 var(--space-1);
+}
+
+.desktop-brand img {
+  width: 26px;
+  height: 26px;
+  border-radius: 8px;
+}
+
+.desktop-brand span {
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+}
+
+.desktop-nav {
+  display: grid;
+  gap: 4px;
+}
+
+.desktop-nav button {
+  padding: 10px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.desktop-nav button:hover {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.desktop-nav button.active {
+  background: rgba(255, 255, 255, 0.95);
+  font-weight: 600;
+  box-shadow: var(--shadow-control);
+}
+
+/* —— 近期任务 —— */
+
+.desktop-recent {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: var(--space-1);
+}
+
+.desktop-recent h2 {
+  margin: 0;
+  padding: 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.desktop-recent-empty {
+  margin: 0;
+  padding: 0 var(--space-2);
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.desktop-recent ul {
+  overflow-y: auto;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.desktop-recent button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: var(--space-1);
+  padding: 7px var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.desktop-recent button:hover {
+  background: rgba(255, 255, 255, 0.6);
+}
+
+.desktop-recent-mode {
+  flex: 1;
+  overflow: hidden;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.desktop-recent-time {
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.job-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-muted);
+}
+
+.job-dot-running,
+.job-dot-queued {
+  background: #d19a1f;
+}
+
+.job-dot-succeeded {
+  background: #3f9d64;
+}
+
+.job-dot-failed {
+  background: #c2453f;
+}
+
+.desktop-lang {
+  padding: 7px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.7);
+  color: inherit;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+/* —— 内容区：铺满，不居中 —— */
+
+.desktop-main {
+  display: grid;
+  min-width: 0;
+  align-content: start;
+  gap: var(--shell-gap);
+  padding: var(--shell-pad);
+}
+
+/* —— 模板库 —— */
+
+.page-head {
+  display: grid;
+  gap: 4px;
+  margin-bottom: var(--space-4);
+}
+
+.page-head h2 {
+  margin: 0;
+  font-size: 18px;
+}
+
+.page-head p {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}
+
+.tpl-import-row {
+  display: grid;
+  gap: var(--col-gap);
+  margin-bottom: var(--space-4);
+  grid-template-columns: 2fr 1fr;
+}
+
+@media (max-width: 1180px) {
+  .tpl-import-row {
+    grid-template-columns: 1fr;
+  }
+}
+
+.tpl-import-card {
+  display: grid;
+  align-content: start;
+  gap: var(--stack-gap);
+  padding: var(--space-4);
+  border-radius: var(--radius-md);
+  background: var(--soft-bg);
+  box-shadow: var(--shadow-recess);
+}
+
+.tpl-import-card h3 {
+  margin: 0;
+  font-size: 14px;
+}
+
+.tpl-hint,
+.tpl-count {
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.tpl-link {
+  color: inherit;
+  font-size: 12px;
+  opacity: 0.75;
+}
+
+.tpl-count {
+  margin-bottom: var(--space-2);
+}
+
+.tpl-grid {
+  display: grid;
+  gap: var(--space-3);
+  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
+}
+
+.tpl-card {
+  overflow: hidden;
+  margin: 0;
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.75);
+  box-shadow: var(--shadow-control);
+}
+
+.tpl-card img {
+  display: block;
+  width: 100%;
+  height: 132px;
+  background: #fff;
+  object-fit: contain;
+}
+
+.tpl-card figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: var(--space-1);
+  font-size: 11px;
+}
+
+.tpl-badge {
+  padding: 2px 7px;
+  border-radius: 999px;
+  background: rgba(0, 0, 0, 0.06);
+  font-size: 10px;
+}
+
+.tpl-badge-plot {
+  background: rgba(63, 157, 100, 0.16);
+}
+
+.tpl-badge-diagram {
+  background: rgba(94, 122, 189, 0.16);
+}
+
+.tpl-cat {
+  color: var(--text-muted);
+}
+
+.tpl-intent {
+  overflow: hidden;
+  width: 100%;
+  color: var(--text-muted);
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tpl-empty {
+  display: grid;
+  justify-items: center;
+  gap: var(--space-2);
+  padding: 56px var(--space-4);
+  border: 1px dashed rgba(140, 125, 145, 0.35);
+  border-radius: var(--radius-md);
+  text-align: center;
+}
+
+.tpl-empty h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.tpl-empty p {
+  max-width: 52ch;
+  margin: 0;
+  color: var(--text-muted);
+  font-size: 13px;
+}

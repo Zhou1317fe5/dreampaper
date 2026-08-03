@@ -103,6 +103,13 @@ dream-paper/
 
 > Skip this if you only use Slide mode.
 
+**The desktop build** does not read the repo directory. Import from the Templates page instead:
+
+- **Import pack**: extract PaperBananaBench, click "Choose directory…", and select the extracted directory (the one containing `diagram/` and `plot/`) to import everything at once
+- **Import image**: add your own templates one at a time with kind / category / description
+
+Imported templates are copied into the app data directory, so switching branches or deleting the repo does not affect them.
+
 ---
 
 ## Run locally

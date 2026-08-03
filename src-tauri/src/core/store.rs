@@ -39,9 +39,15 @@ impl Store {
              DELETE FROM fts_probe;\
              INSERT INTO fts_probe(body) VALUES ('dream paper sqlite fts5 probe');",
         )?;
-        let mut stmt = conn.prepare("SELECT rowid FROM fts_probe WHERE fts_probe MATCH 'dream'")?;
-        let mut rows = stmt.query([])?;
-        let _ = rows.next()?;
+        // 查询语句必须在 DROP 之前析构：statement 还开着就 DROP 自己查的表，
+        // SQLite 会返回 SQLITE_LOCKED（database table is locked），
+        // 而这里是 setup hook，报错等于应用起不来。
+        {
+            let mut stmt =
+                conn.prepare("SELECT rowid FROM fts_probe WHERE fts_probe MATCH 'dream'")?;
+            let mut rows = stmt.query([])?;
+            let _ = rows.next()?;
+        }
         conn.execute_batch("DROP TABLE IF EXISTS fts_probe;")?;
         Ok(())
     }
@@ -152,3 +158,51 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
   body
 );
 "#;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// 这条用例的存在理由：`initialize` 只在应用启动时跑一次，
+    /// cargo check / cargo test / tauri build 全都不会碰它。
+    /// 之前 FTS5 冒烟测试在查询 statement 还活着时 DROP 掉自己查的表，
+    /// SQLite 返回 SQLITE_LOCKED，打包好的应用一启动就 panic——
+    /// 只有真正双击运行才暴露得出来。
+    #[test]
+    fn initialize_is_idempotent_and_survives_fts_probe() {
+        let dir = std::env::temp_dir().join(format!(
+            "dreampaper-store-test-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+
+        Store::initialize(&dir).expect("首次初始化应成功");
+        // 每次启动都会重跑，必须幂等
+        let store = Store::initialize(&dir).expect("重复初始化应成功");
+
+        let conn = store.connection().expect("应能取到连接");
+        let tables: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' \
+                 AND name IN ('jobs','job_stages','assets','templates','documents','chunks')",
+                [],
+                |row| row.get(0),
+            )
+            .expect("应能查询 schema");
+        assert_eq!(tables, 6, "建表不完整");
+
+        // 探针表必须被清理掉，不能留在用户库里
+        let probe: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name = 'fts_probe'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(probe, 0, "fts_probe 未被清理");
+
+        drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}

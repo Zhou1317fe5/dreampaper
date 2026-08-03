@@ -2,9 +2,9 @@ import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { createJob, getConfig, getJob, listTemplates, saveConfig, uploadAsset } from './api';
 import type { AppConfig, AssetUpload, JobRecord, ModelProfile, TemplateSummary } from './types';
 
-type Lang = 'zh' | 'en';
+export type Lang = 'zh' | 'en';
 type UiMode = 'paper' | 'ppt' | 'settings';
-type PaperFigureState = {
+export type PaperFigureState = {
   kind: string;
   query: string;
   selected: string[];
@@ -15,7 +15,7 @@ type PaperFigureState = {
   styleStrength: 'high' | 'medium' | 'low';
   custom: string;
 };
-type PptSlideState = {
+export type PptSlideState = {
   asset: AssetUpload | null;
   materials: AssetUpload[];
   material: string;
@@ -24,7 +24,7 @@ type PptSlideState = {
 };
 type StateUpdater<T> = (next: T | ((current: T) => T)) => void;
 
-const defaultPaperState: PaperFigureState = {
+export const defaultPaperState: PaperFigureState = {
   kind: 'diagram',
   query: '',
   selected: [],
@@ -36,7 +36,7 @@ const defaultPaperState: PaperFigureState = {
   custom: ''
 };
 
-const defaultPptState: PptSlideState = {
+export const defaultPptState: PptSlideState = {
   asset: null,
   materials: [],
   material: '',
@@ -44,7 +44,7 @@ const defaultPptState: PptSlideState = {
   custom: ''
 };
 
-const emptyConfig: AppConfig = {
+export const emptyConfig: AppConfig = {
   version: 1,
   active_design_profile: 'design-default',
   active_implement_profile: 'implement-default',
@@ -55,7 +55,7 @@ const emptyConfig: AppConfig = {
   model_profiles: []
 };
 
-const copy = {
+export const copy = {
   zh: {
     nav: { paper: '科研图', ppt: '幻灯片', settings: '设置' },
     brandSub: 'figure / slide',
@@ -140,7 +140,7 @@ const PPT_STAGE_WEIGHTS: Record<string, number> = {
   failed: 100
 };
 
-function useJobPolling(job: JobRecord | null, setJob: (job: JobRecord) => void, onError: (message: string) => void) {
+export function useJobPolling(job: JobRecord | null, setJob: (job: JobRecord) => void, onError: (message: string) => void) {
   useEffect(() => {
     if (!job || job.status === 'succeeded' || job.status === 'failed') return;
     const timer = window.setInterval(() => {
@@ -264,7 +264,7 @@ function protocolLabel(value: string) {
   return PROTOCOL_LABELS[value] || value;
 }
 
-function Settings({ config, onChange, onSave, t }: { config: AppConfig; onChange: (config: AppConfig) => void; onSave: (config: AppConfig) => void; t: typeof copy[Lang] }) {
+export function Settings({ config, onChange, onSave, t }: { config: AppConfig; onChange: (config: AppConfig) => void; onSave: (config: AppConfig) => void; t: typeof copy[Lang] }) {
   const design = config.model_profiles.find((item) => item.role === 'design') || defaultDesign();
   const implement = config.model_profiles.find((item) => item.role === 'implement') || defaultImplement();
   const search = config.model_profiles.find((item) => item.role === 'search') || defaultSearch();
@@ -585,7 +585,7 @@ function ModelEditor({ profile, onChange, t, hint }: { profile: ModelProfile; on
   );
 }
 
-function PaperFigure({ state, onState, onJob, onMessage, t }: { state: PaperFigureState; onState: StateUpdater<PaperFigureState>; onJob: (job: JobRecord) => void; onMessage: (message: string, tone?: 'info' | 'error') => void; t: typeof copy[Lang] }) {
+export function PaperFigure({ state, onState, onJob, onMessage, t }: { state: PaperFigureState; onState: StateUpdater<PaperFigureState>; onJob: (job: JobRecord) => void; onMessage: (message: string, tone?: 'info' | 'error') => void; t: typeof copy[Lang] }) {
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const formBodyRef = useRef<HTMLDivElement>(null);
   const galleryRef = useRef<HTMLDivElement>(null);
@@ -719,7 +719,7 @@ function PaperFigure({ state, onState, onJob, onMessage, t }: { state: PaperFigu
   );
 }
 
-function PptSlide({ state, onState, onJob, onMessage, t }: { state: PptSlideState; onState: StateUpdater<PptSlideState>; onJob: (job: JobRecord) => void; onMessage: (message: string, tone?: 'info' | 'error') => void; t: typeof copy[Lang] }) {
+export function PptSlide({ state, onState, onJob, onMessage, t }: { state: PptSlideState; onState: StateUpdater<PptSlideState>; onJob: (job: JobRecord) => void; onMessage: (message: string, tone?: 'info' | 'error') => void; t: typeof copy[Lang] }) {
   const { asset, materials, material, pages, custom } = state;
 
   function patch(values: Partial<PptSlideState>) {
@@ -845,7 +845,7 @@ function PptSlide({ state, onState, onJob, onMessage, t }: { state: PptSlideStat
   );
 }
 
-function JobPanel({ job, t }: { job: JobRecord; t: typeof copy[Lang] }) {
+export function JobPanel({ job, t }: { job: JobRecord; t: typeof copy[Lang] }) {
   const images = useMemo(() => job.images || [], [job.images]);
   const events = job.events || [];
   const latest = events.length > 0 ? events[events.length - 1] : null;
@@ -980,7 +980,7 @@ function Header({ title, text }: { title: string; text: string }) {
   );
 }
 
-function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
+export function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {
   return (
     <div className={`field${hint ? ' has-hint' : ''}`}>
       <span className="field-label">{label}</span>
@@ -1048,7 +1048,7 @@ function IntegerInput({
   );
 }
 
-function FilePicker({
+export function FilePicker({
   accept,
   label,
   value,
