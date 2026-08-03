@@ -2,7 +2,7 @@ use chrono::Utc;
 use rusqlite::params;
 use serde::{Deserialize, Serialize};
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 use super::store::Store;
 
@@ -78,6 +78,49 @@ impl<'a> ConfigService<'a> {
         let normalized = normalize_config(config, Some(existing));
         self.persist_config(&normalized)?;
         Ok(public_config(normalized))
+    }
+
+    /// 管道用的配置：保留 api_key（`get_config` 给前端的那份会抹掉密钥），
+    /// 并补齐 search profile 与代理默认值。
+    pub fn runtime_config(&self) -> AppResult<AppConfig> {
+        let mut config = self.load_private_config()?;
+        ensure_search_profile(&mut config);
+        config.proxy_url = normalize_proxy_url(config.proxy_url);
+        Ok(config)
+    }
+
+    /// 取某个角色的启用 profile：先按 active id 匹配，退化为该角色的第一个。
+    pub fn active_profile<'c>(
+        config: &'c AppConfig,
+        role: &str,
+    ) -> AppResult<&'c ModelProfile> {
+        let active_id = match role {
+            "design" => &config.active_design_profile,
+            "implement" => &config.active_implement_profile,
+            "search" => &config.active_search_profile,
+            other => {
+                return Err(AppError::new(
+                    "invalid_role",
+                    format!("Unknown model role: {other}"),
+                ))
+            }
+        };
+        config
+            .model_profiles
+            .iter()
+            .find(|profile| &profile.id == active_id && profile.role == role)
+            .or_else(|| {
+                config
+                    .model_profiles
+                    .iter()
+                    .find(|profile| profile.role == role)
+            })
+            .ok_or_else(|| {
+                AppError::new(
+                    "missing_profile",
+                    format!("Missing active {role} model profile"),
+                )
+            })
     }
 
     fn load_private_config(&self) -> AppResult<AppConfig> {

@@ -38,6 +38,35 @@ pub struct TemplateFile {
     pub path: PathBuf,
 }
 
+/// 模板条目的完整视图（列表用 `TemplateSummary`，管道用这个）。
+#[derive(Clone, Debug)]
+pub struct TemplateDetail {
+    pub id: String,
+    pub source_id: String,
+    pub kind: String,
+    pub category: Option<String>,
+    pub rounded_ratio: Option<String>,
+    pub visual_intent: String,
+    pub content_summary: String,
+    pub mime_type: String,
+    pub image_path: PathBuf,
+}
+
+impl TemplateDetail {
+    /// 对齐 `jobs.py::_template_metadata` 的字段集。
+    pub fn metadata(&self) -> Value {
+        serde_json::json!({
+            "id": self.id,
+            "kind": self.kind,
+            "category": self.category,
+            "visual_intent": self.visual_intent,
+            "content": self.content_summary,
+            "rounded_ratio": self.rounded_ratio,
+            "path_to_gt_image": self.source_id,
+        })
+    }
+}
+
 pub struct TemplateService<'a> {
     store: &'a Store,
     app_data: &'a Path,
@@ -195,6 +224,36 @@ impl<'a> TemplateService<'a> {
             name,
             version: None,
             template_count: count,
+        })
+    }
+
+    /// 科研图管道要的完整条目：既要图片路径（喂给 design model），
+    /// 也要 metadata（作为 `Selected Template Metadata` 段落）。
+    pub fn template_detail(&self, id: &str) -> AppResult<TemplateDetail> {
+        let conn = self.store.connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT id, source_id, kind, category, rounded_ratio, visual_intent, content_summary, image_path \
+             FROM templates WHERE id = ?1",
+        )?;
+        stmt.query_row(params![id], |row| {
+            let image_path = PathBuf::from(row.get::<_, String>(7)?);
+            Ok(TemplateDetail {
+                id: row.get(0)?,
+                source_id: row.get(1)?,
+                kind: row.get(2)?,
+                category: row.get(3)?,
+                rounded_ratio: row.get(4)?,
+                visual_intent: row.get(5)?,
+                content_summary: row.get(6)?,
+                mime_type: guess_mime(&image_path),
+                image_path,
+            })
+        })
+        .map_err(|error| match error {
+            rusqlite::Error::QueryReturnedNoRows => {
+                AppError::new("template_not_found", "Template not found")
+            }
+            other => other.into(),
         })
     }
 

@@ -46,6 +46,18 @@ fn default_strength() -> String {
 /// 每个阶段回调一次，供上层写 job_stages 并推送事件。
 pub type StageSink<'a> = &'a (dyn Fn(&str, &str) + Send + Sync);
 
+/// 校验 payload。`execute.rs` 在 `paper_validate` 阶段调用——
+/// 校验要排在读 template 之前，取不到的 id 才不会先报成「模板不存在」。
+pub fn validate_payload(payload: &PaperFigurePayload) -> AppResult<()> {
+    if payload.template_ids.is_empty() {
+        return Err(AppError::new(
+            "invalid_payload",
+            "Paper figure requires at least one template",
+        ));
+    }
+    Ok(())
+}
+
 pub struct FigureRun<'a> {
     pub prompts: &'a PromptStore,
     pub config: &'a AppConfig,
@@ -57,20 +69,15 @@ pub struct FigureRun<'a> {
 
 impl FigureRun<'_> {
     /// 返回生成图片的 base64。
+    ///
+    /// 前两个阶段（`paper_validate` / `paper_templates`）由 `execute.rs`
+    /// 在校验与解析 template 时上报，本方法从 `paper_structure_prompt` 接手。
     pub async fn run(
         &self,
         payload: &PaperFigurePayload,
         stage: StageSink<'_>,
     ) -> AppResult<String> {
         let proxy = self.config.proxy_url.as_deref();
-
-        stage("paper_validate", "校验 Figure 输入");
-        if payload.template_ids.is_empty() {
-            return Err(AppError::new(
-                "invalid_payload",
-                "Paper figure requires at least one template",
-            ));
-        }
 
         let system = self.prompts.load("global/system.md")?;
         let template_summary = serde_json::to_string_pretty(&self.template_metadata)?;

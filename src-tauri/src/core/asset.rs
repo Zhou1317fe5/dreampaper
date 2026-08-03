@@ -100,6 +100,43 @@ impl<'a> AssetService<'a> {
             other => other.into(),
         })
     }
+
+    /// 生成结果落 `outputs/{job_id}/`，并登记为 asset —— `dp-asset://` 协议按 id 取文件，
+    /// 所以出图必须进 assets 表才在前端可见。
+    pub fn save_job_image(
+        &self,
+        job_id: &str,
+        filename: &str,
+        bytes: &[u8],
+    ) -> AppResult<AssetUpload> {
+        let id = Uuid::new_v4().to_string();
+        let job_dir = self.app_data.join("outputs").join(sanitize_filename(job_id));
+        std::fs::create_dir_all(&job_dir)?;
+        let path = job_dir.join(sanitize_filename(filename));
+        std::fs::write(&path, bytes)?;
+        let mime_type = guess_mime(&path);
+
+        let conn = self.store.connection()?;
+        conn.execute(
+            "INSERT INTO assets(id, kind, filename, mime, path, bytes, created_at) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            params![
+                id,
+                "output",
+                filename,
+                mime_type,
+                path.to_string_lossy().to_string(),
+                bytes.len() as i64,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+
+        Ok(AssetUpload {
+            id: id.clone(),
+            filename: filename.to_string(),
+            mime_type,
+            url: format!("dp-asset://localhost/{id}"),
+        })
+    }
 }
 
 pub fn guess_mime(path: &Path) -> String {

@@ -175,6 +175,15 @@ struct TextChunk {
     text: String,
 }
 
+/// 抽取资料文件正文，返回 `(文本, 解析器名)`，移植自 `jobs.py::_extract_material_text`。
+/// 幻灯片管道用它把上传的资料喂进 prompt；解析器名会写进资料上下文头部，
+/// 让模型知道这段文字是怎么来的（尤其 pdf 只有元数据）。
+pub fn extract_material_text(path: &Path) -> (String, String) {
+    let parser = parser_name(path);
+    let text = extract_text(path, parser).unwrap_or_default();
+    (text, parser.to_string())
+}
+
 fn extract_text(path: &Path, parser: &str) -> AppResult<String> {
     match parser {
         "text" | "markdown" | "csv" | "json" => Ok(std::fs::read_to_string(path).unwrap_or_else(|_| String::new())),

@@ -111,6 +111,8 @@ pub fn create_job(
             timestamp: Utc::now(),
         },
     );
+    // 管道后台跑，命令立刻返回排队中的记录，前端不会卡在 invoke 上
+    crate::core::pipeline::execute::spawn(app, state.core_arc(), record.id.clone());
     Ok(record)
 }
 

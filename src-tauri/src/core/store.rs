@@ -27,7 +27,9 @@ impl Store {
 
     pub fn connection(&self) -> AppResult<Connection> {
         let conn = Connection::open(&self.db_path)?;
-        conn.execute_batch("PRAGMA foreign_keys = ON;")?;
+        // 逐页规划/出图是并发的，每个阶段都会写 job_stages。默认 busy_timeout 为 0，
+        // 并发写会直接吃 SQLITE_BUSY 丢掉阶段记录，这里给足重试窗口。
+        conn.execute_batch("PRAGMA foreign_keys = ON; PRAGMA busy_timeout = 5000;")?;
         Ok(conn)
     }
 

@@ -512,7 +512,7 @@ pub fn validate_structure_plan(data: &Value) -> Checked<Value> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use serde_json::json;
 
@@ -526,7 +526,8 @@ mod tests {
         )
     }
 
-    fn valid_diagram_design() -> Value {
+    /// 共享给 `runner.rs` 的重试用例，避免两处 fixture 漂移后契约测试悄悄失效。
+    pub(crate) fn valid_diagram_design() -> Value {
         json!({
             "figure": {
                 "title": "Pipeline overview",

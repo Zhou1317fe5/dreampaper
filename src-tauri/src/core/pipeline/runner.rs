@@ -4,6 +4,12 @@
 //! 两级重试的分工很重要，不能合并：
 //! - 解析失败 → 带原上下文重发，让模型重新生成（而不是修字符串）
 //! - 结构缺失 → 只补缺失字段，明确禁止重新设计，避免把已经对的内容改坏
+//!
+//! 调用侧抽成 `DesignGenerator` 是为了让这两条策略能脱网单测：
+//! prompt 措辞与「只在 schema 缺失时才重试」的判据必须与 Python 版逐字一致，
+//! 这是双份实现不跑偏的主要防线。
+
+use std::future::Future;
 
 use serde_json::Value;
 
@@ -20,6 +26,14 @@ fn excerpt(text: &str, limit: usize) -> String {
     text.chars().take(limit).collect()
 }
 
+/// 一次 design 调用所需的全部上下文。重试会复用同一份，
+/// 保证「重发」拿到的确实是同一个任务而不是被削过的版本。
+pub trait DesignGenerator {
+    /// 原始任务 prompt；两级重试都要把它原样带上。
+    fn user_prompt(&self) -> &str;
+    fn generate(&self, prompt: String) -> impl Future<Output = AppResult<String>> + Send;
+}
+
 pub struct DesignCall<'a> {
     pub profile: &'a ModelProfile,
     pub system_prompt: &'a str,
@@ -29,12 +43,16 @@ pub struct DesignCall<'a> {
     pub proxy_url: Option<&'a str>,
 }
 
-impl DesignCall<'_> {
-    async fn generate(&self, prompt: &str) -> AppResult<String> {
+impl DesignGenerator for DesignCall<'_> {
+    fn user_prompt(&self) -> &str {
+        self.user_prompt
+    }
+
+    async fn generate(&self, prompt: String) -> AppResult<String> {
         DesignClient::generate(
             self.profile,
             self.system_prompt,
-            prompt,
+            &prompt,
             self.images,
             self.timeout_seconds,
             self.proxy_url,
@@ -44,7 +62,7 @@ impl DesignCall<'_> {
 }
 
 /// 解析模型输出；失败时先带原上下文重发，仍失败再要求把上次输出转成 JSON。
-pub async fn parse_or_repair(call: &DesignCall<'_>, text: &str) -> AppResult<Value> {
+pub async fn parse_or_repair<G: DesignGenerator>(call: &G, text: &str) -> AppResult<Value> {
     let first_error = match parse_json_response(text) {
         Ok(value) => return Ok(value),
         Err(error) => error,
@@ -62,11 +80,11 @@ pub async fn parse_or_repair(call: &DesignCall<'_>, text: &str) -> AppResult<Val
              Fix JSON syntax issues such as missing commas, dangling quotes, trailing prose, and unescaped newlines.\n\n\
              Parse error: {}\n\
              Previous invalid output excerpt:\n{}",
-            call.user_prompt,
+            call.user_prompt(),
             last_error,
             excerpt(text, JSON_RETRY_EXCERPT_LIMIT)
         );
-        retry_text = call.generate(&retry_prompt).await?;
+        retry_text = call.generate(retry_prompt).await?;
         match parse_json_response(&retry_text) {
             Ok(value) => return Ok(value),
             Err(error) => last_error = error.message,
@@ -78,13 +96,14 @@ pub async fn parse_or_repair(call: &DesignCall<'_>, text: &str) -> AppResult<Val
         "The previous model output was not valid JSON. Convert it into strict JSON only, preserving all useful content.\n\
          Return JSON only. Do not wrap in Markdown. Do not explain.\n\n\
          Original task:\n{}\n\nInvalid output:\n{}",
-        call.user_prompt,
+        call.user_prompt(),
         excerpt(source, JSON_RETRY_EXCERPT_LIMIT)
     );
-    let repaired = call.generate(&repair_prompt).await?;
+    let repaired = call.generate(repair_prompt).await?;
     parse_json_response(&repaired)
 }
 
+#[derive(Debug)]
 pub struct Validated<T> {
     pub parsed: Value,
     pub value: T,
@@ -93,12 +112,13 @@ pub struct Validated<T> {
 
 /// 解析 + 校验；仅当校验报「结构缺失」时才发一次定向补全重试。
 /// 语义越界（页码顺序、非法比例）直接失败，重试也修不好。
-pub async fn parse_validate_or_fill<T, F>(
-    call: &DesignCall<'_>,
+pub async fn parse_validate_or_fill<G, T, F>(
+    call: &G,
     text: &str,
     validator: F,
 ) -> AppResult<Validated<T>>
 where
+    G: DesignGenerator,
     F: Fn(&Value) -> Result<T, ValidationError>,
 {
     let parsed = parse_or_repair(call, text).await?;
@@ -122,10 +142,10 @@ where
          Only fill, normalize, or add the missing required fields and constraints named by the validation error.\n\n\
          Validation error:\n{}\n\nOriginal task:\n{}\n\nCurrent JSON:\n{}",
         error.message(),
-        call.user_prompt,
+        call.user_prompt(),
         serde_json::to_string_pretty(&parsed).unwrap_or_default()
     );
-    let filled_text = call.generate(&fill_prompt).await?;
+    let filled_text = call.generate(fill_prompt).await?;
     let filled = parse_json_response(&filled_text)?;
     let value = validator(&filled).map_err(AppError::from)?;
     Ok(Validated {
@@ -133,4 +153,124 @@ where
         value,
         retried: true,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::core::pipeline::validate::validate_paper_design;
+    use std::sync::Mutex;
+
+    /// 对齐 Python 的 `FakeDesignClient` / `FakeTextDesignClient`：
+    /// 按序吐预设回复，并记录收到的每个 prompt。
+    struct StubGenerator {
+        user_prompt: String,
+        responses: Mutex<Vec<String>>,
+        prompts: Mutex<Vec<String>>,
+    }
+
+    impl StubGenerator {
+        fn new(user_prompt: &str, responses: &[&str]) -> Self {
+            Self {
+                user_prompt: user_prompt.to_string(),
+                responses: Mutex::new(responses.iter().rev().map(|item| item.to_string()).collect()),
+                prompts: Mutex::new(Vec::new()),
+            }
+        }
+
+        fn calls(&self) -> usize {
+            self.prompts.lock().unwrap().len()
+        }
+
+        fn prompt(&self, index: usize) -> String {
+            self.prompts.lock().unwrap()[index].clone()
+        }
+    }
+
+    impl DesignGenerator for StubGenerator {
+        fn user_prompt(&self) -> &str {
+            &self.user_prompt
+        }
+
+        async fn generate(&self, prompt: String) -> AppResult<String> {
+            self.prompts.lock().unwrap().push(prompt);
+            self.responses
+                .lock()
+                .unwrap()
+                .pop()
+                .ok_or_else(|| AppError::new("stub_exhausted", "no stub response left"))
+        }
+    }
+
+    fn valid_diagram_design() -> Value {
+        crate::core::pipeline::validate::tests::valid_diagram_design()
+    }
+
+    /// 对齐 Python `test_json_parse_failure_retries_same_context_before_repair`：
+    /// 第一次重试必须带原任务上下文重发，而不是直接进「转 JSON」的修复分支。
+    #[tokio::test]
+    async fn parse_failure_retries_same_context_before_repair() {
+        let stub = StubGenerator::new(
+            "original task with complete context",
+            [r#"{"ok": true}"#].as_slice(),
+        );
+        let parsed = parse_or_repair(&stub, r#"{"ok": true "broken": false}"#)
+            .await
+            .unwrap();
+
+        assert_eq!(parsed, serde_json::json!({"ok": true}));
+        assert_eq!(stub.calls(), 1);
+        let retry_prompt = stub.prompt(0);
+        assert!(retry_prompt.contains("original task with complete context"));
+        assert!(retry_prompt.contains("Regenerate the answer using the same task context"));
+        assert!(retry_prompt.contains("Previous invalid output excerpt"));
+    }
+
+    /// 解析本来就成功时不得多打一次模型。
+    #[tokio::test]
+    async fn valid_json_does_not_call_the_model() {
+        let stub = StubGenerator::new("task", &[]);
+        let parsed = parse_or_repair(&stub, r#"{"ok": true}"#).await.unwrap();
+        assert_eq!(parsed, serde_json::json!({"ok": true}));
+        assert_eq!(stub.calls(), 0);
+    }
+
+    /// 对齐 Python `test_structured_fill_retry_only_fills_schema_gaps`：
+    /// 补全 prompt 必须点名缺失字段并禁止重新设计。
+    #[tokio::test]
+    async fn structured_fill_retry_only_fills_schema_gaps() {
+        let filled = valid_diagram_design();
+        let stub = StubGenerator::new("original task", &[&filled.to_string()]);
+
+        let mut initial = valid_diagram_design();
+        initial["figure"].as_object_mut().unwrap().remove("diagram_spec");
+
+        let result = parse_validate_or_fill(&stub, &initial.to_string(), |value| {
+            validate_paper_design(value)
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result.parsed, filled);
+        assert!(result.retried);
+        assert_eq!(stub.calls(), 1);
+        let fill_prompt = stub.prompt(0);
+        assert!(fill_prompt.contains("Only fill"));
+        assert!(fill_prompt.contains("do not redesign"));
+        assert!(fill_prompt.contains("Diagram figure missing diagram_spec"));
+    }
+
+    /// 语义越界不是 schema 缺失：不该触发补全重试，直接失败。
+    #[tokio::test]
+    async fn semantic_errors_fail_without_retry() {
+        let stub = StubGenerator::new("original task", &[]);
+        let error = parse_validate_or_fill(&stub, r#"{"ok": true}"#, |_| {
+            Err::<(), _>(ValidationError::Value("page 3 out of order".to_string()))
+        })
+        .await
+        .unwrap_err();
+
+        assert_eq!(stub.calls(), 0);
+        assert_eq!(error.message, "page 3 out of order");
+    }
 }
