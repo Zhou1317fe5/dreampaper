@@ -113,6 +113,11 @@ jobs:
             - **Windows 便携版**依赖系统的 WebView2 运行时。Win11 与 Win10 21H2 及以上已内置；更旧的系统请先装
               [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) 或改用安装版。
 
+            ### 开源协议
+
+            本项目采用 [PolyForm Noncommercial License 1.0.0](https://github.com/${{ github.repository }}/blob/main/LICENSE)，
+            **允许非商业使用，禁止商业使用**。下载并使用安装包即视为接受该协议。
+
       # 非 tag 触发（手动试跑）时不发 Release，只留构建产物供下载检查
       - name: 上传构建产物（试跑）
         if: ${{ !startsWith(github.ref, 'refs/tags/v') }}

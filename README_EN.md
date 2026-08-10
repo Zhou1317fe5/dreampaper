@@ -163,9 +163,6 @@ Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE) — **noncomm
 | Use case | Permitted |
 | --- | --- |
 | Personal study, research, experiment, hobby projects | ✅ |
-| Universities, public research, public health, government bodies | ✅ |
 | Reading, modifying, redistributing the source | ✅ (must ship this license) |
 | Internal production use at a company, paid or commercial services | ❌ |
 | Selling this project or derivatives as a product | ❌ |
-
-Open an issue for commercial licensing.
