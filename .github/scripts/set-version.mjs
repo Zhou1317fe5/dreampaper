@@ -18,15 +18,21 @@ if (!/^\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?$/.test(version ?? "")) {
   process.exit(1);
 }
 
-function patch(path, transform) {
+// 分两步判断，不能只看「内容有没有变」：重打同一个版本（或首发 tag 恰好
+// 等于仓库里硬编码的版本）时替换本就是空操作，把它当成失败会让整条流水线
+// 在编译前就挂掉，而真正的格式漂移反而查不出来。
+// 所以：匹配不上才是错，匹配上但值没变属正常。
+function patch(path, pattern) {
   const original = readFileSync(path, "utf8");
-  const updated = transform(original);
-  if (updated === original) {
-    console.error(`${path}: 未能替换版本号，格式可能已变，请检查脚本。`);
+
+  if (!pattern.test(original)) {
+    console.error(`${path}: 未匹配到版本号字段，格式可能已变，请检查脚本。`);
     process.exit(1);
   }
-  writeFileSync(path, updated);
-  console.log(`${path} → ${version}`);
+
+  const updated = original.replace(pattern, `$1"${version}"`);
+  if (updated !== original) writeFileSync(path, updated);
+  console.log(`${path} → ${version}${updated === original ? "（本来就是该版本，未改动）" : ""}`);
 }
 
 // 全部用定点替换而非 JSON 重新序列化：后者会把 "targets": ["app","dmg","nsis"]
@@ -34,14 +40,10 @@ function patch(path, transform) {
 // 顶层 "version" 固定是两格缩进，不会误伤嵌套字段。
 const topLevelVersion = /^(\s{2}"version":\s*)"[^"]*"/m;
 
-patch("src-tauri/tauri.conf.json", (text) =>
-  text.replace(topLevelVersion, `$1"${version}"`)
-);
+patch("src-tauri/tauri.conf.json", topLevelVersion);
 
 // 只替换 [package] 段里的第一个 version，不能碰依赖项的版本号
-patch("src-tauri/Cargo.toml", (text) =>
-  text.replace(/^(\[package\][\s\S]*?^version\s*=\s*)"[^"]*"/m, `$1"${version}"`)
-);
+patch("src-tauri/Cargo.toml", /^(\[package\][\s\S]*?^version\s*=\s*)"[^"]*"/m);
 
-patch("package.json", (text) => text.replace(topLevelVersion, `$1"${version}"`));
+patch("package.json", topLevelVersion);
 
