@@ -27,7 +27,9 @@ jobs:
           - os: windows-latest
             label: Windows (setup + portable)
             target: x86_64-pc-windows-msvc
-          - os: macos-13 # Intel runner
+          # macos-13 已于 2025-12 彻底下线，标签不存在会直接开不了机。
+          # macos-15-intel 是 Actions 最后一版 x86_64 镜像，供到 2027-08。
+          - os: macos-15-intel
             label: macOS Intel
             target: x86_64-apple-darwin
           - os: macos-14 # Apple Silicon runner
