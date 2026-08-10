@@ -14,6 +14,7 @@
   <img alt="TypeScript 5.8" src="https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white">
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8D5?logo=tauri&logoColor=white">
   <img alt="Rust stable" src="https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white">
+  <a href="LICENSE"><img alt="License PolyForm Noncommercial 1.0.0" src="https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-F5A623"></a>
 </p>
 
 <p align="center">English: <a href="README_EN.md">README_EN.md</a></p>
@@ -164,3 +165,19 @@ npm run dev
 ## 致谢
 
 科研图 template 来自 [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench)（[PaperBanana](https://github.com/dwzhu-pku/PaperBanana)）。
+
+---
+
+## 开源协议
+
+本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，**允许非商业使用，禁止商业使用**。
+
+| 用途 | 是否允许 |
+| --- | --- |
+| 个人学习、研究、实验、业余项目 | ✅ |
+| 高校、科研机构、公立医疗与政府部门使用 | ✅ |
+| 阅读、修改源码，二次开发与分发 | ✅（需附带本协议） |
+| 公司内部生产使用、对外提供付费或商业服务 | ❌ |
+| 将本项目或其衍生版本作为商品出售 | ❌ |
+
+需要商业授权请通过 issue 联系作者。

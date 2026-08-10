@@ -14,6 +14,7 @@
   <img alt="TypeScript 5.8" src="https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white">
   <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8D5?logo=tauri&logoColor=white">
   <img alt="Rust stable" src="https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white">
+  <a href="LICENSE"><img alt="License PolyForm Noncommercial 1.0.0" src="https://img.shields.io/badge/License-PolyForm%20Noncommercial%201.0.0-F5A623"></a>
 </p>
 
 <p align="center">中文版：<a href="README.md">README.md</a></p>
@@ -152,3 +153,19 @@ Open http://127.0.0.1:5173
 ## Credits
 
 Figure templates from [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench) ([PaperBanana](https://github.com/dwzhu-pku/PaperBanana)).
+
+---
+
+## License
+
+Licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE) — **noncommercial use is permitted, commercial use is not**.
+
+| Use case | Permitted |
+| --- | --- |
+| Personal study, research, experiment, hobby projects | ✅ |
+| Universities, public research, public health, government bodies | ✅ |
+| Reading, modifying, redistributing the source | ✅ (must ship this license) |
+| Internal production use at a company, paid or commercial services | ❌ |
+| Selling this project or derivatives as a product | ❌ |
+
+Open an issue for commercial licensing.
