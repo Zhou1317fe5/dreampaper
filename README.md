@@ -166,8 +166,6 @@ npm run dev
 
 科研图 template 来自 [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench)（[PaperBanana](https://github.com/dwzhu-pku/PaperBanana)）。
 
-学AI,上L站。Ref: https://linux.do/
-
 ---
 
 ## 开源协议
