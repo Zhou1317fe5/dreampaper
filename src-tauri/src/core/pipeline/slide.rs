@@ -57,8 +57,13 @@ const IMAGE2_FALLBACK_OUTPUT: [(&str, &str); 4] = [
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct PptSlidePayload {
+    /// 上传得到的母版资源 id（网页版路径）。
     #[serde(default)]
     pub template_asset_id: String,
+    /// 模板库中的母版 id（桌面版路径）。两者取其一即可，
+    /// 桌面版把母版收进模板库后走这条，网页版仍走 asset 上传。
+    #[serde(default)]
+    pub template_id: Option<String>,
     #[serde(default)]
     pub material_text: String,
     #[serde(default)]
@@ -67,6 +72,22 @@ pub struct PptSlidePayload {
     pub page_count: usize,
     #[serde(default)]
     pub custom_prompt: Option<String>,
+}
+
+impl PptSlidePayload {
+    /// 母版来自模板库时返回其 id。空字符串按「未提供」处理，
+    /// 免得前端传了个空串却当成有效来源。
+    pub fn template_ref(&self) -> Option<&str> {
+        self.template_id
+            .as_deref()
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+    }
+
+    /// 母版来自上传资源时返回其 id。
+    pub fn asset_ref(&self) -> Option<&str> {
+        Some(self.template_asset_id.trim()).filter(|value| !value.is_empty())
+    }
 }
 
 fn default_page_count() -> usize {
@@ -119,7 +140,8 @@ impl MaterialAsset {
 
 /// 校验 payload。`execute.rs` 在 `ppt_validate` 阶段调用。
 pub fn validate_payload(payload: &PptSlidePayload) -> AppResult<()> {
-    if payload.template_asset_id.trim().is_empty() {
+    // 母版可以来自模板库，也可以来自上传；两条来源都没有才算缺参数。
+    if payload.template_ref().is_none() && payload.asset_ref().is_none() {
         return Err(AppError::new(
             "invalid_payload",
             "PPT slide requires a template asset",
@@ -774,6 +796,7 @@ mod tests {
     fn payload_validation_rejects_out_of_range_pages() {
         let base = PptSlidePayload {
             template_asset_id: "asset-1".to_string(),
+            template_id: None,
             material_text: "内容".to_string(),
             material_asset_ids: Vec::new(),
             page_count: 3,
@@ -793,6 +816,29 @@ mod tests {
         let mut no_template = base.clone();
         no_template.template_asset_id = "   ".to_string();
         assert!(validate_payload(&no_template).is_err());
+    }
+
+    /// 桌面版从模板库选母版：payload 里没有 asset，只有 template_id。
+    /// 这条通不过就意味着桌面版的幻灯片一律报「缺少母版」。
+    #[test]
+    fn payload_validation_accepts_master_from_template_library() {
+        let from_library = PptSlidePayload {
+            template_asset_id: String::new(),
+            template_id: Some("tpl-1".to_string()),
+            material_text: "内容".to_string(),
+            material_asset_ids: Vec::new(),
+            page_count: 2,
+            custom_prompt: None,
+        };
+        assert!(validate_payload(&from_library).is_ok());
+        assert_eq!(from_library.template_ref(), Some("tpl-1"));
+        assert_eq!(from_library.asset_ref(), None);
+
+        // 空白 template_id 不算来源，否则前端传空串会被当成有效母版，
+        // 一路走到管道里才炸。
+        let mut blank = from_library.clone();
+        blank.template_id = Some("   ".to_string());
+        assert!(validate_payload(&blank).is_err());
     }
 
     /// 对齐 Python `test_ordered_batches_queue_after_concurrency_limit`：

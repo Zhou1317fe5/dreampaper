@@ -12,6 +12,8 @@
   <img alt="React 19" src="https://img.shields.io/badge/React-19-61DAFB?logo=react&logoColor=black">
   <img alt="Vite 7" src="https://img.shields.io/badge/Vite-7-646CFF?logo=vite&logoColor=white">
   <img alt="TypeScript 5.8" src="https://img.shields.io/badge/TypeScript-5.8-3178C6?logo=typescript&logoColor=white">
+  <img alt="Tauri 2" src="https://img.shields.io/badge/Tauri-2-24C8D5?logo=tauri&logoColor=white">
+  <img alt="Rust stable" src="https://img.shields.io/badge/Rust-stable-000000?logo=rust&logoColor=white">
 </p>
 
 <p align="center">English: <a href="README_EN.md">README_EN.md</a></p>
@@ -30,17 +32,29 @@
 
 ## 效果展示
 
+### Desktop
+
+| 科研图 | 幻灯片 |
+| --- | --- | 
+| ![desktop1](examples/desktop/figure.jpg) | ![desktop2](examples/desktop/slide.jpg) |
+
+| 模版库 | 设置页 |
+| --- | --- | 
+| ![desktop3](examples/desktop/templates.jpg) | ![fig2](examples/desktop/settings.jpg) |
+
 ### Web UI
 
-| 科研图 | 幻灯片 | 设置 |
+| 科研图 | 幻灯片 | 设置页 |
 | --- | --- | --- |
 | ![figure ui](examples/ui/figure.jpg) | ![slide ui](examples/ui/slide.jpg) | ![settings ui](examples/ui/settings.jpg) |
 
 ### 科研绘图
 
-|  |  |  |  |
-| --- | --- | --- | --- |
-| ![fig1](examples/figure/paper_figure_1.png) | ![fig2](examples/figure/paper_figure_2.png) | ![fig3](examples/figure/paper_figure_3.png) | ![fig4](examples/figure/paper_figure_4.png) |
+|  |  |
+| --- | --- | 
+| ![fig1](examples/figure/paper_figure_1.png) | ![fig2](examples/figure/paper_figure_2.png) |
+| ![fig3](examples/figure/paper_figure_3.png) | ![fig4](examples/figure/paper_figure_4.png) |
+| ![fig5](examples/figure/paper_figure_5.png) | ![fig6](examples/figure/paper_figure_6.png) |
 
 ### 幻灯片
 
@@ -49,7 +63,7 @@
 | ![sA1](examples/slide/slideA_1.png) | ![sA2](examples/slide/slideA_2.png) | ![sA3](examples/slide/slideA_3.png) |
 | ![sB1](examples/slide/slideB_1.png) | ![sB2](examples/slide/slideB_2.png) | ![sB3](examples/slide/slideB_3.png) |
 | ![sC1](examples/slide/slideC_1.png) | ![sC2](examples/slide/slideC_2.png) | ![sC3](examples/slide/slideC_3.png) |
-
+| ![sD1](examples/slide/slideD_1.png) | ![sD2](examples/slide/slideD_2.png) | ![sD3](examples/slide/slideD_3.png) |
 ---
 
 ## 桌面版下载

@@ -17,12 +17,15 @@ base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
 regex = "1"
-reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart", "charset", "http2"] }
+reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart", "charset", "http2", "stream"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
-tauri = { version = "2", features = [] }
+# macos-private-api：侧栏的原生 vibrancy 需要透明 webview 背景，
+# 而 WKWebView 的透明背景在 macOS 上只能走私有 API。
+# 代价是不能上 App Store —— 本项目是未签名 DMG 直发，不受影响。
+tauri = { version = "2", features = ["macos-private-api"] }
 tauri-plugin-dialog = "2"
 thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }

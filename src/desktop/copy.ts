@@ -4,17 +4,41 @@ import type { Lang } from '../app';
  * 桌面外壳独有的文案。
  *
  * 刻意不并进 `app.tsx` 的 `copy`：那份是网页版的，改它就等于改网页版。
- * 桌面版多出「模板库」「近期任务」等概念，网页版没有。
+ * 桌面版多出「模板库」「近期任务」「母版从库里选」等概念，网页版没有。
  */
 export const desktopCopy = {
   zh: {
     nav: { paper: '科研图', ppt: '幻灯片', templates: '模板库', settings: '设置' },
+    settingsIntro: '配置 Design / Implement / Search 模型，以及代理与并发。',
     recent: { title: '近期任务', empty: '还没有任务', failed: '失败', running: '进行中', done: '完成' },
+    /** 右侧分栏：模板/母版与结果共用一列，避免结果面板另起一块把两列高度撑歪 */
+    pane: {
+      form: '参数',
+      templates: '模板',
+      master: '母版',
+      result: '结果',
+      material: '资料',
+      resultEmpty: '提交任务后，这里显示进度与产出',
+      selected: (n: number, max: number) => `已选 ${n}/${max}`,
+      count: (n: number) => `${n} 张`,
+      search: '搜索模板',
+      masterNone: '尚未选择母版',
+      removeFile: '移除',
+      goTemplates: '前往模板库',
+      figureEmpty: '模板库里还没有科研绘图模板',
+      masterEmpty: '模板库里还没有幻灯片母版',
+      emptyHint: '到模板库页导入后即可在这里选择。',
+      rulesFold: '展开约束',
+      rulesUnfold: '收起约束'
+    },
     templates: {
       title: '模板库',
-      intro: '科研图以模板作 few-shot 参考。可单张导入，也可导入整个 PaperBananaBench 目录。',
+      intro: '科研图以模板作 few-shot 参考，幻灯片以母版定版式。两类分开管理，导入也在这里。',
+      tabFigure: '科研绘图模板',
+      tabMaster: '幻灯片母版',
       importImage: '导入图片',
       importPack: '导入模板包',
+      importTitle: '导入',
       packHint: '选择解压后的 PaperBananaBench 目录（内含 diagram/ 与 plot/ 子目录及 ref.json）',
       pickPack: '选择目录…',
       kind: '类型',
@@ -35,20 +59,58 @@ export const desktopCopy = {
       all: '全部',
       diagram: '示意图',
       plot: '图表',
+      master: '母版',
       count: (n: number) => `共 ${n} 张`,
-      emptyTitle: '模板库还是空的',
-      emptyBody: '科研图模式需要参考图库。下载 PaperBananaBench 解压后，用上面的「导入模板包」选择该目录；或先单张导入几张自有模板。',
-      emptyLink: '下载 PaperBananaBench'
+      figureEmptyTitle: '还没有科研绘图模板',
+      figureEmptyBody:
+        '科研图模式需要参考图库。下载 PaperBananaBench 解压后，用「导入」里的模板包选择该目录；或先单张导入几张自有模板。',
+      masterEmptyTitle: '还没有幻灯片母版',
+      masterEmptyBody: '导入一张排版好的幻灯片截图作母版，幻灯片页就能直接选它定版式。',
+      emptyLink: '下载 PaperBananaBench',
+      select: '选择',
+      selectDone: '退出选择',
+      selectAll: '全选',
+      selectNone: '取消全选',
+      selectedCount: (n: number) => `已选 ${n} 张`,
+      remove: '删除',
+      confirmRemove: (n: number) => `确认删除 ${n} 张`,
+      removing: '删除中…',
+      removed: (n: number) => `已删除 ${n} 张模板`,
+      removeNone: '请先选中要删除的模板'
     }
   },
   en: {
     nav: { paper: 'Figure', ppt: 'Slide', templates: 'Templates', settings: 'Settings' },
+    settingsIntro: 'Configure Design / Implement / Search models, proxy and concurrency.',
     recent: { title: 'Recent jobs', empty: 'No jobs yet', failed: 'failed', running: 'running', done: 'done' },
+    pane: {
+      form: 'Parameters',
+      templates: 'Templates',
+      master: 'Master',
+      result: 'Result',
+      material: 'Material',
+      resultEmpty: 'Progress and output appear here once a job is submitted',
+      selected: (n: number, max: number) => `${n}/${max} selected`,
+      count: (n: number) => `${n} items`,
+      search: 'Search templates',
+      masterNone: 'No master selected',
+      removeFile: 'Remove',
+      goTemplates: 'Open template library',
+      figureEmpty: 'No figure templates in the library yet',
+      masterEmpty: 'No slide masters in the library yet',
+      emptyHint: 'Import them on the Templates page and they show up here.',
+      rulesFold: 'Show rules',
+      rulesUnfold: 'Hide rules'
+    },
     templates: {
       title: 'Template library',
-      intro: 'Paper figures use templates as few-shot references. Import single images, or a whole PaperBananaBench directory.',
+      intro:
+        'Figures use templates as few-shot references; slides use masters for layout. Both kinds live here, and so does importing.',
+      tabFigure: 'Figure templates',
+      tabMaster: 'Slide masters',
       importImage: 'Import image',
       importPack: 'Import pack',
+      importTitle: 'Import',
       packHint: 'Pick the extracted PaperBananaBench directory (containing diagram/ and plot/ with ref.json)',
       pickPack: 'Choose directory…',
       kind: 'Kind',
@@ -69,11 +131,25 @@ export const desktopCopy = {
       all: 'All',
       diagram: 'Diagram',
       plot: 'Plot',
+      master: 'Master',
       count: (n: number) => `${n} total`,
-      emptyTitle: 'No templates yet',
-      emptyBody:
-        'Paper figure mode needs a reference library. Download and extract PaperBananaBench, then use "Import pack" above to select that directory — or import a few of your own templates individually.',
-      emptyLink: 'Download PaperBananaBench'
+      figureEmptyTitle: 'No figure templates yet',
+      figureEmptyBody:
+        'Figure mode needs a reference library. Download and extract PaperBananaBench, then use the pack importer to select that directory — or import a few of your own templates individually.',
+      masterEmptyTitle: 'No slide masters yet',
+      masterEmptyBody:
+        'Import a screenshot of a well-laid-out slide as a master, then pick it on the Slide page to fix the layout.',
+      emptyLink: 'Download PaperBananaBench',
+      select: 'Select',
+      selectDone: 'Done',
+      selectAll: 'Select all',
+      selectNone: 'Clear',
+      selectedCount: (n: number) => `${n} selected`,
+      remove: 'Delete',
+      confirmRemove: (n: number) => `Delete ${n}?`,
+      removing: 'Deleting…',
+      removed: (n: number) => `Deleted ${n} templates`,
+      removeNone: 'Select templates to delete first'
     }
   }
 } as const;

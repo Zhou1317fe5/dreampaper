@@ -32,7 +32,8 @@ export interface AppConfig {
 export interface TemplateSummary {
   id: string;
   source_id: string;
-  kind: 'diagram' | 'plot';
+  /** `master` 是桌面版的幻灯片母版，与 diagram/plot 同表不同类。 */
+  kind: 'diagram' | 'plot' | 'master';
   category?: string | null;
   rounded_ratio?: string | null;
   visual_intent: string;
@@ -57,14 +58,15 @@ export interface AssetUpload {
 export interface JobEvent {
   stage: string;
   message: string;
-  status: 'pending' | 'running' | 'succeeded' | 'failed';
+  status: 'pending' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   timestamp: string;
 }
 
 export interface JobRecord {
   id: string;
   mode: Mode;
-  status: 'queued' | 'running' | 'succeeded' | 'failed';
+  /** `cancelled` 是用户按停止的终态，与跑挂了的 `failed` 分开记。 */
+  status: 'queued' | 'running' | 'succeeded' | 'failed' | 'cancelled';
   message?: string | null;
   stage?: string;
   created_at: string;

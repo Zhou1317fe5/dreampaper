@@ -1,4 +1,5 @@
 pub mod asset;
+pub mod cancel;
 pub mod config;
 pub mod doc;
 pub mod job;
@@ -15,6 +16,7 @@ use std::path::PathBuf;
 use crate::error::AppResult;
 
 use self::asset::{AssetFile, AssetService};
+use self::cancel::CancelRegistry;
 use self::config::{AppConfig, ConfigService};
 use self::doc::{DocumentChunkHit, DocumentService, DocumentSummary};
 use self::job::{JobRecord, JobService};
@@ -26,6 +28,8 @@ pub struct Core {
     pub app_data: PathBuf,
     pub store: Store,
     pub prompts: PromptStore,
+    /// 在跑的任务的停止开关，见 `cancel.rs`
+    pub cancels: CancelRegistry,
 }
 
 impl Core {
@@ -35,6 +39,7 @@ impl Core {
             app_data,
             store,
             prompts: PromptStore::new(prompt_root),
+            cancels: CancelRegistry::default(),
         })
     }
 
@@ -57,6 +62,11 @@ impl Core {
 
     pub fn asset_file(&self, id: &str) -> AppResult<AssetFile> {
         AssetService::new(&self.store, &self.app_data).asset_file(id)
+    }
+
+    /// 另存产出图到用户选定的路径。`target` 由前端的原生保存对话框给出。
+    pub fn export_asset(&self, id: &str, target: &std::path::Path) -> AppResult<()> {
+        AssetService::new(&self.store, &self.app_data).export_asset(id, target)
     }
 
     pub fn list_templates(&self, kind: String, query: String) -> AppResult<Vec<TemplateSummary>> {
@@ -120,5 +130,21 @@ impl Core {
 
     pub fn list_jobs(&self, limit: usize, offset: usize) -> AppResult<Vec<JobRecord>> {
         JobService::new(&self.store).list_jobs(limit, offset)
+    }
+
+    /// 停止一个在跑的任务。已经是终态的任务原样返回，重复点停止不报错。
+    pub fn cancel_job(&self, id: String) -> AppResult<JobRecord> {
+        let jobs = JobService::new(&self.store);
+        let record = jobs.get_job(id.clone())?;
+        if matches!(record.status.as_str(), "succeeded" | "failed" | "cancelled") {
+            return Ok(record);
+        }
+        self.cancels.cancel(&id);
+        jobs.cancel(&id, "任务已停止")?;
+        jobs.get_job(id)
+    }
+
+    pub fn delete_templates(&self, ids: Vec<String>) -> AppResult<usize> {
+        TemplateService::new(&self.store, &self.app_data).delete_templates(&ids)
     }
 }

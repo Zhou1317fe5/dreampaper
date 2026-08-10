@@ -1,151 +1,317 @@
 /*
- * 桌面外壳骨架。只写「外层布局 + 模板库页」，其余一律沿用 ../styles.css，
- * 这样网页版调色/控件样式的改动会自动同步过来，不必两处各改一遍。
+ * 桌面外壳 —— 参照 Dribbble #27477006 (Profile & Goals Healthcare Dashboard) 的比例体系，
+ * 配色沿用本项目的薄荷绿主色。
  *
- * 桌面窗口宽度固定（最小 1100px），网页版的 min(100%, 1120px) 居中
- * 在这里只会让两侧留白，所以内容区改为铺满并把密度调高一档。
+ * 三层视觉层级：
+ *   1. 画布 canvas —— 浅灰底，承载一切
+ *   2. 卡片 card    —— 纯白、大圆角、极柔散射阴影、无描边
+ *   3. 内嵌块 chip  —— 更浅的灰、中圆角，放在卡片内部
+ * 页面大标题落在画布上、卡片之外，是呼吸感的来源。
+ *
+ * 布局的关键约束（前几轮「凌乱 / 过渡生硬 / 边界不清」的根因）：
+ *   窗口满高不滚动，滚动发生在卡片 body 内部。
+ *   两列都是 min-height:0 的 flex 卡片，高度由 grid 拉伸决定而非由内容决定，
+ *   所以左右边界天然齐平，不需要 JS 同步高度。
+ *   卡片内部 head / body / foot 三段，段间用发丝线明确划界，
+ *   卡片自身不再嵌套第二层白卡（「卡中卡」正是过渡生硬的来源）。
+ *
+ * 桌面版的表单结构由 forms.tsx 自己定义（dp-* 前缀），
+ * 只有 Settings 与 JobPanel 仍复用 ../styles.css 的类名，这里改皮肤。
  */
 
-:root {
-  --side-w: 200px;
-}
-
 .desktop-shell {
+  --rail-w: 72px;
+
+  /* —— 中性画布 + 薄荷绿主色 —— */
+  --canvas: #eeecf0;
+  --card: #ffffff;
+  --chip: #f4f4f7;
+  --chip-strong: #eaeaef;
+  --hairline: rgba(22, 24, 32, 0.075);
+
+  --ink: #16181f;
+  --text-1: #1d2029;
+  --text-2: #6b7280;
+  --text-3: #9ca3af;
+
+  /* 粉紫主色：与 logo 的紫蓝渐变同族，比原来的薄荷绿更贴品牌 */
+  --accent: #b45df2;
+  --accent-deep: #9d3fe0;
+  --accent-soft: rgba(180, 93, 242, 0.14);
+  --accent-ink: #7c2fbd;
+  --accent-shadow: rgba(124, 47, 189, 0.26);
+
+  --amber: #f59e0b;
+  --rose: #e5484d;
+
+  --r-card: 22px;
+  --r-chip: 14px;
+  --r-inner: 11px;
+  --r-pill: 999px;
+
+  --shadow-card:
+    0 1px 2px rgba(16, 20, 28, 0.04),
+    0 8px 24px rgba(16, 20, 28, 0.05);
+  --shadow-float:
+    0 2px 6px rgba(16, 20, 28, 0.06),
+    0 18px 44px rgba(16, 20, 28, 0.16);
+
+  /* 密度：控件 36px，比网页版紧两档；留白靠 gap 12/14 控制 */
+  --control-h: 36px;
+  --gap: 14px;
+  --pad: 18px;
+
   display: grid;
-  grid-template-columns: var(--side-w) 1fr;
-  min-height: 100vh;
-  /* 桌面端寸土寸金，比网页版收紧一档 */
-  --shell-pad: 16px;
-  --shell-gap: 16px;
-  --panel-pad: 20px;
-  --stack-gap: 12px;
-}
-
-/* —— 侧栏 —— */
-
-.desktop-side {
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-4);
-  padding: var(--space-4) var(--space-3);
-  border-right: 1px solid rgba(255, 255, 255, 0.7);
-  background: var(--soft-bg);
-  box-shadow: inset -10px 0 22px rgba(168, 146, 170, 0.07);
-  /* 侧栏不跟内容一起滚 */
-  position: sticky;
-  top: 0;
+  grid-template-columns: var(--rail-w) minmax(0, 1fr);
+  /* 满窗高且不滚动：滚动交给卡片内部，两列边界才对得齐 */
   height: 100vh;
   overflow: hidden;
-}
-
-.desktop-brand {
-  display: flex;
-  align-items: center;
-  gap: var(--space-1);
-  padding: 0 var(--space-1);
-}
-
-.desktop-brand img {
-  width: 26px;
-  height: 26px;
-  border-radius: 8px;
-}
-
-.desktop-brand span {
+  color: var(--text-1);
   font-size: 13px;
-  font-weight: 700;
-  letter-spacing: 0.08em;
+  background: var(--canvas);
 }
 
-.desktop-nav {
-  display: grid;
-  gap: 4px;
+@media (prefers-color-scheme: dark) {
+  .desktop-shell {
+    --canvas: #17181c;
+    --card: #212329;
+    --chip: #282b32;
+    --chip-strong: #31343c;
+    --hairline: rgba(255, 255, 255, 0.08);
+
+    --ink: #f4f5f7;
+    --text-1: #f4f5f7;
+    --text-2: #a1a7b3;
+    --text-3: #767d8a;
+
+    /* 深色下把粉紫提亮一档，否则压在深底上会发灰 */
+    --accent: #c77bf5;
+    --accent-deep: #b45df2;
+    --accent-soft: rgba(199, 123, 245, 0.18);
+    --accent-ink: #ddb4fb;
+    --accent-shadow: rgba(0, 0, 0, 0.36);
+
+    --shadow-card:
+      0 1px 2px rgba(0, 0, 0, 0.3),
+      0 8px 24px rgba(0, 0, 0, 0.28);
+    --shadow-float:
+      0 2px 6px rgba(0, 0, 0, 0.4),
+      0 18px 44px rgba(0, 0, 0, 0.5);
+  }
 }
 
-.desktop-nav button {
-  padding: 10px var(--space-2);
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  text-align: left;
-  cursor: pointer;
-}
+/* ============ 侧栏 rail ============ */
 
-.desktop-nav button:hover {
-  background: rgba(255, 255, 255, 0.6);
-}
-
-.desktop-nav button.active {
-  background: rgba(255, 255, 255, 0.95);
-  font-weight: 600;
-  box-shadow: var(--shadow-control);
-}
-
-/* —— 近期任务 —— */
-
-.desktop-recent {
+.desktop-rail {
   display: flex;
-  min-height: 0;
-  flex: 1;
+  height: 100vh;
   flex-direction: column;
-  gap: var(--space-1);
+  align-items: center;
+  gap: 5px;
+  /* 顶部留出 macOS Overlay titlebar 的红绿灯位置 */
+  padding: 52px 0 14px;
+  border-right: 1px solid var(--hairline);
 }
 
-.desktop-recent h2 {
-  margin: 0;
-  padding: 0 var(--space-2);
-  color: var(--text-muted);
+.desktop-rail-nav {
+  display: contents;
+}
+
+.desktop-rail-brand {
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: none;
+  margin-bottom: 18px;
+  place-items: center;
+}
+
+/* logo 与 rail 按钮同宽（42px）：小一号会在这一列里显得没分量 */
+.desktop-rail-brand img {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+}
+
+/* rail 按钮：正方圆角，激活态是白色浮起药丸 */
+.rail-btn {
+  position: relative;
+  display: grid;
+  width: 42px;
+  height: 42px;
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: 14px;
+  background: transparent;
+  color: var(--text-2);
+  cursor: pointer;
+  transition:
+    background 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    color 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    box-shadow 200ms cubic-bezier(0.4, 0, 0.2, 1),
+    transform 140ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.rail-btn svg {
+  width: 20px;
+  height: 20px;
+}
+
+.rail-lang {
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.rail-btn:hover {
+  background: rgba(22, 24, 32, 0.06);
+  color: var(--text-1);
+}
+
+.rail-btn:active {
+  transform: scale(0.94);
+}
+
+.rail-btn.active {
+  background: var(--card);
+  color: var(--accent-deep);
+  box-shadow: var(--shadow-card);
+}
+
+.rail-spacer {
+  flex: 1;
+}
+
+@media (prefers-color-scheme: dark) {
+  .rail-btn:hover {
+    background: rgba(255, 255, 255, 0.07);
+  }
+}
+
+/* 纯图标 rail 的可读性靠 tooltip 补 */
+.rail-btn::after {
+  content: attr(data-tip);
+  position: absolute;
+  left: calc(100% + 10px);
+  z-index: 60;
+  padding: 5px 10px;
+  border-radius: 8px;
+  background: var(--ink);
+  color: var(--canvas);
+  font-size: 12px;
+  font-weight: 500;
+  white-space: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(-4px);
+  transition: opacity 160ms ease, transform 160ms ease;
+}
+
+.rail-btn:hover::after {
+  opacity: 1;
+  transform: translateX(0);
+}
+
+.rail-badge {
+  position: absolute;
+  top: 9px;
+  right: 9px;
+  width: 7px;
+  height: 7px;
+  border: 2px solid var(--canvas);
+  border-radius: 50%;
+  background: var(--amber);
+}
+
+/* ============ 近期任务：悬浮弹窗 ============ */
+
+.rail-pop-wrap {
+  position: relative;
+  flex: none;
+}
+
+/* 近期任务按钮现在在 rail 中段，弹窗从顶端对齐往下展开 */
+.rail-pop {
+  position: absolute;
+  top: 0;
+  left: calc(100% + 12px);
+  z-index: 50;
+  display: grid;
+  width: 280px;
+  gap: 3px;
+  padding: 12px;
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: var(--shadow-float);
+  animation: pop-in 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+@keyframes pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(6px) scale(0.97);
+  }
+}
+
+.rail-pop h2 {
+  margin: 0 0 4px;
+  padding: 0 8px;
+  color: var(--text-3);
   font-size: 11px;
   font-weight: 600;
-  letter-spacing: 0.08em;
+  letter-spacing: 0.06em;
   text-transform: uppercase;
 }
 
-.desktop-recent-empty {
+.rail-pop-empty {
   margin: 0;
-  padding: 0 var(--space-2);
-  color: var(--text-muted);
-  font-size: 12px;
+  padding: 6px 8px 8px;
+  color: var(--text-3);
+  font-size: 12.5px;
 }
 
-.desktop-recent ul {
+.rail-pop ul {
+  display: grid;
+  max-height: 320px;
+  gap: 2px;
   overflow-y: auto;
   margin: 0;
   padding: 0;
   list-style: none;
 }
 
-.desktop-recent button {
+.rail-pop li button {
   display: flex;
   width: 100%;
   align-items: center;
-  gap: var(--space-1);
-  padding: 7px var(--space-2);
+  gap: 10px;
+  padding: 8px 10px;
   border: 0;
-  border-radius: var(--radius-sm);
+  border-radius: 10px;
   background: transparent;
-  color: inherit;
+  color: var(--text-2);
   font: inherit;
-  font-size: 12px;
+  font-size: 12.5px;
+  text-align: left;
   cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
 }
 
-.desktop-recent button:hover {
-  background: rgba(255, 255, 255, 0.6);
+.rail-pop li button:hover {
+  background: var(--chip);
+  color: var(--text-1);
 }
 
 .desktop-recent-mode {
   flex: 1;
   overflow: hidden;
-  text-align: left;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .desktop-recent-time {
-  color: var(--text-muted);
+  color: var(--text-3);
+  font-size: 11.5px;
   font-variant-numeric: tabular-nums;
 }
 
@@ -154,183 +320,1460 @@
   height: 7px;
   flex: none;
   border-radius: 50%;
-  background: var(--text-muted);
+  background: var(--text-3);
 }
 
 .job-dot-running,
 .job-dot-queued {
-  background: #d19a1f;
+  background: var(--amber);
 }
 
 .job-dot-succeeded {
-  background: #3f9d64;
+  background: var(--accent);
 }
 
 .job-dot-failed {
-  background: #c2453f;
+  background: var(--rose);
 }
 
-.desktop-lang {
-  padding: 7px;
-  border: 0;
-  border-radius: var(--radius-sm);
-  background: rgba(255, 255, 255, 0.7);
-  color: inherit;
-  font: inherit;
-  font-size: 12px;
-  cursor: pointer;
+/* 停止：任务确实结束了但不是失败，用中性灰而不是 rose */
+.job-dot-cancelled {
+  background: var(--text-3);
 }
 
-/* —— 内容区：铺满，不居中 —— */
+/* ============ 内容区 ============ */
 
+/* 头部固定、工作区吃掉剩余高度，卡片因此可以 100% 拉满 */
 .desktop-main {
   display: grid;
   min-width: 0;
-  align-content: start;
-  gap: var(--shell-gap);
-  padding: var(--shell-pad);
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 16px;
+  /* 顶部 48px：无边框窗口下标题不能贴着窗沿，且要与 rail 的 52px 顶距同一档 */
+  padding: 48px 24px 24px;
 }
 
-/* —— 模板库 —— */
-
-.page-head {
-  display: grid;
-  gap: 4px;
-  margin-bottom: var(--space-4);
+/* 补回一条标题栏：Overlay 样式下没有原生标题栏可拖，这条透明横条盖住
+   main 顶部那 48px 空白内边距，把它变成拖动区。position: fixed 让它脱离
+   文档流——否则它会成为 .desktop-main 两行网格的第三个网格项，把布局挤歪。
+   左边从 rail 之后开始：红绿灯在窗口左上角，别去抢它们的点击。 */
+.desktop-drag-strip {
+  position: fixed;
+  z-index: 30;
+  top: 0;
+  right: 0;
+  left: var(--rail-w);
+  height: 48px;
 }
 
-.page-head h2 {
+/* 页头落在画布上、卡片之外 */
+.desktop-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 24px;
+  padding: 0 4px;
+}
+
+.desktop-head-text h1 {
   margin: 0;
-  font-size: 18px;
+  color: var(--text-1);
+  font-size: 22px;
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  line-height: 1.2;
 }
 
-.page-head p {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 13px;
+.desktop-head-text p {
+  margin: 4px 0 0;
+  color: var(--text-2);
+  font-size: 12.5px;
+  line-height: 1.45;
 }
 
-.tpl-import-row {
+.desktop-page {
   display: grid;
-  gap: var(--col-gap);
-  margin-bottom: var(--space-4);
-  grid-template-columns: 2fr 1fr;
+  min-width: 0;
+  min-height: 0;
+  view-transition-name: main-content;
 }
 
-@media (max-width: 1180px) {
-  .tpl-import-row {
-    grid-template-columns: 1fr;
+/* —— 页面切换 ——
+ * 支持 View Transitions 时走原生交叉淡入；不支持时降级为仅新页入场，
+ * 由 shell.tsx 加 .page-enter 区分，两者不叠加。
+ * ::view-transition-* 是根伪元素，不能嵌套在 .desktop-main 下。
+ */
+::view-transition-old(main-content),
+::view-transition-new(main-content) {
+  animation-duration: 240ms;
+  animation-timing-function: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+::view-transition-old(main-content) {
+  animation-name: dp-page-out;
+}
+
+::view-transition-new(main-content) {
+  animation-name: dp-page-in;
+}
+
+@keyframes dp-page-out {
+  to {
+    opacity: 0;
+    transform: translateY(-8px) scale(0.994);
   }
 }
 
-.tpl-import-card {
+@keyframes dp-page-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.994);
+  }
+}
+
+.desktop-page.page-enter {
+  animation: dp-page-in 240ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .desktop-page.page-enter {
+    animation: none;
+  }
+
+  /* 骨架卡停在中间亮度：动画关掉后不能留在 0.55，那会看着像禁用态 */
+  .dp-lib-skeleton {
+    animation: none;
+    opacity: 0.7;
+  }
+
+  ::view-transition-old(main-content),
+  ::view-transition-new(main-content) {
+    animation-duration: 1ms;
+  }
+
+  .rail-btn,
+  .rail-pop {
+    transition-duration: 1ms;
+    animation: none;
+  }
+}
+
+/* ============ 工作区骨架：两列等高卡片 ============ */
+
+.dp-work {
   display: grid;
-  align-content: start;
-  gap: var(--stack-gap);
-  padding: var(--space-4);
-  border-radius: var(--radius-md);
-  background: var(--soft-bg);
-  box-shadow: var(--shadow-recess);
+  min-width: 0;
+  min-height: 0;
+  gap: var(--gap);
+  /* 左表单略窄于右图库：表单是定宽内容，图库要吃掉富余宽度 */
+  grid-template-columns: minmax(360px, 0.92fr) minmax(0, 1fr);
 }
 
-.tpl-import-card h3 {
-  margin: 0;
-  font-size: 14px;
+.dp-work.single {
+  grid-template-columns: minmax(0, 1fr);
 }
 
-.tpl-hint,
-.tpl-count {
-  margin: 0;
-  color: var(--text-muted);
-  font-size: 12px;
+@media (max-width: 1080px) {
+  .dp-work {
+    grid-template-columns: minmax(0, 1fr);
+    /* 窄窗下改为上下排布，此时整页滚动而非卡片内滚 */
+    grid-auto-rows: minmax(320px, auto);
+    overflow-y: auto;
+  }
 }
 
-.tpl-link {
-  color: inherit;
-  font-size: 12px;
-  opacity: 0.75;
-}
-
-.tpl-count {
-  margin-bottom: var(--space-2);
-}
-
-.tpl-grid {
-  display: grid;
-  gap: var(--space-3);
-  grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
-}
-
-.tpl-card {
-  overflow: hidden;
-  margin: 0;
-  border-radius: var(--radius-md);
-  background: rgba(255, 255, 255, 0.75);
-  box-shadow: var(--shadow-control);
-}
-
-.tpl-card img {
-  display: block;
-  width: 100%;
-  height: 132px;
-  background: #fff;
-  object-fit: contain;
-}
-
-.tpl-card figcaption {
+/* 卡片：head / body / foot 三段。
+   高度由 grid 拉伸给定，body 用 min-height:0 + overflow 自行滚动。 */
+.dp-card {
   display: flex;
-  flex-wrap: wrap;
-  align-items: center;
-  gap: 6px;
-  padding: var(--space-1);
-  font-size: 11px;
-}
-
-.tpl-badge {
-  padding: 2px 7px;
-  border-radius: 999px;
-  background: rgba(0, 0, 0, 0.06);
-  font-size: 10px;
-}
-
-.tpl-badge-plot {
-  background: rgba(63, 157, 100, 0.16);
-}
-
-.tpl-badge-diagram {
-  background: rgba(94, 122, 189, 0.16);
-}
-
-.tpl-cat {
-  color: var(--text-muted);
-}
-
-.tpl-intent {
+  min-height: 0;
+  flex-direction: column;
   overflow: hidden;
-  width: 100%;
-  color: var(--text-muted);
+  border-radius: var(--r-card);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+}
+
+.dp-card-head {
+  display: flex;
+  min-height: 54px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 var(--pad);
+  /* 发丝线是「明显的边界区分」：头与体之间必须看得出来 */
+  border-bottom: 1px solid var(--hairline);
+}
+
+.dp-card-head h2 {
+  margin: 0;
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 620;
+  letter-spacing: -0.005em;
+}
+
+.dp-card-head-aside {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.dp-head-tools {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 8px;
+}
+
+.dp-card-body {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 12px;
+  overflow-y: auto;
+  padding: var(--pad);
+  scrollbar-width: thin;
+  scrollbar-color: rgba(140, 148, 158, 0.4) transparent;
+}
+
+/* 图库/结果自带内边距，flush 去掉外层的一层，避免双重留白 */
+.dp-card-body.flush {
+  padding: 0;
+}
+
+.dp-card-body::-webkit-scrollbar {
+  width: 9px;
+}
+
+.dp-card-body::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.dp-card-body::-webkit-scrollbar-thumb {
+  border: 2.5px solid transparent;
+  border-radius: var(--r-pill);
+  background: rgba(140, 148, 158, 0.4);
+  background-clip: padding-box;
+}
+
+/* 主按钮固定在卡片脚，不再孤零零浮在画布上 */
+.dp-card-foot {
+  display: flex;
+  min-height: 60px;
+  flex: none;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 0 var(--pad);
+  border-top: 1px solid var(--hairline);
+}
+
+.dp-foot-note {
+  overflow: hidden;
+  color: var(--text-3);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.tpl-empty {
+/* ============ 分段控件 ============ */
+
+.dp-seg {
+  display: flex;
+  flex: none;
+  gap: 2px;
+  padding: 3px;
+  border-radius: var(--r-pill);
+  background: var(--chip);
+}
+
+.dp-seg button {
+  position: relative;
+  display: flex;
+  min-height: 28px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background 180ms ease, color 180ms ease, box-shadow 180ms ease;
+}
+
+.dp-seg button:hover {
+  color: var(--text-1);
+}
+
+.dp-seg button.active {
+  background: var(--card);
+  color: var(--text-1);
+  box-shadow: 0 1px 2px rgba(16, 20, 28, 0.08);
+}
+
+.dp-seg-dot {
+  width: 5px;
+  height: 5px;
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+/* ============ 表单控件 ============ */
+
+.dp-field {
   display: grid;
+  min-width: 0;
+  gap: 5px;
+  /* 标签行 / 控件行：提示文字改走 placeholder 落在框内，不再单独占一行，
+     所以一行里的多个字段天然共用同一条控件基线 */
+  grid-template-rows: auto 1fr;
+  align-content: start;
+}
+
+.dp-field.span {
+  grid-column: 1 / -1;
+}
+
+/* 铺满剩余高度的字段：改用 flex，让 textarea 那一行吃掉全部余量 */
+.dp-field-grow {
+  display: flex;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.desktop-shell .dp-ta-fill {
+  min-height: 72px;
+  flex: 1;
+}
+
+.dp-field-label {
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 560;
+}
+
+.dp-row {
+  display: grid;
+  gap: 10px;
+}
+
+.dp-row.two {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.dp-row.three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/*
+ * 表单控件。
+ *
+ * appearance:none 是这一段的前提：不加它，WKWebView 会把 <select> 画成
+ * macOS 原生弹出按钮（自带白底 + 投影 + 双箭头）、把 input[type=number]
+ * 画上上下步进箭头。这两样都是系统控件的图形语言，跟卡片里的扁平 chip
+ * 放在一起必然「有阴影、很不协调」。所以统统关掉，箭头由我们自己画。
+ */
+.desktop-shell input,
+.desktop-shell select,
+.desktop-shell textarea,
+.desktop-shell .switch-field {
+  width: 100%;
+  min-height: var(--control-h);
+  box-sizing: border-box;
+  padding: 8px 12px;
+  border: 1px solid transparent;
+  border-radius: var(--r-inner);
+  background: var(--chip);
+  color: var(--text-1);
+  box-shadow: none;
+  font: inherit;
+  font-size: 12.5px;
+  appearance: none;
+  -webkit-appearance: none;
+  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+}
+
+/* 自绘 caret：单条折线，粗细与图标系统的 1.6 描边同档 */
+.desktop-shell select {
+  padding-right: 30px;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%236b7280' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.6 4.5 6 7.9l3.4-3.4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 11px center;
+  background-size: 12px 12px;
+  cursor: pointer;
+}
+
+.desktop-shell .dp-mini[multiple],
+.desktop-shell select::-ms-expand {
+  display: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .desktop-shell select {
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12' fill='none' stroke='%23a1a7b3' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M2.6 4.5 6 7.9l3.4-3.4'/%3E%3C/svg%3E");
+  }
+}
+
+/* 开关字段：外框复用上面那条 input/select/textarea 规则（选择器里带 .switch-field），
+   这里只补 flex 排布与勾选框自身的尺寸——复制一份配色迟早会和输入框走散。 */
+.desktop-shell .switch-field {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+
+.desktop-shell .switch-field input[type='checkbox'] {
+  width: 15px;
+  min-width: 15px;
+  height: 15px;
+  min-height: 15px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  appearance: auto;
+  -webkit-appearance: checkbox;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+/* 数字步进箭头：WebKit 的 spin button 尺寸/描边都不受我们控制，直接摘掉，
+   加减交给 .dp-step 里自绘的两个按钮 */
+.desktop-shell input[type='number'] {
+  -moz-appearance: textfield;
+}
+
+.desktop-shell input[type='number']::-webkit-outer-spin-button,
+.desktop-shell input[type='number']::-webkit-inner-spin-button {
+  margin: 0;
+  appearance: none;
+  -webkit-appearance: none;
+}
+
+/*
+ * textarea 不给拉伸手柄：右下角那块斜纹是浏览器画的，跟圆角 chip 冲突，
+ * 且用户手动拉高会破坏两列等高。高度改由 .dp-ta-fill + 外层 flex 分配
+ * （见 forms.tsx 的 GrowField）——跟着窗口走而不是跟着内容走，
+ * 卡片始终填满；内容超出就在框内滚。
+ */
+.desktop-shell textarea {
+  min-height: 72px;
+  line-height: 1.55;
+  overflow-y: auto;
+  resize: none;
+}
+
+.desktop-shell input:hover,
+.desktop-shell select:hover,
+.desktop-shell textarea:hover,
+.desktop-shell .switch-field:hover {
+  background: var(--chip-strong);
+}
+
+.desktop-shell input:focus,
+.desktop-shell select:focus,
+.desktop-shell textarea:focus {
+  border-color: var(--accent);
+  background: var(--card);
+  box-shadow: 0 0 0 3px var(--accent-soft);
+  outline: none;
+}
+
+.desktop-shell input[readonly] {
+  color: var(--text-3);
+  cursor: default;
+}
+
+/* 头部小号控件：与分段控件同高，头栏才不会被撑高 */
+.desktop-shell .dp-mini {
+  width: auto;
+  min-height: 32px;
+  padding: 0 10px;
+  font-size: 12px;
+}
+
+/* .dp-mini 的 padding 会盖掉上面给 select 留的 caret 位，这里补回来 */
+.desktop-shell select.dp-mini {
+  padding: 0 28px 0 10px;
+  background-position: right 9px center;
+}
+
+.desktop-shell .dp-search {
+  width: 148px;
+}
+
+/* 提示文字现在都是 placeholder：单行 input 里超长就截断，
+   textarea 里是整句说明，需要按行宽折行显示。 */
+.desktop-shell ::placeholder {
+  color: var(--text-3);
+}
+
+.desktop-shell textarea::placeholder {
+  line-height: 1.55;
+  white-space: pre-wrap;
+}
+
+/* —— 数字步进器：自绘加减，替掉被摘掉的原生箭头 —— */
+
+.dp-step {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.dp-step input {
+  flex: 1;
+  min-width: 0;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+.desktop-shell .dp-step button {
+  display: grid;
+  width: var(--control-h);
+  height: var(--control-h);
+  flex: none;
+  place-items: center;
+  border: 0;
+  border-radius: var(--r-inner);
+  background: var(--chip);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 15px;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 150ms ease, color 150ms ease;
+}
+
+.desktop-shell .dp-step button:hover:not(:disabled) {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.desktop-shell .dp-step button:disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+/* —— 按钮 —— */
+
+.desktop-shell .dp-primary {
+  min-height: 38px;
+  flex: none;
+  padding: 0 22px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 1px 2px var(--accent-shadow);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: background 180ms ease, transform 140ms ease, box-shadow 180ms ease;
+}
+
+.desktop-shell .dp-primary:hover:not(:disabled) {
+  background: var(--accent-deep);
+  box-shadow: 0 4px 14px var(--accent-shadow);
+  transform: translateY(-1px);
+}
+
+.desktop-shell .dp-primary:active:not(:disabled) {
+  box-shadow: 0 1px 2px var(--accent-shadow);
+  transform: translateY(0);
+}
+
+.desktop-shell .dp-primary:disabled {
+  background: var(--chip-strong);
+  color: var(--text-3);
+  box-shadow: none;
+  cursor: not-allowed;
+}
+
+.desktop-shell .dp-ghost {
+  min-height: 32px;
+  flex: none;
+  justify-self: start;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--chip);
+  color: var(--text-1);
+  font: inherit;
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background 160ms ease, color 160ms ease;
+}
+
+.desktop-shell .dp-ghost:hover:not(:disabled) {
+  background: var(--chip-strong);
+}
+
+.desktop-shell .dp-ghost.on {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.desktop-shell .dp-ghost:disabled {
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+/* 文件选择：隐藏原生 input，label 当按钮 */
+.dp-pick {
+  display: flex;
+  min-width: 0;
+  min-height: var(--control-h);
+  align-items: center;
+  gap: 8px;
+}
+
+.dp-pick input {
+  display: none;
+}
+
+.dp-pick label {
+  display: inline-flex;
+  min-height: var(--control-h);
+  flex: none;
+  align-items: center;
+  padding: 0 14px;
+  border-radius: var(--r-inner);
+  background: var(--chip);
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 550;
+  cursor: pointer;
+  transition: background 160ms ease;
+}
+
+.dp-pick label:hover {
+  background: var(--chip-strong);
+}
+
+.dp-pick-name {
+  overflow: hidden;
+  color: var(--text-2);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dp-chips {
+  display: flex;
+  flex: none;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+/* 放进「选择」按钮右边那块空位时：不换行，横向滚，
+   免得附件一多就把这一行撑高、把下面的输入框顶下去。
+   滚动条藏起来——这块地方太窄，一条滚动条就占掉半个 chip 的高度。 */
+.dp-chips.in-pick {
+  min-width: 0;
+  flex: 1;
+  flex-wrap: nowrap;
+  overflow-x: auto;
+  scrollbar-width: none;
+}
+
+.dp-chips.in-pick::-webkit-scrollbar {
+  display: none;
+}
+
+.dp-chips.in-pick .dp-chip {
+  flex: none;
+  max-width: 190px;
+}
+
+.dp-chips .dp-chip {
+  display: inline-flex;
+  max-width: 100%;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 4px 4px 10px;
+  border-radius: var(--r-pill);
+  background: var(--chip);
+  color: var(--text-2);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+/* 文件名可以省略号，叉号不行——所以截断只作用在文件名这一层 */
+.dp-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+/* 叉号：静默时与文字同色偏灰，hover 才转成主色，
+   免得一排 chip 上挂着一排显眼的删除按钮抢视线 */
+.dp-chip-x {
+  display: grid;
+  width: 16px;
+  height: 16px;
+  flex: none;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-3);
+  cursor: pointer;
+  place-items: center;
+  transition: background 140ms ease, color 140ms ease;
+}
+
+.dp-chip-x svg {
+  width: 9px;
+  height: 9px;
+  fill: none;
+  stroke: currentcolor;
+  stroke-linecap: round;
+  stroke-width: 1.7;
+}
+
+.dp-chip-x:hover {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.dp-chip-x:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+/* ============ 模板网格 ============ */
+
+.dp-tiles {
+  display: grid;
+  align-content: start;
+  gap: 10px;
+  grid-template-columns: repeat(auto-fill, minmax(132px, 1fr));
+  padding: var(--pad);
+}
+
+.dp-tiles.wide {
+  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(168px, 1fr));
+}
+
+.dp-tile {
+  position: relative;
+  display: grid;
+  overflow: hidden;
+  padding: 0;
+  border: 1.5px solid transparent;
+  border-radius: var(--r-chip);
+  background: var(--chip);
+  cursor: pointer;
+  transition: background 160ms ease, border-color 160ms ease, transform 140ms ease;
+}
+
+.dp-tile:hover {
+  background: var(--chip-strong);
+  transform: translateY(-2px);
+}
+
+.dp-tile.on {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.dp-tile img {
+  display: block;
+  width: 100%;
+  height: 84px;
+  background: var(--card);
+  object-fit: contain;
+}
+
+.dp-tile-cap {
+  overflow: hidden;
+  padding: 7px 10px 9px;
+  color: var(--text-2);
+  font-size: 11px;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.dp-tile-mark {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--card);
+}
+
+.dp-tile-mark::after {
+  content: '';
+  position: absolute;
+  top: 4px;
+  left: 5.5px;
+  width: 4px;
+  height: 7px;
+  border: solid #fff;
+  border-width: 0 1.8px 1.8px 0;
+  transform: rotate(42deg);
+}
+
+/* 模板库页的条目卡：比选择用的 tile 大一档，带说明行 */
+.dp-lib-card {
+  overflow: hidden;
+  margin: 0;
+  border-radius: var(--r-chip);
+  background: var(--chip);
+  transition: background 160ms ease, transform 140ms ease;
+}
+
+.dp-lib-card:hover {
+  background: var(--chip-strong);
+  transform: translateY(-2px);
+}
+
+.dp-lib-card img {
+  display: block;
+  width: 100%;
+  height: 106px;
+  background: var(--card);
+  object-fit: contain;
+}
+
+.dp-lib-card figcaption {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 11px 11px;
+}
+
+/* ---- 批量选择（删除用） ---- */
+
+/* 整张卡是点击热区，光标要跟上，否则看不出这一屏的语义变了 */
+.dp-lib-pick {
+  position: relative;
+  cursor: pointer;
+  user-select: none;
+}
+
+.dp-lib-pick:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+/* 选中态靠 inset 环而不是 border：border 会改盒子尺寸，
+   一整格网格会在勾选那一刻抖一下 */
+.dp-lib-pick.on {
+  background: var(--accent-soft);
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
+.dp-lib-check {
+  position: absolute;
+  top: 7px;
+  right: 7px;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  background: var(--card);
+  box-shadow: inset 0 0 0 1.5px var(--line);
+}
+
+.dp-lib-pick.on .dp-lib-check {
+  background: var(--accent);
+  box-shadow: 0 0 0 2px var(--card);
+}
+
+.dp-lib-pick.on .dp-lib-check::after {
+  content: '';
+  position: absolute;
+  top: 5px;
+  left: 6.5px;
+  width: 4px;
+  height: 7px;
+  border: solid #fff;
+  border-width: 0 1.8px 1.8px 0;
+  transform: rotate(42deg);
+}
+
+/* 选择模式下不要 hover 抬升：勾选时卡片上下动会让人点错相邻的那张 */
+.dp-tiles.picking .dp-lib-card:hover {
+  transform: none;
+}
+
+/* 删除按钮：平时与其它 ghost 同级，进入确认态才变红——
+   一开始就是红的会让「选择」这一步看起来已经很危险了 */
+.desktop-shell .dp-ghost.dp-danger {
+  color: #b3272c;
+}
+
+.desktop-shell .dp-ghost.dp-danger.on {
+  background: rgba(229, 72, 77, 0.14);
+  color: #b3272c;
+}
+
+.desktop-shell .dp-ghost.dp-danger:hover:not(:disabled) {
+  background: rgba(229, 72, 77, 0.14);
+}
+
+/* 首次加载时的占位卡：高度对齐真卡（图 106px + 说明行 ~36px），
+   刷出真数据时网格不会跳。呼吸式明暗，不用扫光——扫光动画在
+   一屏八块上同时跑，反而比空白更闹。 */
+.dp-lib-skeleton {
+  height: 142px;
+  animation: dp-skeleton 1.4s ease-in-out infinite;
+}
+
+.dp-lib-skeleton:hover {
+  transform: none;
+}
+
+@keyframes dp-skeleton {
+  0%,
+  100% {
+    opacity: 0.55;
+  }
+
+  50% {
+    opacity: 0.9;
+  }
+}
+
+.dp-badge {
+  padding: 2px 8px;
+  border-radius: var(--r-pill);
+  background: var(--chip-strong);
+  color: var(--text-2);
+  font-size: 10.5px;
+  font-weight: 550;
+}
+
+.dp-badge-plot {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.dp-badge-diagram {
+  background: rgba(59, 130, 246, 0.14);
+  color: #1d4ed8;
+}
+
+.dp-badge-master {
+  background: rgba(168, 85, 247, 0.15);
+  color: #7e22ce;
+}
+
+.dp-lib-cat {
+  color: var(--text-3);
+  font-size: 10.5px;
+}
+
+.dp-lib-intent {
+  overflow: hidden;
+  width: 100%;
+  color: var(--text-3);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (prefers-color-scheme: dark) {
+  .dp-badge-diagram {
+    background: rgba(96, 165, 250, 0.18);
+    color: #93c5fd;
+  }
+
+  .dp-badge-master {
+    background: rgba(192, 132, 252, 0.2);
+    color: #d8b4fe;
+  }
+}
+
+/* ============ 空态 ============ */
+
+.dp-empty {
+  display: grid;
+  min-height: 100%;
+  align-content: center;
   justify-items: center;
-  gap: var(--space-2);
-  padding: 56px var(--space-4);
-  border: 1px dashed rgba(140, 125, 145, 0.35);
-  border-radius: var(--radius-md);
+  gap: 8px;
+  padding: 40px 24px;
+  color: var(--text-3);
+  font-size: 12.5px;
   text-align: center;
 }
 
-.tpl-empty h3 {
-  margin: 0;
-  font-size: 15px;
+.dp-empty strong {
+  color: var(--text-1);
+  font-size: 14px;
+  font-weight: 620;
 }
 
-.tpl-empty p {
-  max-width: 52ch;
+.dp-empty p {
+  max-width: 46ch;
   margin: 0;
-  color: var(--text-muted);
+  color: var(--text-2);
+  font-size: 12px;
+  line-height: 1.6;
+}
+
+.dp-empty .dp-ghost {
+  margin-top: 4px;
+  justify-self: center;
+}
+
+/* ============ 导入弹窗 ============ */
+
+.dp-pop-wrap {
+  position: relative;
+  flex: none;
+}
+
+.dp-pop {
+  position: absolute;
+  top: calc(100% + 10px);
+  right: 0;
+  z-index: 40;
+  display: grid;
+  width: 340px;
+  gap: 10px;
+  padding: 16px;
+  border-radius: 18px;
+  background: var(--card);
+  box-shadow: var(--shadow-float);
+  animation: pop-in 200ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.dp-pop h3 {
+  margin: 0;
+  color: var(--text-1);
   font-size: 13px;
+  font-weight: 620;
+}
+
+.dp-pop .dp-primary {
+  width: 100%;
+  margin-top: 2px;
+}
+
+.dp-pop-alt {
+  display: grid;
+  gap: 8px;
+  margin-top: 4px;
+  padding-top: 14px;
+  border-top: 1px solid var(--hairline);
+}
+
+.dp-pop-alt p {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 11px;
+  line-height: 1.5;
+}
+
+.dp-pop-alt-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.dp-pop-alt-row a {
+  color: var(--accent-deep);
+  font-size: 11.5px;
+  text-decoration: none;
+}
+
+.dp-pop-alt-row a:hover {
+  text-decoration: underline;
+}
+
+/* ============ 设置页（复用 app.tsx 的 Settings，这里改皮肤） ============ */
+
+.desktop-shell .settings-stack {
+  display: grid;
+  gap: 10px;
+}
+
+.desktop-shell .settings-section {
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-chip);
+  background: transparent;
+  box-shadow: none;
+}
+
+.desktop-shell .settings-section-header {
+  min-height: 54px;
+  padding: 0 16px;
+  border-radius: var(--r-chip);
+}
+
+.desktop-shell .settings-section-header:hover {
+  background: rgba(22, 24, 32, 0.025);
+}
+
+.desktop-shell .settings-section-title {
+  color: var(--text-1);
+  font-size: 13.5px;
+  font-weight: 620;
+}
+
+.desktop-shell .settings-section-summary {
+  color: var(--text-3);
+  font-size: 11.5px;
+  font-weight: 450;
+}
+
+.desktop-shell .settings-section-badge {
+  padding: 3px 10px;
+  border-radius: var(--r-pill);
+  font-size: 11px;
+  font-weight: 550;
+}
+
+.desktop-shell .settings-section-badge.ok {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.desktop-shell .settings-section-badge.warn {
+  background: rgba(245, 158, 11, 0.14);
+  color: #96620a;
+}
+
+.desktop-shell .settings-section-body {
+  padding: 2px 16px 16px;
+}
+
+.desktop-shell .settings-side-subtitle {
+  color: var(--text-1);
+  font-size: 12.5px;
+  font-weight: 600;
+}
+
+.desktop-shell .settings-side-note,
+.desktop-shell .model-panel-hint {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.desktop-shell .settings-side-divider {
+  background: var(--hairline);
+}
+
+.desktop-shell .field {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.desktop-shell .field-label {
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 560;
+}
+
+.desktop-shell .field-hint {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.desktop-shell .primary {
+  min-height: 38px;
+  padding: 0 22px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--accent);
+  color: #fff;
+  box-shadow: 0 1px 2px var(--accent-shadow);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.desktop-shell .primary:hover {
+  background: var(--accent-deep);
+  box-shadow: 0 4px 14px var(--accent-shadow);
+  transform: translateY(-1px);
+}
+
+.desktop-shell .tool-button {
+  min-height: 32px;
+  min-width: 0;
+  padding: 0 14px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--chip);
+  color: var(--text-1);
+  box-shadow: none;
+  font-size: 12px;
+  font-weight: 550;
+}
+
+.desktop-shell .tool-button:hover {
+  background: var(--chip-strong);
+  box-shadow: none;
+  transform: none;
+}
+
+@media (prefers-color-scheme: dark) {
+  .desktop-shell .settings-section-header:hover {
+    background: rgba(255, 255, 255, 0.03);
+  }
+
+  .desktop-shell .settings-section-badge.warn {
+    color: #fbbf24;
+  }
+}
+
+/* ============ 结果面板（复用 app.tsx 的 JobPanel） ============ */
+
+/* JobPanel 自带 .clay-panel 白卡，桌面版它已经在卡片体内，
+   要退成透明，否则又是一层「卡中卡」。 */
+.desktop-shell .result-panel {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  padding: var(--pad);
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.desktop-shell .result-panel > .section-header {
+  display: none;
+}
+
+.desktop-shell .progress-card {
+  margin-bottom: 14px;
+  padding: 16px;
+  border-radius: var(--r-chip);
+  background: var(--chip);
+  box-shadow: none;
+}
+
+.desktop-shell .progress-label,
+.desktop-shell .step-log-label {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+.desktop-shell .progress-percent {
+  color: var(--text-1);
+  font-size: 18px;
+  font-weight: 680;
+}
+
+.desktop-shell .status-pill {
+  min-height: 23px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  box-shadow: none;
+  font-size: 11.5px;
+  font-weight: 600;
+}
+
+.desktop-shell .status-pill.queued {
+  background: var(--chip-strong);
+  color: var(--text-2);
+}
+
+.desktop-shell .status-pill.failed {
+  background: rgba(229, 72, 77, 0.13);
+  color: #b3272c;
+}
+
+.desktop-shell .status-pill.cancelled {
+  background: var(--chip-strong);
+  color: var(--text-2);
+}
+
+.desktop-shell .progress-elapsed {
+  color: var(--text-2);
+  font-size: 12px;
+  font-weight: 620;
+}
+
+.desktop-shell .progress-elapsed-label {
+  color: var(--text-3);
+  font-size: 11px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+}
+
+/* 停止按钮：右列宽度有限，用与 dp-ghost 同一档的尺寸，别把 meta 行挤换行 */
+.desktop-shell .stop-job-button {
+  min-height: 24px;
+  padding: 0 10px;
+  border-radius: var(--r-pill);
+  background: rgba(229, 72, 77, 0.12);
+  color: #b3272c;
+  box-shadow: none;
+  font-size: 11.5px;
+  font-weight: 620;
+}
+
+.desktop-shell .stop-job-button:hover:not(:disabled) {
+  background: rgba(229, 72, 77, 0.2);
+}
+
+.desktop-shell .progress-track {
+  height: 6px;
+  border-radius: var(--r-pill);
+  background: var(--chip-strong);
+  box-shadow: none;
+}
+
+.desktop-shell .progress-track span {
+  background: var(--accent);
+}
+
+.desktop-shell .progress-track.succeeded span {
+  background: var(--accent-deep);
+}
+
+.desktop-shell .progress-track.failed span {
+  background: var(--rose);
+}
+
+.desktop-shell .circular-progress-bg {
+  stroke: var(--chip-strong);
+}
+
+.desktop-shell .circular-progress-fg,
+.desktop-shell .circular-progress.running .circular-progress-fg,
+.desktop-shell .circular-progress.succeeded .circular-progress-fg {
+  stroke: var(--accent);
+}
+
+.desktop-shell .circular-progress.failed .circular-progress-fg {
+  stroke: var(--rose);
+}
+
+.desktop-shell .circular-progress.queued .circular-progress-fg {
+  stroke: var(--text-3);
+}
+
+.desktop-shell .circular-progress-value {
+  color: var(--text-1);
+  font-size: 12.5px;
+  font-weight: 680;
+}
+
+.desktop-shell .step-log-panel {
+  padding: 11px 13px;
+  border-radius: var(--r-inner);
+  background: var(--card);
+  box-shadow: none;
+}
+
+.desktop-shell .step-log-panel.succeeded {
+  background: var(--accent-soft);
+}
+
+.desktop-shell .step-log-panel.failed {
+  background: rgba(229, 72, 77, 0.1);
+}
+
+.desktop-shell .step-log-dot {
+  background: var(--accent);
+  box-shadow: 0 0 0 4px var(--accent-soft);
+}
+
+.desktop-shell .step-log-panel.failed .step-log-dot {
+  background: var(--rose);
+  box-shadow: 0 0 0 4px rgba(229, 72, 77, 0.16);
+}
+
+.desktop-shell .step-log-text strong {
+  color: var(--text-1);
+  font-size: 12.5px;
+}
+
+.desktop-shell .step-log-text small {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.desktop-shell .result-grid {
+  gap: 12px;
+}
+
+.desktop-shell .result-grid img {
+  border-radius: var(--r-chip);
+  background: var(--chip);
+  box-shadow: none;
+}
+
+.desktop-shell .result-card-footer span {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.desktop-shell .download-button {
+  min-height: 30px;
+  padding: 0 13px;
+  border: 0;
+  border-radius: var(--r-pill);
+  background: var(--chip);
+  color: var(--text-1);
+  box-shadow: none;
+  font-size: 11.5px;
+  font-weight: 550;
+}
+
+.desktop-shell .download-button:hover {
+  background: var(--chip-strong);
+  transform: none;
+}
+
+/* ============ Toast ============ */
+
+.desktop-shell + .toast,
+.desktop-shell .toast {
+  border: 0;
+  border-radius: var(--r-chip);
+  background: var(--card);
+  color: var(--text-1);
+  box-shadow: var(--shadow-float);
+  font-size: 13px;
+}
+
+.desktop-shell .toast-info {
+  border-left: 3px solid var(--accent);
+  background: var(--card);
+}
+
+.desktop-shell .toast-error {
+  border-left: 3px solid var(--rose);
+  background: var(--card);
+  color: var(--text-1);
+}
+
+.desktop-shell .toast-close {
+  border-radius: 8px;
+  background: var(--chip);
+  box-shadow: none;
 }

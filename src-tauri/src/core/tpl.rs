@@ -77,46 +77,46 @@ impl<'a> TemplateService<'a> {
         Self { store, app_data }
     }
 
+    /// 列模板。
+    ///
+    /// 过滤放在 SQL 里做，不要「先取一批再在内存里筛」：那样 LIMIT 截的是
+    /// 未过滤的集合，筛完剩多少全看运气。之前还在结果上又套了一层 take(60)，
+    /// 于是库里满 60 张之后每导入一张，就有一张旧的被挤出列表末尾——
+    /// 看起来就像「新模板覆盖了旧记录」，其实数据一直都在。
     pub fn list_templates(&self, kind: String, query: String) -> AppResult<Vec<TemplateSummary>> {
         let conn = self.store.connection()?;
-        let mut stmt = conn.prepare(
-            "SELECT id, source_id, kind, category, rounded_ratio, visual_intent, content_summary, image_path \
-             FROM templates ORDER BY created_at DESC LIMIT 200",
-        )?;
-        let rows = stmt.query_map([], |row| {
-            let id: String = row.get(0)?;
-            Ok(TemplateSummary {
-                image_url: format!("dp-template://localhost/{id}"),
-                id,
-                source_id: row.get(1)?,
-                kind: row.get(2)?,
-                category: row.get(3)?,
-                rounded_ratio: row.get(4)?,
-                visual_intent: row.get(5)?,
-                content_summary: row.get(6)?,
-            })
-        })?;
-
+        let kind = kind.trim().to_string();
+        let all_kinds = kind.is_empty() || kind == "all";
         let query = query.trim().to_lowercase();
-        let templates = rows.collect::<Result<Vec<_>, _>>()?;
-        Ok(templates
-            .into_iter()
-            .filter(|template| kind == "all" || kind.trim().is_empty() || template.kind == kind)
-            .filter(|template| {
-                if query.is_empty() {
-                    return true;
-                }
-                template.visual_intent.to_lowercase().contains(&query)
-                    || template.content_summary.to_lowercase().contains(&query)
-                    || template
-                        .category
-                        .as_deref()
-                        .unwrap_or_default()
-                        .to_lowercase()
-                        .contains(&query)
-            })
-            .take(60)
-            .collect())
+        let like = format!("%{query}%");
+
+        let mut stmt = conn.prepare(
+            "SELECT id, source_id, kind, category, rounded_ratio, visual_intent, content_summary \
+             FROM templates \
+             WHERE (?1 = 1 OR kind = ?2) \
+               AND (?3 = 1 \
+                    OR lower(visual_intent) LIKE ?4 \
+                    OR lower(content_summary) LIKE ?4 \
+                    OR lower(coalesce(category, '')) LIKE ?4) \
+             ORDER BY created_at DESC",
+        )?;
+        let rows = stmt.query_map(
+            params![all_kinds as i64, kind, query.is_empty() as i64, like],
+            |row| {
+                let id: String = row.get(0)?;
+                Ok(TemplateSummary {
+                    image_url: format!("dp-template://localhost/{id}"),
+                    id,
+                    source_id: row.get(1)?,
+                    kind: row.get(2)?,
+                    category: row.get(3)?,
+                    rounded_ratio: row.get(4)?,
+                    visual_intent: row.get(5)?,
+                    content_summary: row.get(6)?,
+                })
+            },
+        )?;
+        Ok(rows.collect::<Result<Vec<_>, _>>()?)
     }
 
     pub fn import_template_image(
@@ -276,6 +276,65 @@ impl<'a> TemplateService<'a> {
         })
     }
 
+    /// 批量删除模板：数据库行 + 磁盘图片一起清掉。
+    ///
+    /// 只删行不删文件会在 app_data 里留一堆再也访问不到的图片；
+    /// 只删文件不删行则更糟——列表还列着它，点进去 404。
+    ///
+    /// 图片的落盘方式有两种：单张导入独占 `templates/<template_id>/`，
+    /// 模板包里的图共用 `templates/<pack_id>/`。所以只在目录空了以后
+    /// 才删目录，别把同包的兄弟一起端走。
+    ///
+    /// 返回真正删掉的行数。传进来的 id 里有不存在的不算错——
+    /// 前端多点一次删除、或两个窗口同时删同一张，都不该弹报错。
+    pub fn delete_templates(&self, ids: &[String]) -> AppResult<usize> {
+        let mut removed = 0_usize;
+        let mut directories: Vec<PathBuf> = Vec::new();
+        let conn = self.store.connection()?;
+        for id in ids {
+            let image_path: Option<String> = conn
+                .query_row(
+                    "SELECT image_path FROM templates WHERE id = ?1",
+                    params![id],
+                    |row| row.get(0),
+                )
+                .ok();
+            let Some(image_path) = image_path else {
+                continue;
+            };
+            let affected = conn.execute("DELETE FROM templates WHERE id = ?1", params![id])?;
+            if affected == 0 {
+                continue;
+            }
+            removed += affected;
+            let image_path = PathBuf::from(image_path);
+            // 文件可能早就被手动删了，删不掉不该让整批回滚
+            let _ = std::fs::remove_file(&image_path);
+            if let Some(parent) = image_path.parent() {
+                if parent.starts_with(self.app_data.join("templates"))
+                    && !directories.iter().any(|dir| dir == parent)
+                {
+                    directories.push(parent.to_path_buf());
+                }
+            }
+        }
+        for dir in directories {
+            let empty = std::fs::read_dir(&dir)
+                .map(|mut entries| entries.next().is_none())
+                .unwrap_or(false);
+            if empty {
+                let _ = std::fs::remove_dir(&dir);
+            }
+        }
+        // 包里最后一张也删了，包记录就没有意义了
+        conn.execute(
+            "DELETE FROM template_packs WHERE id NOT IN \
+             (SELECT DISTINCT pack_id FROM templates WHERE pack_id IS NOT NULL)",
+            [],
+        )?;
+        Ok(removed)
+    }
+
     fn import_manifest_entries(
         &self,
         pack_id: &str,
@@ -357,9 +416,13 @@ fn manifests(source: &Path) -> Vec<(String, PathBuf)> {
     .collect()
 }
 
+/// `master` 是桌面版新增的第三类：幻灯片母版。
+/// 它与 diagram/plot 存在同一张表里，只靠 kind 区分——
+/// 母版走 slide 管道，另两类走 figure 管道，两边都按 kind 过滤，互不串味。
 fn normalize_kind(value: &str) -> String {
     match value.trim().to_ascii_lowercase().as_str() {
         "plot" => "plot".to_string(),
+        "master" => "master".to_string(),
         _ => "diagram".to_string(),
     }
 }
@@ -370,4 +433,145 @@ fn string_field(item: &Value, key: &str) -> Option<String> {
         .map(str::trim)
         .filter(|value| !value.is_empty())
         .map(str::to_string)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn scratch(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "dreampaper-tpl-test-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        dir
+    }
+
+    fn import(service: &TemplateService<'_>, name: &str, kind: &str, category: &str) -> String {
+        service
+            .import_template_image(
+                format!("{name}.png"),
+                "image/png".to_string(),
+                vec![0x89, b'P', b'N', b'G'],
+                kind.to_string(),
+                Some(category.to_string()),
+                Some(format!("intent for {name}")),
+                Some(format!("summary for {name}")),
+            )
+            .expect("导入应成功")
+            .id
+    }
+
+    /// 用户报的「新模板覆盖旧记录」：其实一条都没丢，是列表被
+    /// `.take(60)` 截断了，库里满 60 张之后每导入一张就挤掉最旧的一张。
+    /// 这条用例把库填到 60 以上，断言导入几张就能列出几张。
+    #[test]
+    fn listing_is_not_capped_and_keeps_the_oldest_entries() {
+        let dir = scratch("cap");
+        let store = Store::initialize(&dir).expect("初始化 store");
+        let service = TemplateService::new(&store, &dir);
+
+        let first = import(&service, "oldest", "diagram", "流程图");
+        for index in 1..70 {
+            import(&service, &format!("t{index}"), "diagram", "流程图");
+        }
+
+        let listed = service
+            .list_templates("all".to_string(), String::new())
+            .expect("列表应成功");
+        assert_eq!(listed.len(), 70, "70 张应全部列出，不该被 60 截断");
+        assert!(
+            listed.iter().any(|item| item.id == first),
+            "最早导入的那张不该被挤出列表"
+        );
+    }
+
+    /// 过滤必须发生在 SQL 里：先 LIMIT 再在内存里筛，
+    /// 母版会在库大了以后整类消失。
+    #[test]
+    fn filters_by_kind_and_query() {
+        let dir = scratch("filter");
+        let store = Store::initialize(&dir).expect("初始化 store");
+        let service = TemplateService::new(&store, &dir);
+
+        import(&service, "alpha", "diagram", "流程图");
+        import(&service, "beta", "plot", "折线图");
+        let master = import(&service, "gamma", "master", "学术蓝");
+
+        let masters = service
+            .list_templates("master".to_string(), String::new())
+            .expect("列表应成功");
+        assert_eq!(masters.len(), 1);
+        assert_eq!(masters[0].id, master);
+
+        // 空 kind 与 "all" 等价
+        assert_eq!(
+            service
+                .list_templates(String::new(), String::new())
+                .expect("列表应成功")
+                .len(),
+            3
+        );
+
+        // 关键词命中 category
+        let hits = service
+            .list_templates("all".to_string(), "折线".to_string())
+            .expect("列表应成功");
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].category.as_deref(), Some("折线图"));
+
+        // 关键词命中 visual_intent，且大小写不敏感
+        let hits = service
+            .list_templates("all".to_string(), "ALPHA".to_string())
+            .expect("列表应成功");
+        assert_eq!(hits.len(), 1);
+        assert!(hits[0].visual_intent.contains("alpha"));
+
+        // kind 与关键词同时生效
+        assert!(service
+            .list_templates("master".to_string(), "折线".to_string())
+            .expect("列表应成功")
+            .is_empty());
+    }
+
+    /// 删除要把行和文件一起带走，并且对不存在的 id 保持沉默。
+    #[test]
+    fn delete_removes_rows_and_files_and_tolerates_unknown_ids() {
+        let dir = scratch("delete");
+        let store = Store::initialize(&dir).expect("初始化 store");
+        let service = TemplateService::new(&store, &dir);
+
+        let doomed = import(&service, "doomed", "diagram", "流程图");
+        let kept = import(&service, "kept", "master", "学术蓝");
+        let doomed_path = service
+            .template_detail(&doomed)
+            .expect("详情应成功")
+            .image_path;
+        assert!(doomed_path.exists());
+
+        let removed = service
+            .delete_templates(&[doomed.clone(), "not-a-real-id".to_string()])
+            .expect("删除应成功");
+        assert_eq!(removed, 1, "不存在的 id 不该计入删除数");
+        assert!(!doomed_path.exists(), "磁盘上的图片也要清掉");
+        assert!(
+            !doomed_path.parent().expect("有父目录").exists(),
+            "单张导入独占的目录空了就该删掉"
+        );
+
+        let listed = service
+            .list_templates("all".to_string(), String::new())
+            .expect("列表应成功");
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].id, kept);
+
+        // 重复删除同一张不报错
+        assert_eq!(
+            service.delete_templates(&[doomed]).expect("删除应成功"),
+            0
+        );
+    }
 }

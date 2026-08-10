@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use crate::core::config::ModelProfile;
 use crate::core::net::{
     build_client, model_error, normalize_base_url, post_json_with_retries, require_api_key,
+    PostOptions,
 };
 use crate::error::AppResult;
 
@@ -111,9 +112,10 @@ impl SearchClient {
             &format!("{base}/search"),
             &payload,
             vec![],
-            None,
-            proxy_url,
-            None,
+            PostOptions {
+                proxy_url,
+                ..Default::default()
+            },
         )
         .await?;
         if outcome.status >= 400 {
@@ -186,9 +188,10 @@ impl SearchClient {
                 "Authorization".to_string(),
                 format!("Bearer {}", require_api_key(profile)?),
             )],
-            None,
-            proxy_url,
-            None,
+            PostOptions {
+                proxy_url,
+                ..Default::default()
+            },
         )
         .await?;
         if outcome.status >= 400 {

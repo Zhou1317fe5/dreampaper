@@ -540,7 +540,8 @@ button {
 
 input,
 select,
-textarea {
+textarea,
+.switch-field {
   width: 100%;
   min-width: 0;
   min-height: var(--control-h);
@@ -569,6 +570,32 @@ textarea:focus {
     0 0 0 3px rgba(161, 214, 194, 0.32),
     var(--shadow-recess);
 }
+
+/* 开关字段（目前只有 design 的流式）。
+   外框直接复用下面那条 input/select/textarea 规则（见选择器里的 .switch-field），
+   这里只补 flex 排布——复制一份配色迟早会和输入框走散。 */
+.switch-field {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  cursor: pointer;
+  user-select: none;
+}
+
+/* 勾选框本身要退出上面那条 input 规则给的整行尺寸，回到自然大小 */
+.switch-field input[type='checkbox'] {
+  width: 18px;
+  min-width: 18px;
+  height: 18px;
+  min-height: 18px;
+  flex: none;
+  padding: 0;
+  border-radius: 5px;
+  background: none;
+  box-shadow: none;
+  cursor: pointer;
+}
+
 
 .file-picker {
   display: grid;
@@ -660,6 +687,7 @@ textarea:focus {
   gap: var(--col-gap);
   align-items: start;
   min-width: 0;
+  grid-template-columns: repeat(auto-fit, minmax(0, 1fr));
 }
 
 .field-row.two {
@@ -1123,6 +1151,57 @@ textarea:focus {
   color: #7a3040;
 }
 
+/* 用户按停止和跑挂了要一眼分得开：失败是警示红，停止是中性灰 */
+.status-pill.cancelled {
+  background: rgba(232, 232, 234, 0.95);
+  color: #55595f;
+}
+
+/* 计时：等宽数字，秒位每秒变一次也不该让后面的元素左右抖 */
+.progress-elapsed {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 0.82rem;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.progress-elapsed-label {
+  font-size: 0.72rem;
+  font-weight: 600;
+  opacity: 0.75;
+}
+
+.stop-job-button {
+  min-height: 28px;
+  padding: 0 12px;
+  border: none;
+  border-radius: 999px;
+  font: inherit;
+  font-size: 0.78rem;
+  font-weight: 700;
+  color: #7a3040;
+  background: rgba(255, 224, 230, 0.9);
+  box-shadow: var(--shadow-control);
+  cursor: pointer;
+  transition: background 0.18s ease, transform 0.18s ease;
+}
+
+.stop-job-button:hover:not(:disabled) {
+  background: rgba(255, 208, 218, 0.95);
+}
+
+.stop-job-button:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.stop-job-button:disabled {
+  opacity: 0.6;
+  cursor: default;
+}
+
 .progress-step-count {
   margin-left: auto;
   color: var(--text-muted);
@@ -1388,10 +1467,13 @@ textarea:focus {
   font-size: 0.9rem;
 }
 
+/* 桌面版这里是 <button>（走原生保存对话框），网页版是 <a download>。
+   两者共用这条规则，所以要显式清掉 button 自带的边框与背景。 */
 .download-button {
   display: inline-grid;
   min-height: 36px;
   place-items: center;
+  border: 0;
   border-radius: 12px;
   color: #34413c;
   background: linear-gradient(90deg, #fcdce9, #d6f0e5);

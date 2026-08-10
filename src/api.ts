@@ -120,6 +120,35 @@ export function listJobs(limit = 20, offset = 0) {
   return ipc<JobRecord[]>('list_jobs', { limit, offset });
 }
 
+/**
+ * 停止一个在跑的任务。
+ *
+ * 桌面独有：网页版的管道跑在 FastAPI 进程里，那边没有对应路由，
+ * 所以按钮也只在桌面外壳里显示（`desktopAvailable()`）。
+ */
+export function cancelJob(id: string) {
+  return ipc<JobRecord>('cancel_job', { id });
+}
+
+/** 批量删除模板，返回真正删掉的条数（不存在的 id 不计入）。 */
+export function deleteTemplates(ids: string[]) {
+  return ipc<number>('delete_templates', { ids });
+}
+
+/**
+ * 保存资源到用户选定的路径。
+ *
+ * `<a download>` 对自定义协议不认：点下去只会把图片当页面导航过去，
+ * 表现就是整扇窗被那张图占满，而且回不去。所以「下载」按钮先弹原生保存
+ * 对话框让用户挑路径，再调这个命令把文件复制过去。
+ */
+export async function saveAsset(assetId: string, defaultFilename: string): Promise<void> {
+  const { save } = await import('@tauri-apps/plugin-dialog');
+  const path = await save({ defaultPath: defaultFilename });
+  if (!path) return; // 用户取消
+  return ipc('save_asset', { assetId, path });
+}
+
 export async function importTemplateImage(
   file: File,
   kind: string,

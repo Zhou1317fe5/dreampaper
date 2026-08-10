@@ -136,3 +136,43 @@ pub fn list_jobs(
 pub fn open_artifact(_state: State<'_, AppState>, _artifact_id: String) -> AppResult<()> {
     Ok(())
 }
+
+/// 停止一个在跑的任务，返回停止之后的记录，前端直接拿它刷新面板。
+#[tauri::command]
+pub fn cancel_job(
+    app: AppHandle,
+    state: State<'_, AppState>,
+    id: String,
+) -> AppResult<JobRecord> {
+    let record = state.core().cancel_job(id)?;
+    // 管道那边的 future 已经被 abort，它不会再发事件了：终态事件得由这里补上
+    let _ = app.emit(
+        "job://stage",
+        JobEventPayload {
+            job_id: record.id.clone(),
+            status: record.status.clone(),
+            stage: record
+                .stage
+                .clone()
+                .unwrap_or_else(|| "cancelled".to_string()),
+            message: record
+                .message
+                .clone()
+                .unwrap_or_else(|| "任务已停止".to_string()),
+            timestamp: Utc::now(),
+        },
+    );
+    Ok(record)
+}
+
+#[tauri::command]
+pub fn delete_templates(state: State<'_, AppState>, ids: Vec<String>) -> AppResult<usize> {
+    state.core().delete_templates(ids)
+}
+
+/// 另存资源文件，用于「下载」按钮。前端先用原生保存对话框让用户挑路径，
+/// 这个命令再把 asset 复制到那个路径，绕过 `<a download>` 对自定义协议的不认。
+#[tauri::command]
+pub fn save_asset(state: State<'_, AppState>, asset_id: String, path: String) -> AppResult<()> {
+    state.core().export_asset(&asset_id, std::path::Path::new(&path))
+}

@@ -101,6 +101,29 @@ impl<'a> AssetService<'a> {
         })
     }
 
+    /// 把一个已登记的 asset 另存到用户挑的路径。
+    ///
+    /// 走后端复制而不是在前端把 URL 塞给 `<a download>`：`dp-asset://` 是自定义
+    /// 协议，WKWebView 对它不认 download 属性，点下去只会把图片当页面导航过去，
+    /// 表现就是整扇窗被那张图占满，而且回不去。
+    ///
+    /// 用 `fs::copy` 而不是先读进内存再写：出图动辄十几 MB，没必要在内存里过一手。
+    pub fn export_asset(&self, id: &str, target: &Path) -> AppResult<()> {
+        let file = self.asset_file(id)?;
+        if !file.path.exists() {
+            return Err(AppError::new("asset_file_missing", "资源文件已不在磁盘上"));
+        }
+        // 目标目录一般是用户家目录下已存在的路径，但「新建文件夹」后立刻保存的情况
+        // 也有，父目录缺失时补一下，免得抛一个看不懂的 io 错误
+        if let Some(parent) = target.parent() {
+            if !parent.as_os_str().is_empty() && !parent.exists() {
+                std::fs::create_dir_all(parent)?;
+            }
+        }
+        std::fs::copy(&file.path, target)?;
+        Ok(())
+    }
+
     /// 生成结果落 `outputs/{job_id}/`，并登记为 asset —— `dp-asset://` 协议按 id 取文件，
     /// 所以出图必须进 assets 表才在前端可见。
     pub fn save_job_image(
@@ -177,5 +200,63 @@ pub fn sanitize_filename(name: &str) -> String {
         "upload.bin".to_string()
     } else {
         value
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn service_dir(tag: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "dreampaper-asset-test-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        dir
+    }
+
+    /// 「下载」按钮的落点：把 outputs/ 里的产出复制到用户挑的路径，
+    /// 原文件留在原地（近期任务里还要能再看、再下一次）。
+    #[test]
+    fn export_copies_the_file_and_keeps_the_original() {
+        let dir = service_dir("export");
+        let store = Store::initialize(&dir).expect("初始化 store");
+        let assets = AssetService::new(&store, &dir);
+        let saved = assets
+            .save_job_image("job-1", "figure.png", b"fake-png-bytes")
+            .expect("落盘产出");
+
+        // 目标故意放在一个还不存在的子目录里：用户在保存对话框里新建文件夹是常事
+        let target = dir.join("picked").join("我的图.png");
+        assets.export_asset(&saved.id, &target).expect("另存");
+
+        assert_eq!(
+            std::fs::read(&target).expect("读另存出来的文件"),
+            b"fake-png-bytes",
+            "另存出来的内容必须和原图一致"
+        );
+        let original = assets.asset_file(&saved.id).expect("读 asset 记录");
+        assert!(original.path.exists(), "另存是复制，不该把原文件搬走");
+    }
+
+    /// 磁盘上的文件被手动删了，得给一句能看懂的话，而不是抛一个裸 io 错误。
+    #[test]
+    fn export_reports_a_missing_file_clearly() {
+        let dir = service_dir("export-missing");
+        let store = Store::initialize(&dir).expect("初始化 store");
+        let assets = AssetService::new(&store, &dir);
+        let saved = assets
+            .save_job_image("job-1", "figure.png", b"bytes")
+            .expect("落盘产出");
+        let file = assets.asset_file(&saved.id).expect("读 asset 记录");
+        std::fs::remove_file(&file.path).expect("手动删掉图片");
+
+        let error = assets
+            .export_asset(&saved.id, &dir.join("out.png"))
+            .expect_err("文件没了应当报错");
+        assert_eq!(error.code, "asset_file_missing");
     }
 }

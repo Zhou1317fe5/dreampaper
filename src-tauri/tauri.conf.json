@@ -10,6 +10,7 @@
     "frontendDist": "../dist"
   },
   "app": {
+    "macOSPrivateApi": true,
     "windows": [
       {
         "title": "DreamPaper",
@@ -17,7 +18,12 @@
         "width": 1360,
         "height": 900,
         "minWidth": 1100,
-        "minHeight": 720
+        "minHeight": 720,
+        "titleBarStyle": "Overlay",
+        "windowEffects": {
+          "effects": ["sidebar", "mica"],
+          "state": "active"
+        }
       }
     ],
     "security": {

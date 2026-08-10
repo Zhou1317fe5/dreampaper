@@ -6,6 +6,7 @@
 //! 阶段上报走双通道：`job_stages` 表落盘 + `job://stage` 事件。
 //! 事件用于实时进度，表用于前端轮询兜底——事件在窗口未就绪时会丢，表不会。
 
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use chrono::Utc;
@@ -31,36 +32,53 @@ const MAX_FIGURE_TEMPLATES: usize = 3;
 
 /// 起一个后台任务跑管道。`create_job` 立即返回排队中的记录，
 /// 前端靠事件与 `get_job` 轮询看进度。
+///
+/// 句柄登记进 `core.cancels`，「停止任务」按钮才有东西可掐。
 pub fn spawn(app: AppHandle, core: Arc<Core>, job_id: String) {
-    tauri::async_runtime::spawn(async move {
-        let emit = |stage: &str, message: &str, status: &str| {
-            let _ = app.emit(
-                "job://stage",
-                JobEventPayload {
-                    job_id: job_id.clone(),
-                    status: status.to_string(),
-                    stage: stage.to_string(),
-                    message: message.to_string(),
-                    timestamp: Utc::now(),
-                },
-            );
-        };
-        let sink = |stage: &str, message: &str| {
-            let _ = JobService::new(&core.store).mark_stage(&job_id, stage, message, "running");
-            emit(stage, message, "running");
-        };
+    let cancelled = Arc::new(AtomicBool::new(false));
+    let handle = tauri::async_runtime::spawn({
+        let core = Arc::clone(&core);
+        let cancelled = Arc::clone(&cancelled);
+        let job_id = job_id.clone();
+        async move {
+            let emit = |stage: &str, message: &str, status: &str| {
+                let _ = app.emit(
+                    "job://stage",
+                    JobEventPayload {
+                        job_id: job_id.clone(),
+                        status: status.to_string(),
+                        stage: stage.to_string(),
+                        message: message.to_string(),
+                        timestamp: Utc::now(),
+                    },
+                );
+            };
+            let sink = |stage: &str, message: &str| {
+                let _ = JobService::new(&core.store).mark_stage(&job_id, stage, message, "running");
+                emit(stage, message, "running");
+            };
 
-        match run(&core, &job_id, &sink).await {
-            Ok(images) => {
-                let _ = JobService::new(&core.store).finish(&job_id, &images);
-                emit("completed", "任务完成", "succeeded");
+            let outcome = run(&core, &job_id, &sink).await;
+            // abort 只在 await 点生效，收尾这一段是同步的，可能已经跑过头了：
+            // 用户按过停止就不许再把状态盖回 succeeded/failed
+            if cancelled.load(Ordering::SeqCst) {
+                return;
             }
-            Err(error) => {
-                let _ = JobService::new(&core.store).fail(&job_id, &error.message);
-                emit("failed", &error.message, "failed");
+            match outcome {
+                Ok(images) => {
+                    let _ = JobService::new(&core.store).finish(&job_id, &images);
+                    emit("completed", "任务完成", "succeeded");
+                }
+                Err(error) => {
+                    let _ = JobService::new(&core.store).fail(&job_id, &error.message);
+                    emit("failed", &error.message, "failed");
+                }
             }
+            core.cancels.finish(&job_id);
         }
     });
+    core.cancels
+        .register(&job_id, cancelled, move || handle.abort());
 }
 
 async fn run(
@@ -121,8 +139,16 @@ async fn run(
 
             let assets = AssetService::new(&core.store, &core.app_data);
             stage("ppt_template", "读取 template 图片");
-            let template = assets.asset_file(&payload.template_asset_id)?;
-            let template_image = read_image_input(&template.path, &template.mime_type)?;
+            // 母版两条来源：模板库（桌面版从模板库选母版）或上传资源（网页版）。
+            // validate_payload 已保证至少有一条，这里按优先级取。
+            let template_image = if let Some(template_id) = payload.template_ref() {
+                let templates = TemplateService::new(&core.store, &core.app_data);
+                let detail = templates.template_detail(template_id)?;
+                read_image_input(&detail.image_path, &detail.mime_type)?
+            } else {
+                let template = assets.asset_file(&payload.template_asset_id)?;
+                read_image_input(&template.path, &template.mime_type)?
+            };
 
             stage("ppt_material", "整理资料输入");
             let mut material_assets = Vec::new();

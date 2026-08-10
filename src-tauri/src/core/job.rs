@@ -120,6 +120,11 @@ impl<'a> JobService<'a> {
     }
 
     /// 记录一个阶段：写 job_stages 并同步 jobs 的当前 stage/message。
+    ///
+    /// 同步那一步不许改动已经处于终态的任务。abort 只在 await 点生效，
+    /// 用户按下停止时管道可能正走在两个 await 之间的同步段里，之后还会
+    /// 再上报一个阶段——没有这道闸，那次上报会把 `cancelled` 盖回
+    /// `running`，任务就永远停在「进行中」，前端一直轮询一个没人在跑的 job。
     pub fn mark_stage(&self, job_id: &str, stage: &str, message: &str, status: &str) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
         let conn = self.store.connection()?;
@@ -128,11 +133,12 @@ impl<'a> JobService<'a> {
             params![job_id, stage, message, status, now],
         )?;
         let job_status = match status {
-            "succeeded" | "failed" => status,
+            "succeeded" | "failed" | "cancelled" => status,
             _ => "running",
         };
         conn.execute(
-            "UPDATE jobs SET status = ?1, stage = ?2, message = ?3, updated_at = ?4 WHERE id = ?5",
+            "UPDATE jobs SET status = ?1, stage = ?2, message = ?3, updated_at = ?4 \
+             WHERE id = ?5 AND status NOT IN ('succeeded', 'failed', 'cancelled')",
             params![job_status, stage, message, now, job_id],
         )?;
         Ok(())
@@ -151,13 +157,17 @@ impl<'a> JobService<'a> {
     }
 
     /// 成功收尾：落 result_json（含图片列表）并标记 completed。
+    ///
+    /// 同样不覆盖终态：用户按下停止的那一刻管道可能刚好跑完，
+    /// 已经答复过「已停止」就不该再翻成「完成」。
     pub fn finish(&self, job_id: &str, images: &[JobImage]) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
         let result = serde_json::json!({ "images": images });
         let conn = self.store.connection()?;
         conn.execute(
             "UPDATE jobs SET status = 'succeeded', stage = 'completed', message = '任务完成', \
-             result_json = ?1, updated_at = ?2 WHERE id = ?3",
+             result_json = ?1, updated_at = ?2 \
+             WHERE id = ?3 AND status NOT IN ('succeeded', 'failed', 'cancelled')",
             params![serde_json::to_string(&result)?, now, job_id],
         )?;
         drop(conn);
@@ -174,6 +184,20 @@ impl<'a> JobService<'a> {
         )?;
         drop(conn);
         self.mark_stage(job_id, "failed", message, "failed")
+    }
+
+    /// 用户主动停止。单独一个终态，不写成 failed——
+    /// 「我按了停止」和「跑挂了」在近期任务列表里必须能分开看。
+    pub fn cancel(&self, job_id: &str, message: &str) -> AppResult<()> {
+        let now = Utc::now().to_rfc3339();
+        let error = serde_json::json!({ "message": message, "cancelled_at": now });
+        let conn = self.store.connection()?;
+        conn.execute(
+            "UPDATE jobs SET error_json = ?1, updated_at = ?2 WHERE id = ?3",
+            params![serde_json::to_string(&error)?, now, job_id],
+        )?;
+        drop(conn);
+        self.mark_stage(job_id, "cancelled", message, "cancelled")
     }
 
     fn images_for_job(&self, job_id: &str) -> AppResult<Vec<JobImage>> {
@@ -202,5 +226,57 @@ impl<'a> JobService<'a> {
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn service_dir(tag: &str) -> std::path::PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "dreampaper-job-test-{tag}-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).expect("建临时目录");
+        dir
+    }
+
+    /// 用户按下停止之后，管道那边「迟到」的阶段上报不许把任务弄活。
+    /// 没有这道闸，任务会卡在 running，前端一直轮询一个已经没人跑的 job。
+    #[test]
+    fn a_cancelled_job_is_not_resurrected_by_late_reports() {
+        let dir = service_dir("cancel");
+        let store = Store::initialize(&dir).expect("初始化 store");
+        let jobs = JobService::new(&store);
+        let job = jobs
+            .create_job(serde_json::json!({ "mode": "paper_figure" }))
+            .expect("建任务");
+
+        jobs.mark_stage(&job.id, "paper_design", "设计中", "running")
+            .expect("上报阶段");
+        jobs.cancel(&job.id, "任务已停止").expect("停止");
+
+        // 管道在被 abort 之前还挤出了一次上报，以及一次成功收尾
+        jobs.mark_stage(&job.id, "paper_implement", "制图中", "running")
+            .expect("迟到的上报");
+        jobs.finish(
+            &job.id,
+            &[JobImage {
+                name: "figure.png".to_string(),
+                url: "dp-asset://x".to_string(),
+            }],
+        )
+        .expect("迟到的收尾");
+
+        let after = jobs.get_job(job.id.clone()).expect("读任务");
+        assert_eq!(after.status, "cancelled");
+        assert_eq!(after.stage.as_deref(), Some("cancelled"));
+        assert!(
+            after.images.is_empty(),
+            "停止之后不该再把产出挂回这条任务"
+        );
     }
 }

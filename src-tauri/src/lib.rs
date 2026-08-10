@@ -33,6 +33,9 @@ pub fn run() {
             cmd::create_job,
             cmd::get_job,
             cmd::list_jobs,
+            cmd::cancel_job,
+            cmd::delete_templates,
+            cmd::save_asset,
             cmd::open_artifact
         ])
         .run(tauri::generate_context!())

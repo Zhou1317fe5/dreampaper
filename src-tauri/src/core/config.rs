@@ -7,7 +7,6 @@ use crate::error::{AppError, AppResult};
 use super::store::Store;
 
 const CONFIG_KEY: &str = "app_config";
-const DEFAULT_PROXY_URL: &str = "http://127.0.0.1:7890";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AppConfig {
@@ -202,7 +201,6 @@ fn normalize_concurrency(value: Option<i64>) -> Option<i64> {
 }
 
 fn public_config(mut config: AppConfig) -> AppConfig {
-    config.proxy_url = config.proxy_url.or_else(|| Some(DEFAULT_PROXY_URL.to_string()));
     for profile in &mut config.model_profiles {
         profile.api_key_hint = profile.api_key.as_deref().map(mask_key);
         profile.has_api_key = Some(profile.api_key.as_deref().is_some_and(|value| !value.trim().is_empty()));
@@ -225,7 +223,10 @@ fn default_config() -> AppConfig {
         active_design_profile: "design-default".to_string(),
         active_implement_profile: "implement-default".to_string(),
         active_search_profile: default_search_profile_id(),
-        proxy_url: Some(DEFAULT_PROXY_URL.to_string()),
+        // 默认不设代理。以前这里预填了 http://127.0.0.1:7890：本机没开那个端口时，
+        // 所有模型请求都会拐进一个空洞，报出来只有一句 "error sending request for url"，
+        // 看起来像上游挂了，其实是我们自己塞的代理。
+        proxy_url: None,
         ppt_page_plan_concurrency: None,
         ppt_image_concurrency: None,
         model_profiles: vec![default_design(), default_implement(), default_search()],

@@ -1,11 +1,19 @@
+# 依赖与虚拟环境
 .venv/
 node_modules/
+
+# 构建产物
 dist/
 build/
-tsconfig.tsbuildinfo
+*.tsbuildinfo
 __pycache__/
 *.pyc
+
+# 系统 / 编辑器杂项
 .DS_Store
+Thumbs.db
+.vscode/
+.idea/
 *.log
 
 # 本地密钥与运行产物（永远不入库）
@@ -14,6 +22,9 @@ __pycache__/
 .env.*
 !.env.example
 *.pem
+*.key
+*.p12
+*.keystore
 id_rsa
 id_ed25519
 
@@ -35,6 +46,9 @@ example.md
 
 # Rust 构建产物
 src-tauri/target/
+
+# Tauri 每次构建自动重新生成，仅供编辑器补全 capability JSON
+src-tauri/gen/schemas/
 
 # CI 归集的待发布安装包
 release-artifacts/
