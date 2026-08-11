@@ -168,6 +168,17 @@ npm run dev
 
 ---
 
+## Star History
+
+<a href="https://www.star-history.com/?repos=dream-rec%2Fdreampaper&type=date&legend=top-left">
+ <picture>
+   <source media="(prefers-color-scheme: dark)" srcset="https://api.star-history.com/chart?repos=dream-rec/dreampaper&type=date&theme=dark&legend=top-left&sealed_token=ej8Oq3_JvVb6NVk_lL4pi27YYDnqlXQLdD8BpyOsbkS5_HhFb2FGeY4umbQzYpSbSiW47djwIZfrKUTq5S7UnjvVjk9qSjHwZ4_Yko3LxQnqER4FuqXv5A" />
+   <source media="(prefers-color-scheme: light)" srcset="https://api.star-history.com/chart?repos=dream-rec/dreampaper&type=date&legend=top-left&sealed_token=ej8Oq3_JvVb6NVk_lL4pi27YYDnqlXQLdD8BpyOsbkS5_HhFb2FGeY4umbQzYpSbSiW47djwIZfrKUTq5S7UnjvVjk9qSjHwZ4_Yko3LxQnqER4FuqXv5A" />
+   <img alt="Star History Chart" src="https://api.star-history.com/chart?repos=dream-rec/dreampaper&type=date&legend=top-left&sealed_token=ej8Oq3_JvVb6NVk_lL4pi27YYDnqlXQLdD8BpyOsbkS5_HhFb2FGeY4umbQzYpSbSiW47djwIZfrKUTq5S7UnjvVjk9qSjHwZ4_Yko3LxQnqER4FuqXv5A" />
+ </picture>
+</a>
+
+---
 ## 开源协议
 
 本项目采用 [PolyForm Noncommercial License 1.0.0](LICENSE)，**允许非商业使用，禁止商业使用**。
