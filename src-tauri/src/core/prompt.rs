@@ -39,8 +39,6 @@ impl PromptStore {
     }
 }
 
-/// 拼 prompt：先按顺序铺 prompt 资产，再铺调用方给的段落。
-/// 段落顺序有意义，因此用 Vec 而非 Map。移植自 `prompts.py::compose_prompt`。
 pub fn compose_prompt(assets: &[PromptAsset], sections: &[(&str, String)]) -> String {
     let mut parts: Vec<String> = assets
         .iter()
@@ -65,7 +63,6 @@ fn short_hash(content: &str) -> String {
 mod tests {
     use super::*;
 
-    /// prompts/ 与 src-tauri/ 同级；打包时由 tauri resource 复制过去。
     fn prompt_root() -> PathBuf {
         PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .parent()
@@ -73,8 +70,6 @@ mod tests {
             .join("prompts")
     }
 
-    /// 对齐 Python `test_prompt_assets_load_and_compose`：
-    /// 顺序即 prompt 段落顺序，version 必须等于内容 hash（改了文件就换版本号）。
     #[test]
     fn prompt_assets_load_and_compose() {
         let store = PromptStore::new(prompt_root());
@@ -95,12 +90,10 @@ mod tests {
         assert!(assets
             .iter()
             .all(|asset| !asset.hash.is_empty() && asset.version == asset.hash));
-        // 段落顺序：先 prompt 资产，后调用方段落
         assert!(prompt.find("## modes/paper_figure/diagram_rules.md")
             < prompt.find("## Output Contract"));
     }
 
-    /// 缺文件要报错而不是静默拼出半截 prompt。
     #[test]
     fn missing_prompt_asset_is_an_error() {
         let store = PromptStore::new(prompt_root());

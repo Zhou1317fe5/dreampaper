@@ -6,6 +6,7 @@ import {
   getConfig,
   getJob,
   listTemplates,
+  openArtifact,
   saveAsset,
   saveConfig,
   uploadAsset
@@ -59,8 +60,6 @@ export const emptyConfig: AppConfig = {
   active_design_profile: 'design-default',
   active_implement_profile: 'implement-default',
   active_search_profile: 'search-default',
-  // 空代理即「不指定代理」。别在这里预填一个本机端口：
-  // 本机没监听时所有模型请求都会拐进空洞，报错只剩一句 error sending request
   proxy_url: '',
   ppt_page_plan_concurrency: null,
   ppt_image_concurrency: null,
@@ -89,7 +88,7 @@ export const copy = {
     settings: { design: 'Design', implement: 'Implement', search: 'Search', searchHint: '幻灯片视觉素材检索。duckduckgo_html 免密钥；tavily 填 API key；openai_chat 可用 Grok/OpenAI 兼容 search model。', proxyAndConcurrency: '代理与并发', proxy: '代理', proxyHint: '本地代理地址，例如 http://127.0.0.1:7890；留空表示不指定代理。', concurrency: '幻灯片并发', concurrencyHint: '留空表示跟随本次输入的幻灯片页数；实际并发不会超过页数。制图建议先设为 1，降低网关 502。', pagePlanConcurrency: '规划并发', imageConcurrency: '制图并发', defaultByPages: '默认=页数', size: '尺寸', quality: '质量', format: '格式', ratio: '比例', clarity: '清晰度', tendency: '倾向', version: '版本', timeout: '超时(秒)', timeoutHint: '同步出图可能较久，implement 建议 600–900。', retries: '重试次数', maxResults: '结果数', stream: '流式', streamOn: '开启', keySet: '密钥已配置', keyNone: '未配置密钥', notSet: '未设置' },
     paper: { title: '科研图', intro: '选择 template 作为 few-shot 风格参考。', figureTitle: '标题', description: '方法', ratio: '比例', fidelity: '布局', strength: '风格', custom: '约束', customHint: '可选，用于补充禁用元素、强调风格、文字限制或审稿要求。', generate: '生成', search: '搜索', kind: '类型', inherited: '继承', submitted: '科研图任务已提交' },
     ppt: { title: '幻灯片', intro: '上传 template，分析母版，再批量生成页面。', template: '母版', pages: '页数', material: '资料', materialFile: '附件', materialHint: '可输入文字，也可上传 pdf、docx、txt、md、csv 等资料。', custom: '约束', customHint: '可选，用于补充页数结构、禁用元素、术语、颜色或展示重点。', generate: '生成', submitted: '幻灯片任务已提交', uploading: '上传中...', uploaded: '已上传' },
-    result: { title: 'Result', waiting: '等待中', progress: '进度', current: '当前', step: '当前步骤', failed: '失败', completed: '完成', queued: '排队中', running: '运行中', cancelled: '已停止', preview: '预览', download: '下载', of: '/', elapsed: '已用时', stop: '停止任务', stopping: '停止中…', stopped: '任务已停止', stopFailed: '停止失败', saveFailed: '保存失败' }
+    result: { title: 'Result', waiting: '等待中', progress: '进度', current: '当前', step: '当前步骤', failed: '失败', completed: '完成', queued: '排队中', running: '运行中', cancelled: '已停止', preview: '预览', download: '下载', of: '/', elapsed: '已用时', stop: '停止任务', stopping: '停止中…', stopped: '任务已停止', stopFailed: '停止失败', saveFailed: '保存失败', previewFailed: '预览失败' }
   },
   en: {
     nav: { paper: 'Figure', ppt: 'Slide', settings: 'Settings' },
@@ -112,7 +111,7 @@ export const copy = {
     settings: { design: 'Design', implement: 'Implement', search: 'Search', searchHint: 'Slide visual grounding search. duckduckgo_html needs no key; tavily needs API key; openai_chat is an OpenAI-compatible search model (e.g. Grok endpoint).', proxyAndConcurrency: 'Proxy & concurrency', proxy: 'Proxy', proxyHint: 'Local proxy URL, e.g. http://127.0.0.1:7890. Leave empty to disable explicit proxy.', concurrency: 'Slide concurrency', concurrencyHint: 'Leave empty to follow the current Slide page count; actual concurrency will not exceed pages. Prefer image concurrency = 1 to reduce 502s.', pagePlanConcurrency: 'Plan workers', imageConcurrency: 'Image workers', defaultByPages: 'default=pages', size: 'Size', quality: 'Quality', format: 'Format', ratio: 'Ratio', clarity: 'Sharpness', tendency: 'Quality', version: 'Version', timeout: 'Timeout (s)', timeoutHint: 'Sync image APIs can be slow; implement often needs 600–900s.', retries: 'Retries', maxResults: 'Results', stream: 'Stream', streamOn: 'On', keySet: 'Key set', keyNone: 'No key', notSet: 'Not set' },
     paper: { title: 'Figure', intro: 'Choose templates as few-shot visual references.', figureTitle: 'Title', description: 'Method', ratio: 'Ratio', fidelity: 'Layout', strength: 'Style', custom: 'Rules', customHint: 'Optional constraints for banned elements, style emphasis, text limits, or review requirements.', generate: 'Generate', search: 'Search', kind: 'Type', inherited: 'Template', submitted: 'Figure job submitted' },
     ppt: { title: 'Slide', intro: 'Upload a template, analyze the master, then generate pages.', template: 'Master', pages: 'Pages', material: 'Material', materialFile: 'Files', materialHint: 'Enter text or upload pdf, docx, txt, md, csv, and other common materials.', custom: 'Rules', customHint: 'Optional constraints for page structure, banned elements, terms, colors, or focus.', generate: 'Generate', submitted: 'Slide job submitted', uploading: 'Uploading...', uploaded: 'Uploaded' },
-    result: { title: 'Result', waiting: 'Waiting', progress: 'Progress', current: 'Current', step: 'Current step', failed: 'Failed', completed: 'Completed', queued: 'Queued', running: 'Running', cancelled: 'Stopped', preview: 'Preview', download: 'Download', of: '/', elapsed: 'Elapsed', stop: 'Stop job', stopping: 'Stopping…', stopped: 'Job stopped', stopFailed: 'Stop failed', saveFailed: 'Save failed' }
+    result: { title: 'Result', waiting: 'Waiting', progress: 'Progress', current: 'Current', step: 'Current step', failed: 'Failed', completed: 'Completed', queued: 'Queued', running: 'Running', cancelled: 'Stopped', preview: 'Preview', download: 'Download', of: '/', elapsed: 'Elapsed', stop: 'Stop job', stopping: 'Stopping…', stopped: 'Job stopped', stopFailed: 'Stop failed', saveFailed: 'Save failed', previewFailed: 'Preview failed' }
   }
 } as const;
 
@@ -152,7 +151,6 @@ const PPT_STAGE_WEIGHTS: Record<string, number> = {
   failed: 100
 };
 
-/** 终态：轮询该停、计时该冻结、停止按钮该消失，三处都以此为准。 */
 export function isJobSettled(status: JobRecord['status']) {
   return status === 'succeeded' || status === 'failed' || status === 'cancelled';
 }
@@ -169,13 +167,6 @@ export function useJobPolling(job: JobRecord | null, setJob: (job: JobRecord) =>
   }, [job, setJob, onError]);
 }
 
-/**
- * 任务已跑的秒数。
- *
- * 在跑的时候每秒自己走，不等 1.8 秒一次的轮询——否则读数会一顿一顿地跳。
- * 跑完就冻结在 `updated_at - created_at`：这是这次任务真实的耗时，
- * 而「现在减开始时间」会在结果面板上一直涨下去。
- */
 export function useElapsedSeconds(job: JobRecord | null): number {
   const jobId = job?.id ?? null;
   const started = job ? Date.parse(job.created_at) : Number.NaN;
@@ -184,8 +175,6 @@ export function useElapsedSeconds(job: JobRecord | null): number {
   const [now, setNow] = useState(() => Date.now());
 
   useEffect(() => {
-    // 只在「换了任务」或「跑完了」时重建定时器：
-    // 跟着每次轮询重建会让秒数走得一卡一卡的
     if (!jobId || settled) return;
     setNow(Date.now());
     const timer = window.setInterval(() => setNow(Date.now()), 1000);
@@ -197,7 +186,6 @@ export function useElapsedSeconds(job: JobRecord | null): number {
   return Math.max(0, Math.round((end - started) / 1000));
 }
 
-/** 秒数排版成 `mm:ss` / `h:mm:ss`，出图动辄十几分钟，纯秒数读不出来。 */
 export function formatDuration(seconds: number): string {
   const total = Math.max(0, Math.floor(seconds));
   const pad = (value: number) => String(value).padStart(2, '0');
@@ -323,7 +311,6 @@ export function Settings({ config, onChange, onSave, t }: { config: AppConfig; o
   const design = config.model_profiles.find((item) => item.role === 'design') || defaultDesign();
   const implement = config.model_profiles.find((item) => item.role === 'implement') || defaultImplement();
   const search = config.model_profiles.find((item) => item.role === 'search') || defaultSearch();
-  // 各段独立开合：配置时常需要来回对照 design / implement，单开手风琴会误关正在编辑的段
   const [open, setOpen] = useState<string[]>(['design']);
 
   function toggle(key: string) {
@@ -467,7 +454,6 @@ function SettingsSection({
       </button>
       <div className="settings-section-panel">
         <div className="settings-section-panel-inner">
-          {/* 始终渲染：条件渲染会让收起方向没有过渡可言 */}
           <div className="settings-section-body" inert={!open}>{children}</div>
         </div>
       </div>
@@ -667,7 +653,6 @@ export function PaperFigure({ state, onState, onJob, onMessage, t }: { state: Pa
     listTemplates(kind, query).then(setTemplates).catch(console.error);
   }, [kind, query]);
 
-  // 模板库整体高度与左侧表单（至约束说明）底边对齐
   useEffect(() => {
     const form = formBodyRef.current;
     const gallery = galleryRef.current;
@@ -913,12 +898,6 @@ export function PptSlide({ state, onState, onJob, onMessage, t }: { state: PptSl
   );
 }
 
-/**
- * 结果面板。
- *
- * `onCancelled` 由外壳提供：拿到停止后的记录就地替换，轮询随即因终态停下。
- * 网页外壳不传它，停止按钮就不出现——那边后端没有停止路由。
- */
 export function JobPanel({
   job,
   t,
@@ -946,7 +925,6 @@ export function JobPanel({
     setStepAnimKey((key) => key + 1);
   }, [displayStage, displayMessage, latest?.timestamp]);
 
-  // 任务换了或跑完了，按钮的「停止中」状态不能留在上面
   useEffect(() => {
     setStopping(false);
   }, [job.id, settled]);
@@ -1006,7 +984,22 @@ export function JobPanel({
         <div className="result-grid">
           {images.map((image) => (
             <div key={image.url} className="result-card">
-              <a className="result-preview" href={image.url} target="_blank" rel="noreferrer" aria-label={`${t.result.preview} ${image.name}`}>
+              <a
+                className="result-preview"
+                href={image.url}
+                target="_blank"
+                rel="noreferrer"
+                aria-label={`${t.result.preview} ${image.name}`}
+                onClick={(event) => {
+                  if (!desktopAvailable()) return;
+                  event.preventDefault();
+                  const assetId = image.url.split('/').pop();
+                  if (!assetId) return;
+                  openArtifact(assetId).catch((error) =>
+                    onError?.(error instanceof Error ? error.message : t.result.previewFailed)
+                  );
+                }}
+              >
                 <img src={image.url} alt={image.name} />
               </a>
               <div className="result-card-footer">
@@ -1076,8 +1069,6 @@ function computeJobProgress(job: JobRecord): number {
   if (job.status === 'succeeded') return 100;
   if (job.status === 'queued') return 4;
 
-  // 停止是外部叫停的，stage 会变成 'cancelled'，权重表里查不到；
-  // 用被打断前的那一步算进度，进度条才停在它实际走到的位置
   const settledStage = job.status === 'cancelled';
   const lastStage = settledStage
     ? job.events?.filter((event) => event.stage !== 'cancelled').slice(-1)[0]?.stage
@@ -1086,13 +1077,11 @@ function computeJobProgress(job: JobRecord): number {
   const pagePlan = stage.match(/^ppt_page_(?:prompt|plan)_(\d+)$/);
   if (pagePlan) {
     const page = Number.parseInt(pagePlan[1], 10) || 1;
-    // 页面规划约占 56% → 72%
     return Math.min(71, 56 + Math.min(page, 12) * 1.2);
   }
   const pageImpl = stage.match(/^ppt_implement_(\d+)$/);
   if (pageImpl) {
     const page = Number.parseInt(pageImpl[1], 10) || 1;
-    // 制图约占 76% → 96%
     return Math.min(96, 76 + Math.min(page, 12) * 1.5);
   }
 
@@ -1103,7 +1092,6 @@ function computeJobProgress(job: JobRecord): number {
     return base;
   }
 
-  // 未知 stage：按事件数平滑推进，避免卡死观感
   const eventCount = job.events?.length || 1;
   const fallback = Math.min(92, 10 + eventCount * 4);
   return job.status === 'failed' ? Math.min(96, fallback) : fallback;
@@ -1128,7 +1116,6 @@ export function Field({ label, hint, children }: { label: string; hint?: string;
   );
 }
 
-/** 整数输入：允许清空后完整键入，失焦时再 clamp，避免 onChange 强制最小值导致无法改数 */
 function IntegerInput({
   value,
   min,

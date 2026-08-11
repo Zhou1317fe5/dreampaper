@@ -1,8 +1,3 @@
-//! 检索客户端，移植自 `backend/app/search.py`。
-//!
-//! 只回传标题/URL/摘要三段文本，不下载任何网络图片——这些文本是 design model
-//! 判断「主体长什么样」的唯一依据，implement model 永远拿不到网络图。
-
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -34,7 +29,6 @@ impl SearchClient {
         match protocol.as_str() {
             "duckduckgo_html" => Self::duckduckgo(profile, query, max_results, proxy_url).await,
             "tavily" => Self::tavily(profile, query, max_results, proxy_url).await,
-            // openai_responses 也走 chat 兼容路径
             "openai_chat" | "openai_responses" => {
                 Self::model_search(profile, query, max_results, proxy_url).await
             }
@@ -146,7 +140,6 @@ impl SearchClient {
         Ok(results)
     }
 
-    /// 带联网能力的 OpenAI 兼容 chat 接口（如 Grok 中转），要求返回严格 JSON。
     async fn model_search(
         profile: &ModelProfile,
         query: &str,
@@ -277,7 +270,6 @@ impl SearchClient {
     }
 }
 
-/// DuckDuckGo 的跳转链接把真实地址放在 uddg 参数里，需还原。
 fn normalize_result_url(url: &str) -> String {
     let Some((_, query)) = url.split_once('?') else {
         return url.to_string();

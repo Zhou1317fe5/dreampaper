@@ -30,7 +30,6 @@ impl AppState {
         &self.core
     }
 
-    /// 后台管道任务要在命令返回后继续持有 core。
     pub fn core_arc(&self) -> Arc<Core> {
         Arc::clone(&self.core)
     }

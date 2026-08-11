@@ -1,17 +1,10 @@
 import type { Lang } from '../app';
 
-/**
- * 桌面外壳独有的文案。
- *
- * 刻意不并进 `app.tsx` 的 `copy`：那份是网页版的，改它就等于改网页版。
- * 桌面版多出「模板库」「近期任务」「母版从库里选」等概念，网页版没有。
- */
 export const desktopCopy = {
   zh: {
     nav: { paper: '科研图', ppt: '幻灯片', templates: '模板库', settings: '设置' },
     settingsIntro: '配置 Design / Implement / Search 模型，以及代理与并发。',
     recent: { title: '近期任务', empty: '还没有任务', failed: '失败', running: '进行中', done: '完成' },
-    /** 右侧分栏：模板/母版与结果共用一列，避免结果面板另起一块把两列高度撑歪 */
     pane: {
       form: '参数',
       templates: '模板',

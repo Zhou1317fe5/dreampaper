@@ -17,18 +17,6 @@ import { TemplateLibrary } from './templates';
 type Page = 'paper' | 'ppt' | 'templates' | 'settings';
 type Copy = (typeof copy)[Lang];
 
-/**
- * 桌面外壳。
- *
- * 骨架：76px 纯图标 rail（原生 vibrancy 由 tauri windowEffects 提供）
- *      + 满窗高的内容区（页头固定，工作区自己滚）。
- *
- * 表单不再复用 `app.tsx` 的 PaperFigure / PptSlide —— 那两个是网页版的
- * 单列长表单，桌面版靠 CSS 掰成两列后高度永远对不齐。见 forms.tsx 顶部说明。
- * 数据层（api.ts）与 Settings / JobPanel 仍然共用。
- */
-
-// 检测 View Transitions API 支持
 const supportsViewTransitions = typeof document !== 'undefined' && 'startViewTransition' in document;
 
 export function DesktopApp() {
@@ -48,7 +36,6 @@ export function DesktopApp() {
   const t = copy[lang];
   const d = desktopCopy[lang];
 
-  // 点击弹窗外部关闭
   useEffect(() => {
     if (!recentOpen) return;
     function handleClick(event: MouseEvent) {
@@ -60,7 +47,6 @@ export function DesktopApp() {
     return () => document.removeEventListener('mousedown', handleClick);
   }, [recentOpen]);
 
-  // 页面切换过渡函数
   const transitionToPage = (nextPage: Page) => {
     if (supportsViewTransitions && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       (document as any).startViewTransition(() => {
@@ -91,16 +77,13 @@ export function DesktopApp() {
     return () => window.clearTimeout(timer);
   }, [toast]);
 
-  // 近期任务跟着当前任务状态刷新：任务一结束，弹窗里立刻反映出来
   useEffect(() => {
     let cancelled = false;
     listJobs(20)
       .then((jobs) => {
         if (!cancelled) setRecent(jobs);
       })
-      .catch(() => {
-        /* 附属信息，取不到就空着，不打扰用户 */
-      });
+      .catch(() => {});
     return () => {
       cancelled = true;
     };
@@ -143,7 +126,6 @@ export function DesktopApp() {
 
   return (
     <div className="desktop-shell">
-      {/* 纯图标 rail：文案靠 hover tooltip（CSS ::after）补齐，省下的横向空间给内容 */}
       <aside className="desktop-rail">
         <div className="desktop-rail-brand">
           <img src="/favor.png" alt="DreamPaper" />
@@ -164,8 +146,6 @@ export function DesktopApp() {
             </button>
           ))}
 
-          {/* 近期任务紧跟三个主页面：它是查看入口而非设置项，
-              放在设置上方、rail 中段，比压在最底下顺手 */}
           <div className="rail-pop-wrap" ref={recentRef}>
             {recentOpen && (
               <div className="rail-pop" role="dialog" aria-label={d.recent.title}>
@@ -212,7 +192,6 @@ export function DesktopApp() {
 
         <span className="rail-spacer" />
 
-        {/* 设置沉到底：低频，且与语言切换同属「应用级」而非「内容级」 */}
         <button
           type="button"
           className={`rail-btn${page === 'settings' ? ' active' : ''}`}
@@ -236,20 +215,8 @@ export function DesktopApp() {
       </aside>
 
       <main className="desktop-main">
-        {/*
-          窗口拖动。titleBarStyle: Overlay 把原生标题栏藏了，红绿灯浮在我们的
-          内容上，于是整扇窗没有一处可拖——必须自己声明拖动区。
-
-          两块合起来才够用：
-            1. 这条隐形横条盖住 main 顶部那 48px 内边距（那里恒定为空，
-               不会挡住任何可点的东西），相当于补回一条标题栏；
-            2. 页头本身标 deep，点标题/副标题文字也能拖，跟原生 App 一致。
-          Tauri 的 drag.js 会向上走 composedPath，路径上遇到 button/input/a
-          这类可点元素就放弃拖动，所以 deep 不会吃掉页头里的控件。
-        */}
         <div className="desktop-drag-strip" data-tauri-drag-region />
 
-        {/* 页头落在画布上、卡片之外，是参考案例呼吸感的来源 */}
         <div className="desktop-head" data-tauri-drag-region="deep">
           <div className="desktop-head-text">
             <h1>{head.title(t, d)}</h1>
@@ -257,11 +224,6 @@ export function DesktopApp() {
           </div>
         </div>
 
-        {/*
-          key={page} 让 React 每次换页都重建这层，降级路径的入场动画才会重播。
-          支持 View Transitions 时不加 page-enter：原生交叉淡入已经在放了，
-          再叠一层 CSS 动画会看出两段错位。
-        */}
         <div key={page} className={supportsViewTransitions ? 'desktop-page' : 'desktop-page page-enter'}>
           {page === 'paper' && (
             <FigureForm
@@ -308,10 +270,6 @@ export function DesktopApp() {
   );
 }
 
-/**
- * 各页页头文案。科研图 / 幻灯片沿用 app.tsx 的 copy，
- * 模板库 / 设置取 desktopCopy，两份 copy 都传进来按页取用。
- */
 const pageHead: Record<
   Page,
   { title: (t: Copy, d: DesktopCopy) => string; intro: (t: Copy, d: DesktopCopy) => string }
@@ -321,8 +279,6 @@ const pageHead: Record<
   templates: { title: (_t, d) => d.templates.title, intro: (_t, d) => d.templates.intro },
   settings: { title: (_t, d) => d.nav.settings, intro: (_t, d) => d.settingsIntro }
 };
-
-/* —— 图标：20×20 线性图标，1.6 描边，与文本视觉重量匹配 —— */
 
 function IconFigure() {
   return (
@@ -354,14 +310,6 @@ function IconTemplates() {
   );
 }
 
-/**
- * 真正的齿轮。
- *
- * 上一版用「圆 + 八条放射短线」画设置，那个图形语言是亮度/日照，
- * 在 rail 里会被读成深浅色切换。齿轮必须有齿廓（闭合的锯齿轮缘），
- * 所以这里用一条 fillRule=evenodd 的实心齿轮路径 + 中心镂空，
- * 无论多小都还是齿轮。
- */
 function IconGear() {
   return (
     <svg viewBox="0 0 20 20" aria-hidden="true">

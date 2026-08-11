@@ -1,9 +1,3 @@
-//! Implement model 客户端，移植自 `backend/app/adapters.py::ImplementClient`。
-//!
-//! 返回值统一为图片的 base64。image2 走 OpenAI images 接口（无参考图用
-//! generations，有参考图用 multipart edits），banana2 走 Gemini 风格的
-//! interactions 接口。两者都强制至少 120s 读超时——同步出图常远超 design 超时。
-
 use std::collections::{BTreeMap, VecDeque};
 
 use regex::Regex;
@@ -19,10 +13,6 @@ use crate::core::net::{
 };
 use crate::error::AppResult;
 
-/// 已经出好的图在响应里的两种形态。
-///
-/// 出图是付费且不可重放的动作：只要响应里存在一份完整的图，
-/// 无论它挂在哪个字段、伴随什么状态码，都必须取出来用。
 #[derive(Debug, PartialEq)]
 enum ImagePayload {
     B64(String),
@@ -31,7 +21,6 @@ enum ImagePayload {
 
 pub struct ImplementClient;
 
-/// 制图路径统一的传输选项：读超时不低于 120s，重试间隔固定 3 分钟。
 fn image_post_options(proxy_url: Option<&str>) -> PostOptions<'_> {
     PostOptions {
         timeout_seconds: None,
@@ -61,7 +50,6 @@ impl ImplementClient {
         }
     }
 
-    /// 合并 profile.output_defaults 与本次覆盖项，丢掉空值。
     fn merged_defaults(
         profile: &ModelProfile,
         overrides: &Map<String, Value>,
@@ -78,7 +66,6 @@ impl ImplementClient {
         merged
     }
 
-    /// image2 请求字段白名单；默认 response_format=url，避免大体积 b64 被网关截断。
     fn image2_fields(defaults: &BTreeMap<String, Value>) -> Map<String, Value> {
         let mut fields = Map::new();
         let pick = |key: &str, fallback: &str| -> Value {
@@ -153,10 +140,6 @@ impl ImplementClient {
         Self::resolve_response("Image request", status, &body, read_timeout, proxy_url).await
     }
 
-    /// 先找图、再判状态码。
-    ///
-    /// 反过来（先看 status 再取图）会把上游「已经画完但网关加了个错误壳」
-    /// 的那类响应整张丢掉——图已经生成、已经计费，重试只会再花一次钱。
     async fn resolve_response(
         kind: &str,
         status: u16,
@@ -189,10 +172,6 @@ impl ImplementClient {
         )))
     }
 
-    /// 图已经画好了，只是还没拿到手——下载失败要自己重试。
-    ///
-    /// 带代理失败后再裸连试一次：图床通常不需要代理，
-    /// 而代理这一跳出问题时，上一步那张已计费的图会被整个丢掉。
     async fn download_image(
         url: &str,
         read_timeout: u64,
@@ -284,7 +263,6 @@ impl ImplementClient {
 
             let mut request = client.post(url).multipart(form);
             for (key, value) in merged_headers(profile, vec![]) {
-                // multipart 的 Content-Type 由 reqwest 自行设置，不能覆盖
                 if key.eq_ignore_ascii_case("content-type") {
                     continue;
                 }
@@ -379,7 +357,6 @@ impl ImplementClient {
             image_post_options(proxy_url),
         )
         .await?;
-        // 先按 Gemini 的两种已知形态取图；取不到再走通用兜底（含 4xx body 里带图的情况）
         if let Some(image) = serde_json::from_str::<Value>(&outcome.body)
             .ok()
             .as_ref()
@@ -398,7 +375,6 @@ impl ImplementClient {
         .await
     }
 
-    /// 兼容两种响应形态：steps[].content[] 与 candidates[].content.parts[]。
     fn extract_gemini_image(data: &Value) -> Option<String> {
         if let Some(steps) = data["steps"].as_array() {
             for step in steps {
@@ -436,11 +412,6 @@ impl ImplementClient {
     }
 }
 
-/// 广度优先扫整棵响应树，找第一份图片数据。
-///
-/// 网关各家形态不一：有的挂在 `data[0].b64_json`，有的是 `output[0].url`，
-/// 有的用 `{"mime_type":…,"data":…}` 内联。逐个协议写死取值路径的话，
-/// 换一家中转就得再改一次代码，而每次改动之前那些请求都已经付过钱了。
 fn find_image_payload(root: &Value) -> Option<ImagePayload> {
     let mut queue = VecDeque::new();
     queue.push_back(root);
@@ -456,7 +427,6 @@ fn find_image_payload(root: &Value) -> Option<ImagePayload> {
                 }
                 for key in ["url", "image_url", "imageUrl", "image"] {
                     match map.get(key) {
-                        // OpenAI chat 风格：{"image_url": {"url": "…"}}
                         Some(Value::Object(inner)) => {
                             if let Some(text) = inner.get("url").and_then(Value::as_str) {
                                 if let Some(payload) = as_image_reference(text) {
@@ -481,8 +451,6 @@ fn find_image_payload(root: &Value) -> Option<ImagePayload> {
     None
 }
 
-/// 最后的兜底：图片链接被写进了某段文本里（Markdown 图片或裸链接）。
-/// 常见于把出图接口套在 chat/completions 上的中转。
 fn find_image_url_in_text(root: &Value) -> Option<ImagePayload> {
     let markdown = Regex::new(r"!\[[^\]]*\]\((https?://[^\s)]+)\)").expect("valid regex");
     let bare = Regex::new(r"https?://[^\s\]\)\x22']+\.(?:png|jpe?g|webp|gif)(?:\?[^\s\]\)\x22']*)?")
@@ -509,7 +477,6 @@ fn find_image_url_in_text(root: &Value) -> Option<ImagePayload> {
     None
 }
 
-/// http(s) 链接按 URL 走下载；data URL 直接拆出 base64。
 fn as_image_reference(text: &str) -> Option<ImagePayload> {
     let text = text.trim();
     if text.starts_with("http://") || text.starts_with("https://") {
@@ -518,10 +485,6 @@ fn as_image_reference(text: &str) -> Option<ImagePayload> {
     as_image_b64(text).map(ImagePayload::B64)
 }
 
-/// 判断一段字符串是否为图片的 base64。
-///
-/// 门槛设在 256 字符：短字符串里符合 base64 字符集的太多（id、model 名、
-/// 状态字段都算），当成图片会拿一堆垃圾去解码。真图没有这么小的。
 fn as_image_b64(text: &str) -> Option<String> {
     let text = text.trim();
     let body = match text.split_once("base64,") {
@@ -566,7 +529,6 @@ mod tests {
         "iVBORw0KGgoAAAANSUhEUg".repeat(20)
     }
 
-    /// 出图已经计费，响应形态换一种就整张丢掉是不能接受的。
     #[test]
     fn finds_image_across_gateway_shapes() {
         let openai = json!({"data": [{"b64_json": long_b64()}]});
@@ -581,15 +543,12 @@ mod tests {
             Some(ImagePayload::Url("https://cdn.example.com/a.png".to_string()))
         );
 
-        // 嵌在陌生层级里的内联图
         let nested = json!({"result": {"outputs": [{"mime_type": "image/png", "data": long_b64()}]}});
         assert_eq!(find_image_payload(&nested), Some(ImagePayload::B64(long_b64())));
 
-        // data URL 要拆掉前缀
         let data_url = json!({"image": format!("data:image/png;base64,{}", long_b64())});
         assert_eq!(find_image_payload(&data_url), Some(ImagePayload::B64(long_b64())));
 
-        // chat 风格的 {"image_url": {"url": …}}
         let chat = json!({"choices": [{"message": {"images": [{"image_url": {"url": "https://x.io/b.png"}}]}}]});
         assert_eq!(
             find_image_payload(&chat),
@@ -597,7 +556,6 @@ mod tests {
         );
     }
 
-    /// 短字符串不能被当成图片：id / model 名都符合 base64 字符集。
     #[test]
     fn short_fields_are_not_mistaken_for_images() {
         let noise = json!({"id": "img_abc123", "model": "gpt-image-2", "data": "ok"});
@@ -605,7 +563,6 @@ mod tests {
         assert_eq!(as_image_b64("gpt-image-2"), None);
     }
 
-    /// 把出图套在 chat 上的中转会把链接写在正文里。
     #[test]
     fn falls_back_to_url_inside_text() {
         let markdown = json!({"choices": [{"message": {"content": "画好了 ![img](https://cdn.example.com/x.png) 请查收"}}]});

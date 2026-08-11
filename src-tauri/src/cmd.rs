@@ -6,7 +6,7 @@ use crate::core::config::AppConfig;
 use crate::core::doc::{DocumentChunkHit, DocumentSummary};
 use crate::core::job::JobRecord;
 use crate::core::tpl::{TemplatePackSummary, TemplateSummary};
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 use crate::event::JobEventPayload;
 use crate::state::AppState;
 
@@ -111,7 +111,6 @@ pub fn create_job(
             timestamp: Utc::now(),
         },
     );
-    // 管道后台跑，命令立刻返回排队中的记录，前端不会卡在 invoke 上
     crate::core::pipeline::execute::spawn(app, state.core_arc(), record.id.clone());
     Ok(record)
 }
@@ -132,12 +131,24 @@ pub fn list_jobs(
         .list_jobs(limit.unwrap_or(50), offset.unwrap_or(0))
 }
 
+/// Open a generated image with the OS default viewer.
+///
+/// The webview cannot do this on its own: inside Tauri a plain
+/// `<a target="_blank">` is a silent no-op (no window.open handler, so no
+/// navigation and no error), so the result preview has to round-trip through
+/// the backend. `open_path` is called from Rust, which bypasses the plugin ACL
+/// scope — that only gates calls arriving from the frontend, and the path here
+/// comes from our own asset table rather than from the webview.
 #[tauri::command]
-pub fn open_artifact(_state: State<'_, AppState>, _artifact_id: String) -> AppResult<()> {
-    Ok(())
+pub fn open_artifact(state: State<'_, AppState>, artifact_id: String) -> AppResult<()> {
+    let file = state.core().asset_file(&artifact_id)?;
+    if !file.path.exists() {
+        return Err(AppError::new("asset_file_missing", "资源文件已不在磁盘上"));
+    }
+    tauri_plugin_opener::open_path(&file.path, None::<&str>)
+        .map_err(|error| AppError::new("open_artifact_failed", error.to_string()))
 }
 
-/// 停止一个在跑的任务，返回停止之后的记录，前端直接拿它刷新面板。
 #[tauri::command]
 pub fn cancel_job(
     app: AppHandle,
@@ -145,7 +156,6 @@ pub fn cancel_job(
     id: String,
 ) -> AppResult<JobRecord> {
     let record = state.core().cancel_job(id)?;
-    // 管道那边的 future 已经被 abort，它不会再发事件了：终态事件得由这里补上
     let _ = app.emit(
         "job://stage",
         JobEventPayload {
@@ -170,8 +180,6 @@ pub fn delete_templates(state: State<'_, AppState>, ids: Vec<String>) -> AppResu
     state.core().delete_templates(ids)
 }
 
-/// 另存资源文件，用于「下载」按钮。前端先用原生保存对话框让用户挑路径，
-/// 这个命令再把 asset 复制到那个路径，绕过 `<a download>` 对自定义协议的不认。
 #[tauri::command]
 pub fn save_asset(state: State<'_, AppState>, asset_id: String, path: String) -> AppResult<()> {
     state.core().export_asset(&asset_id, std::path::Path::new(&path))

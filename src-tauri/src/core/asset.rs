@@ -77,7 +77,7 @@ impl<'a> AssetService<'a> {
             id: id.clone(),
             filename,
             mime_type: detected_mime,
-            url: format!("dp-asset://localhost/{id}"),
+            url: protocol_url("dp-asset", &id),
         })
     }
 
@@ -101,20 +101,11 @@ impl<'a> AssetService<'a> {
         })
     }
 
-    /// 把一个已登记的 asset 另存到用户挑的路径。
-    ///
-    /// 走后端复制而不是在前端把 URL 塞给 `<a download>`：`dp-asset://` 是自定义
-    /// 协议，WKWebView 对它不认 download 属性，点下去只会把图片当页面导航过去，
-    /// 表现就是整扇窗被那张图占满，而且回不去。
-    ///
-    /// 用 `fs::copy` 而不是先读进内存再写：出图动辄十几 MB，没必要在内存里过一手。
     pub fn export_asset(&self, id: &str, target: &Path) -> AppResult<()> {
         let file = self.asset_file(id)?;
         if !file.path.exists() {
             return Err(AppError::new("asset_file_missing", "资源文件已不在磁盘上"));
         }
-        // 目标目录一般是用户家目录下已存在的路径，但「新建文件夹」后立刻保存的情况
-        // 也有，父目录缺失时补一下，免得抛一个看不懂的 io 错误
         if let Some(parent) = target.parent() {
             if !parent.as_os_str().is_empty() && !parent.exists() {
                 std::fs::create_dir_all(parent)?;
@@ -124,8 +115,6 @@ impl<'a> AssetService<'a> {
         Ok(())
     }
 
-    /// 生成结果落 `outputs/{job_id}/`，并登记为 asset —— `dp-asset://` 协议按 id 取文件，
-    /// 所以出图必须进 assets 表才在前端可见。
     pub fn save_job_image(
         &self,
         job_id: &str,
@@ -157,8 +146,29 @@ impl<'a> AssetService<'a> {
             id: id.clone(),
             filename: filename.to_string(),
             mime_type,
-            url: format!("dp-asset://localhost/{id}"),
+            url: protocol_url("dp-asset", &id),
         })
+    }
+}
+
+/// Build a custom-protocol URL for a stored resource.
+///
+/// The two forms are not interchangeable; the platform decides:
+///   - macOS / Linux: `<scheme>://localhost/<id>` — WebKit accepts the scheme.
+///   - Windows / Android: `http://<scheme>.localhost/<id>`. WebView2 cannot
+///     register custom schemes, so Tauri implements
+///     `register_uri_scheme_protocol` by intercepting
+///     `http://<scheme>.localhost/*` instead.
+///
+/// This used to hardcode the macOS form, which made `dp-asset://` /
+/// `dp-template://` an unknown protocol to WebView2: `<img>` failed silently
+/// with no request and no console error, so the template library and import
+/// previews were blank on Windows while macOS worked fine.
+pub fn protocol_url(scheme: &str, id: &str) -> String {
+    if cfg!(windows) {
+        format!("http://{scheme}.localhost/{id}")
+    } else {
+        format!("{scheme}://localhost/{id}")
     }
 }
 
@@ -207,6 +217,19 @@ pub fn sanitize_filename(name: &str) -> String {
 mod tests {
     use super::*;
 
+    /// The URL form must follow the platform: WebView2 only accepts
+    /// `http://<scheme>.localhost/`, and the macOS form makes every `<img>`
+    /// there fail silently. The assertion branches on target so a Windows CI
+    /// build catches a regression.
+    #[test]
+    fn protocol_url_follows_the_platform() {
+        let url = protocol_url("dp-asset", "abc-123");
+        #[cfg(windows)]
+        assert_eq!(url, "http://dp-asset.localhost/abc-123");
+        #[cfg(not(windows))]
+        assert_eq!(url, "dp-asset://localhost/abc-123");
+    }
+
     fn service_dir(tag: &str) -> PathBuf {
         let dir = std::env::temp_dir().join(format!(
             "dreampaper-asset-test-{tag}-{}-{:?}",
@@ -218,8 +241,6 @@ mod tests {
         dir
     }
 
-    /// 「下载」按钮的落点：把 outputs/ 里的产出复制到用户挑的路径，
-    /// 原文件留在原地（近期任务里还要能再看、再下一次）。
     #[test]
     fn export_copies_the_file_and_keeps_the_original() {
         let dir = service_dir("export");
@@ -229,7 +250,6 @@ mod tests {
             .save_job_image("job-1", "figure.png", b"fake-png-bytes")
             .expect("落盘产出");
 
-        // 目标故意放在一个还不存在的子目录里：用户在保存对话框里新建文件夹是常事
         let target = dir.join("picked").join("我的图.png");
         assets.export_asset(&saved.id, &target).expect("另存");
 
@@ -242,7 +262,6 @@ mod tests {
         assert!(original.path.exists(), "另存是复制，不该把原文件搬走");
     }
 
-    /// 磁盘上的文件被手动删了，得给一句能看懂的话，而不是抛一个裸 io 错误。
     #[test]
     fn export_reports_a_missing_file_clearly() {
         let dir = service_dir("export-missing");

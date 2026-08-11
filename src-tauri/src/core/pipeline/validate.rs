@@ -1,9 +1,3 @@
-//! Design JSON 校验，移植自 `backend/app/jobs.py` 的各 `_validate_*`。
-//!
-//! 错误分两类，与 Python 一致：
-//! - `SchemaError`：结构缺失，触发「只补缺失字段」的定向重试
-//! - `ValueError`：语义越界（页码顺序、非法比例），不重试
-
 use regex::Regex;
 use serde_json::Value;
 
@@ -11,9 +5,7 @@ use crate::error::AppError;
 
 #[derive(Debug)]
 pub enum ValidationError {
-    /// 可通过补全重试修复
     Schema(String),
-    /// 不可重试
     Value(String),
 }
 
@@ -90,7 +82,6 @@ const FORBIDDEN_TEMPLATE_COPY_PHRASES: [&str; 6] = [
     "background edit",
 ];
 
-/// 字段是否「有值」：空串、空数组、空对象、null 都算缺失。
 pub fn is_filled(value: Option<&Value>) -> bool {
     match value {
         None | Some(Value::Null) => false,
@@ -114,7 +105,6 @@ pub fn require_fields(data: &Value, fields: &[&str], label: &str) -> Checked<()>
     }
 }
 
-/// `figure` 可能包在外层，也可能就是顶层对象。
 pub fn figure_object(design: &Value) -> &Value {
     if design.get("figure").is_some_and(Value::is_object) {
         &design["figure"]
@@ -146,10 +136,6 @@ fn keyword_groups_present(text: &str, groups: &[(&str, &[&str])]) -> usize {
         .count()
 }
 
-/// 拒绝要求复制/编辑模板底图的 prompt。
-///
-/// design model 常在同一句里写「禁止 copy the template」，因此按句子窗口判断
-/// 否定语气；命中才报 Schema 错以触发补全重试。
 pub fn validate_no_copy_request(prompt: &str) -> Checked<()> {
     let lowered = prompt.to_lowercase();
     let negations = [
@@ -193,10 +179,6 @@ pub fn validate_no_copy_request(prompt: &str) -> Checked<()> {
     Ok(())
 }
 
-/// 归一化 inventory 条目：只压缩空白，不能删除。
-///
-/// 删空格会把 "External retriever" 变成 "Externalretriever"，使英文条目在原文中
-/// 永远匹配不到——这是 Python 版曾出现的真实 bug。
 pub fn normalize_inventory_item(value: &Value) -> String {
     let text = value.as_str().unwrap_or_default();
     let spaces = Regex::new(r"\s+").expect("valid regex");
@@ -207,7 +189,6 @@ fn strip_ws(text: &str) -> String {
     text.chars().filter(|ch| !ch.is_whitespace()).collect()
 }
 
-/// 条目能否在用户原文中找到依据。去空白后再比一次，兼顾中文插空格与英文跨行。
 pub fn item_grounded_in_source(item: &str, source: &str) -> bool {
     if item.is_empty() {
         return false;
@@ -253,7 +234,6 @@ pub fn item_present_in_output(item: &str, haystack: &str) -> bool {
     matched
 }
 
-/// 以 content_inventory 为中心做保真校验。
 pub fn validate_design_content_coverage(design: &Value, title: &str, section: &str) -> Checked<()> {
     let figure = figure_object(design);
     if !figure.is_object() {
@@ -292,7 +272,6 @@ pub fn validate_design_content_coverage(design: &Value, title: &str, section: &s
         .unwrap_or_default();
     let haystack = format!("{prompt}\n{modules_text}\n{}\n{title}", inventory.join(" "));
 
-    // 短方法文只要求 prompt 足够长
     if source.chars().count() < 180 {
         if prompt.trim().chars().count() < 360 {
             return schema(
@@ -470,7 +449,6 @@ pub fn validate_paper_design(design: &Value) -> Checked<()> {
     schema("Paper figure visual_type must be diagram, workflow, comparison, mechanism, plot, or chart")
 }
 
-/// 只看 template 图产出的结构规划。
 pub fn validate_structure_plan(data: &Value) -> Checked<Value> {
     let plan = if data.get("structure_plan").is_some_and(Value::is_object) {
         &data["structure_plan"]
@@ -526,7 +504,6 @@ pub(crate) mod tests {
         )
     }
 
-    /// 共享给 `runner.rs` 的重试用例，避免两处 fixture 漂移后契约测试悄悄失效。
     pub(crate) fn valid_diagram_design() -> Value {
         json!({
             "figure": {
@@ -576,7 +553,6 @@ pub(crate) mod tests {
         })
     }
 
-    /// 对齐 Python `test_validates_diagram_and_plot_contracts`
     #[test]
     fn validates_diagram_contract() {
         validate_paper_design(&valid_diagram_design()).expect("valid diagram should pass");
@@ -591,7 +567,6 @@ pub(crate) mod tests {
         assert!(validate_paper_design(&copy_request).unwrap_err().is_schema());
     }
 
-    /// 否定语气里的同名短语不能误杀 —— design model 常见写法
     #[test]
     fn negated_copy_phrases_are_allowed() {
         let mut design = valid_diagram_design();
@@ -602,7 +577,6 @@ pub(crate) mod tests {
         validate_paper_design(&design).expect("negated phrasing should pass");
     }
 
-    /// 对齐 Python `test_english_inventory_items_stay_grounded`
     #[test]
     fn english_inventory_items_stay_grounded() {
         let source = "RankRAG unifies context ranking and answer generation in one instruction-tuned LLM. \
@@ -622,7 +596,6 @@ pub(crate) mod tests {
         }
     }
 
-    /// 对齐 Python `test_chinese_inventory_tolerates_inserted_spaces`
     #[test]
     fn chinese_inventory_tolerates_inserted_spaces() {
         let item = normalize_inventory_item(&json!("混合 检索"));

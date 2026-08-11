@@ -1,11 +1,3 @@
-//! job 执行入口：把 `create_job` 落库的任务接到管道上。
-//!
-//! 资源解析（template 图、资料文本、出图落盘）集中在这里，
-//! `figure.rs` / `slide.rs` 因此完全不碰数据库与 Tauri，可以脱离运行时单测。
-//!
-//! 阶段上报走双通道：`job_stages` 表落盘 + `job://stage` 事件。
-//! 事件用于实时进度，表用于前端轮询兜底——事件在窗口未就绪时会丢，表不会。
-
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
@@ -27,13 +19,8 @@ use crate::core::Core;
 use crate::error::{AppError, AppResult};
 use crate::event::JobEventPayload;
 
-/// 科研图最多带三张 template 图，对齐 `payload.template_ids[:3]`。
 const MAX_FIGURE_TEMPLATES: usize = 3;
 
-/// 起一个后台任务跑管道。`create_job` 立即返回排队中的记录，
-/// 前端靠事件与 `get_job` 轮询看进度。
-///
-/// 句柄登记进 `core.cancels`，「停止任务」按钮才有东西可掐。
 pub fn spawn(app: AppHandle, core: Arc<Core>, job_id: String) {
     let cancelled = Arc::new(AtomicBool::new(false));
     let handle = tauri::async_runtime::spawn({
@@ -59,8 +46,6 @@ pub fn spawn(app: AppHandle, core: Arc<Core>, job_id: String) {
             };
 
             let outcome = run(&core, &job_id, &sink).await;
-            // abort 只在 await 点生效，收尾这一段是同步的，可能已经跑过头了：
-            // 用户按过停止就不许再把状态盖回 succeeded/failed
             if cancelled.load(Ordering::SeqCst) {
                 return;
             }
@@ -139,8 +124,6 @@ async fn run(
 
             let assets = AssetService::new(&core.store, &core.app_data);
             stage("ppt_template", "读取 template 图片");
-            // 母版两条来源：模板库（桌面版从模板库选母版）或上传资源（网页版）。
-            // validate_payload 已保证至少有一条，这里按优先级取。
             let template_image = if let Some(template_id) = payload.template_ref() {
                 let templates = TemplateService::new(&core.store, &core.app_data);
                 let detail = templates.template_detail(template_id)?;

@@ -4,20 +4,25 @@ mod error;
 mod event;
 mod protocol;
 mod state;
+mod window;
 
 use tauri::Manager;
 
 pub fn run() {
     tauri::Builder::default()
-        // 模板包导入要的是磁盘上的目录路径，浏览器 file input 给不出来，
-        // 只能靠原生目录选择器。
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_opener::init())
         .register_uri_scheme_protocol("dp-asset", protocol::asset_response)
         .register_uri_scheme_protocol("dp-template", protocol::template_response)
         .setup(|app| {
             let state = state::AppState::new(app.handle())
                 .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?;
             app.manage(state);
+            // Windows 11 needs the rounded-corner preference set explicitly;
+            // no-op elsewhere. See window.rs.
+            if let Some(main) = app.get_webview_window("main") {
+                window::round_corners(&main);
+            }
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

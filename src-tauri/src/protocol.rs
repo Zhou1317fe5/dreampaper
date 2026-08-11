@@ -57,9 +57,6 @@ fn file_response<R: Runtime>(
             .status(StatusCode::OK)
             .header(header::CONTENT_TYPE, mime_type)
             .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
-            // 资源按 UUID 落盘、写完不再改动，同一个 id 永远是同一份字节，
-            // 所以可以当不可变资源缓存。少了这条头，模板库每次切页都要把
-            // 几十张缩略图重新读盘 + 重新解码，表现就是切回来先白屏再刷出图。
             .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
             .body(Cow::Owned(bytes))
             .unwrap_or_else(|_| error_response(StatusCode::INTERNAL_SERVER_ERROR, "response build failed")),

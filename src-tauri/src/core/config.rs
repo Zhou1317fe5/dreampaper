@@ -79,8 +79,6 @@ impl<'a> ConfigService<'a> {
         Ok(public_config(normalized))
     }
 
-    /// 管道用的配置：保留 api_key（`get_config` 给前端的那份会抹掉密钥），
-    /// 并补齐 search profile 与代理默认值。
     pub fn runtime_config(&self) -> AppResult<AppConfig> {
         let mut config = self.load_private_config()?;
         ensure_search_profile(&mut config);
@@ -88,7 +86,6 @@ impl<'a> ConfigService<'a> {
         Ok(config)
     }
 
-    /// 取某个角色的启用 profile：先按 active id 匹配，退化为该角色的第一个。
     pub fn active_profile<'c>(
         config: &'c AppConfig,
         role: &str,
@@ -167,7 +164,6 @@ fn normalize_config(mut incoming: AppConfig, existing: Option<AppConfig>) -> App
     incoming
 }
 
-/// 旧配置可能没有 search profile，缺失时补默认项，避免幻灯片素材检索取不到配置。
 fn ensure_search_profile(config: &mut AppConfig) {
     if !config.model_profiles.iter().any(|item| item.role == "search") {
         config.model_profiles.push(default_search());
@@ -223,9 +219,6 @@ fn default_config() -> AppConfig {
         active_design_profile: "design-default".to_string(),
         active_implement_profile: "implement-default".to_string(),
         active_search_profile: default_search_profile_id(),
-        // 默认不设代理。以前这里预填了 http://127.0.0.1:7890：本机没开那个端口时，
-        // 所有模型请求都会拐进一个空洞，报出来只有一句 "error sending request for url"，
-        // 看起来像上游挂了，其实是我们自己塞的代理。
         proxy_url: None,
         ppt_page_plan_concurrency: None,
         ppt_image_concurrency: None,
@@ -233,7 +226,6 @@ fn default_config() -> AppConfig {
     }
 }
 
-/// 检索模型：默认 duckduckgo_html，免密钥，用于幻灯片视觉素材 grounding。
 fn default_search() -> ModelProfile {
     let mut output_defaults = serde_json::Map::new();
     output_defaults.insert(
@@ -279,7 +271,6 @@ fn default_design() -> ModelProfile {
 
 fn default_implement() -> ModelProfile {
     let mut output_defaults = serde_json::Map::new();
-    // 与 Python 版对齐：response_format 用 url，避免同步出图回传大体积 b64 时被网关 502 截断
     for (key, value) in [
         ("size", "1200x675"),
         ("quality", "auto"),

@@ -28,7 +28,6 @@ pub struct Core {
     pub app_data: PathBuf,
     pub store: Store,
     pub prompts: PromptStore,
-    /// 在跑的任务的停止开关，见 `cancel.rs`
     pub cancels: CancelRegistry,
 }
 
@@ -64,7 +63,6 @@ impl Core {
         AssetService::new(&self.store, &self.app_data).asset_file(id)
     }
 
-    /// 另存产出图到用户选定的路径。`target` 由前端的原生保存对话框给出。
     pub fn export_asset(&self, id: &str, target: &std::path::Path) -> AppResult<()> {
         AssetService::new(&self.store, &self.app_data).export_asset(id, target)
     }
@@ -132,7 +130,6 @@ impl Core {
         JobService::new(&self.store).list_jobs(limit, offset)
     }
 
-    /// 停止一个在跑的任务。已经是终态的任务原样返回，重复点停止不报错。
     pub fn cancel_job(&self, id: String) -> AppResult<JobRecord> {
         let jobs = JobService::new(&self.store);
         let record = jobs.get_job(id.clone())?;

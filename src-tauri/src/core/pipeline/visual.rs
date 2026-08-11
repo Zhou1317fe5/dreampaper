@@ -1,9 +1,3 @@
-//! 幻灯片视觉素材抽词与检索上下文，移植自 `jobs.py` 的
-//! `_extract_visual_asset_terms` 一族。
-//!
-//! 三路来源合并（已知名录 → 中文实物名词 → 英文大写启发式）。中文一路是必需的：
-//! 英文大写规则在纯中文资料上命中数为 0，而中文资料里的仪器设备恰恰最该画实物。
-
 use regex::Regex;
 use serde::Serialize;
 
@@ -14,32 +8,23 @@ pub const VISUAL_ASSET_SEARCH_TERM_LIMIT: usize = 8;
 pub const VISUAL_ASSET_SEARCH_RESULT_LIMIT: usize = 3;
 const MATERIAL_TEXT_LIMIT: usize = 6000;
 
-/// 已知专有名词：命中即视为高价值视觉主体。不求穷尽，覆盖面靠后缀规则兜底。
 const KNOWN_TERMS: &[&str] = &[
-    // AI / 框架
     "PyTorch", "TensorFlow", "JAX", "Keras", "scikit-learn", "OpenCV", "Hugging Face",
     "LangChain", "Stable Diffusion", "OpenAI", "Claude", "Gemini", "Llama", "Qwen",
     "DeepSeek", "Nano Banana", "WisArt",
-    // 基础设施 / 云
     "Docker", "Kubernetes", "GitHub", "GitLab", "Jenkins", "Nginx", "Kafka", "Spark",
     "Hadoop", "Elasticsearch", "AWS", "Azure", "GCP", "阿里云", "腾讯云", "华为云",
-    // 数据库
     "PostgreSQL", "MongoDB", "Redis", "MySQL", "SQLite", "ClickHouse", "Neo4j",
-    // 硬件 / 芯片
     "NVIDIA", "CUDA", "Jetson", "Raspberry Pi", "Arduino", "STM32", "FPGA", "Intel",
     "AMD", "ARM", "树莓派",
-    // 科研仪器
     "SEM", "TEM", "AFM", "XRD", "XPS", "NMR", "MRI", "PCR", "HPLC",
     "扫描电镜", "透射电镜", "原子力显微镜", "质谱仪", "光谱仪", "色谱仪", "离心机",
     "培养箱", "示波器", "激光器", "光刻机", "反应釜",
-    // 载具 / 机器人
     "无人机", "机械臂", "机器人", "自动驾驶", "激光雷达", "卫星",
-    // 工具软件
     "MATLAB", "Simulink", "SolidWorks", "AutoCAD", "Blender", "Figma", "Notion",
     "Slack", "Jira", "Confluence", "LaTeX", "Origin", "ImageJ",
 ];
 
-/// 中文实物名词后缀。中文资料里的可视化主体几乎都以这些字收尾。
 const CN_SUFFIXES: &[&str] = &[
     "无人机", "机器人", "机械臂", "传感器", "反应釜", "培养皿", "培养箱", "显微镜",
     "光谱仪", "离心机", "示波器", "激光器", "发动机", "换热器", "催化剂", "电解槽",
@@ -48,8 +33,6 @@ const CN_SUFFIXES: &[&str] = &[
     "卫星", "雷达", "天线", "车辆", "船舶", "飞行器",
 ];
 
-/// 停用词。后半段是数学/统计人名——大写启发式会把它们当产品，
-/// 检索「Lyapunov official logo」既浪费名额又可能让模型画出无意义图形。
 const TERM_STOPWORDS: &[&str] = &[
     "A", "An", "And", "Body", "Card", "Create", "Data", "Figure", "Flow", "Input",
     "Material", "Model", "Output", "Page", "Prompt", "Result", "Slide", "Template",
@@ -60,7 +43,6 @@ const TERM_STOPWORDS: &[&str] = &[
     "Bernoulli", "Frobenius", "Kullback", "Leibler", "Wasserstein",
 ];
 
-/// 前缀不得跨越的虚词/方位词，否则「扫描电镜对样品」会被抽成「描电镜对样品」。
 const BOUNDARY_CHARS: &str = "对与和及或的了在从由被把将用以为并中后前时上下等则若使可将其该本此这那每各";
 
 #[derive(Clone, Debug, Serialize)]
@@ -92,9 +74,6 @@ pub fn extract_visual_asset_terms(material: &str) -> Vec<String> {
         .map(|term| term.to_string())
         .collect();
 
-    // 中文实物名词：后缀前再吃 0-4 个汉字作为修饰语（如「高分辨质谱仪」）。
-    // Rust regex 不支持 look-ahead，改用字符类差集排除虚词/方位词，
-    // 否则「扫描电镜对样品」会被抽成「描电镜对样品」。
     let suffix_group = CN_SUFFIXES
         .iter()
         .map(|suffix| regex::escape(suffix))
@@ -108,7 +87,6 @@ pub fn extract_visual_asset_terms(material: &str) -> Vec<String> {
         .find_iter(&text)
         .map(|m| m.as_str().to_string())
         .collect();
-    // 出现频次高的主体优先占用检索名额
     chinese.sort_by_key(|term| std::cmp::Reverse(text.matches(term.as_str()).count()));
 
     let mut english: Vec<String> = Vec::new();
@@ -145,11 +123,8 @@ fn dedupe_terms(candidates: &[String]) -> Vec<String> {
             .replace_all(candidate, " ")
             .trim_matches(|ch: char| " ,.;:()[]{}<>，。；：（）【】".contains(ch))
             .to_string();
-        // 剥数量词与指示词：「一套检测设备」→「检测设备」
         term = quantifier.replace(&term, "").to_string();
         term = determiner.replace(&term, "").trim().to_string();
-        // 只在「Latin 前缀 + 中文类别词」时剥类别后缀（PyTorch框架 → PyTorch）；
-        // 纯中文实物名词必须保留完整，否则「检测设备」会被削成「检测」
         let stripped = category.replace(&term, "").trim().to_string();
         if !stripped.is_empty() && stripped != term && latin.is_match(&stripped) {
             term = stripped;
@@ -166,8 +141,6 @@ fn dedupe_terms(candidates: &[String]) -> Vec<String> {
         normalized.push(term);
     }
 
-    // 同源词只留最短的：短形通常是干净的中心词，长形往往粘了动词/方位词
-    // （「置于培养箱」→「培养箱」，「激光雷达传感器」→「激光雷达」）
     let mut terms: Vec<String> = Vec::new();
     for term in &normalized {
         if normalized
@@ -184,7 +157,6 @@ fn dedupe_terms(candidates: &[String]) -> Vec<String> {
     terms
 }
 
-/// 中英分流：中文主体查实物外观，英文主体多为软件品牌，查官方标识。
 pub fn visual_asset_search_query(term: &str) -> String {
     let has_cjk = term.chars().any(|ch| ('\u{4e00}'..='\u{9fff}').contains(&ch));
     if has_cjk {
@@ -231,7 +203,6 @@ pub async fn build_visual_asset_context(
                 error: None,
                 provider: search_profile.protocol.clone(),
             },
-            // 单个词失败不影响整体，降级为无来源即可
             Err(error) => VisualAssetItem {
                 term: term.clone(),
                 query,
@@ -255,8 +226,6 @@ pub async fn build_visual_asset_context(
     }
 }
 
-/// 转成给 design model 的文本。措辞倾向「默认画实物」，
-/// 方框写字是兜底而非默认——这是出图观感的关键。
 pub fn visual_asset_context_text(context: &VisualAssetContext) -> String {
     if context.terms.is_empty() {
         return "No specific product/tool/equipment terms were detected in the material. \
@@ -315,7 +284,6 @@ pub fn visual_asset_context_text(context: &VisualAssetContext) -> String {
 mod tests {
     use super::*;
 
-    /// 对齐 Python `test_visual_asset_context_helpers_are_text_only`
     #[test]
     fn extracts_known_english_terms() {
         let terms = extract_visual_asset_terms("本方案使用 Docker、Kubernetes 和 OpenAI API 构建部署流程。");
@@ -323,7 +291,6 @@ mod tests {
         assert!(terms.contains(&"Kubernetes".to_string()), "{terms:?}");
     }
 
-    /// 对齐 Python `test_extracts_chinese_object_terms`
     #[test]
     fn extracts_chinese_object_terms() {
         let material = "实验采用高分辨质谱仪对样品进行检测，随后使用离心机分离，\
@@ -336,7 +303,6 @@ mod tests {
         assert!(terms.contains(&"机械臂".to_string()), "{terms:?}");
     }
 
-    /// 对齐 Python `test_chinese_object_nouns_keep_category_suffix`
     #[test]
     fn chinese_nouns_keep_category_suffix() {
         let terms = extract_visual_asset_terms("现场部署了一套检测设备，配合 PyTorch框架 完成推理。");
@@ -345,7 +311,6 @@ mod tests {
         assert!(!terms.contains(&"PyTorch框架".to_string()), "{terms:?}");
     }
 
-    /// 对齐 Python `test_abstract_material_yields_no_visual_terms`
     #[test]
     fn abstract_material_yields_nothing() {
         let material = "针对带非光滑正则项的复合优化问题，提出一种自适应步长的近端梯度算法。\
@@ -354,7 +319,6 @@ mod tests {
         assert!(extract_visual_asset_terms(material).is_empty());
     }
 
-    /// 对齐 Python `test_search_query_splits_by_language`
     #[test]
     fn query_splits_by_language() {
         assert!(visual_asset_search_query("离心机").contains("实物外观"));

@@ -1,14 +1,3 @@
-//! 管道共用的解析与重试策略，移植自 `jobs.py` 的
-//! `_parse_or_repair` 与 `_parse_validate_or_fill_missing`。
-//!
-//! 两级重试的分工很重要，不能合并：
-//! - 解析失败 → 带原上下文重发，让模型重新生成（而不是修字符串）
-//! - 结构缺失 → 只补缺失字段，明确禁止重新设计，避免把已经对的内容改坏
-//!
-//! 调用侧抽成 `DesignGenerator` 是为了让这两条策略能脱网单测：
-//! prompt 措辞与「只在 schema 缺失时才重试」的判据必须与 Python 版逐字一致，
-//! 这是双份实现不跑偏的主要防线。
-
 use std::future::Future;
 
 use serde_json::Value;
@@ -26,10 +15,7 @@ fn excerpt(text: &str, limit: usize) -> String {
     text.chars().take(limit).collect()
 }
 
-/// 一次 design 调用所需的全部上下文。重试会复用同一份，
-/// 保证「重发」拿到的确实是同一个任务而不是被削过的版本。
 pub trait DesignGenerator {
-    /// 原始任务 prompt；两级重试都要把它原样带上。
     fn user_prompt(&self) -> &str;
     fn generate(&self, prompt: String) -> impl Future<Output = AppResult<String>> + Send;
 }
@@ -61,7 +47,6 @@ impl DesignGenerator for DesignCall<'_> {
     }
 }
 
-/// 解析模型输出；失败时先带原上下文重发，仍失败再要求把上次输出转成 JSON。
 pub async fn parse_or_repair<G: DesignGenerator>(call: &G, text: &str) -> AppResult<Value> {
     let first_error = match parse_json_response(text) {
         Ok(value) => return Ok(value),
@@ -110,8 +95,6 @@ pub struct Validated<T> {
     pub retried: bool,
 }
 
-/// 解析 + 校验；仅当校验报「结构缺失」时才发一次定向补全重试。
-/// 语义越界（页码顺序、非法比例）直接失败，重试也修不好。
 pub async fn parse_validate_or_fill<G, T, F>(
     call: &G,
     text: &str,
@@ -161,8 +144,6 @@ mod tests {
     use crate::core::pipeline::validate::validate_paper_design;
     use std::sync::Mutex;
 
-    /// 对齐 Python 的 `FakeDesignClient` / `FakeTextDesignClient`：
-    /// 按序吐预设回复，并记录收到的每个 prompt。
     struct StubGenerator {
         user_prompt: String,
         responses: Mutex<Vec<String>>,
@@ -206,8 +187,6 @@ mod tests {
         crate::core::pipeline::validate::tests::valid_diagram_design()
     }
 
-    /// 对齐 Python `test_json_parse_failure_retries_same_context_before_repair`：
-    /// 第一次重试必须带原任务上下文重发，而不是直接进「转 JSON」的修复分支。
     #[tokio::test]
     async fn parse_failure_retries_same_context_before_repair() {
         let stub = StubGenerator::new(
@@ -226,7 +205,6 @@ mod tests {
         assert!(retry_prompt.contains("Previous invalid output excerpt"));
     }
 
-    /// 解析本来就成功时不得多打一次模型。
     #[tokio::test]
     async fn valid_json_does_not_call_the_model() {
         let stub = StubGenerator::new("task", &[]);
@@ -235,8 +213,6 @@ mod tests {
         assert_eq!(stub.calls(), 0);
     }
 
-    /// 对齐 Python `test_structured_fill_retry_only_fills_schema_gaps`：
-    /// 补全 prompt 必须点名缺失字段并禁止重新设计。
     #[tokio::test]
     async fn structured_fill_retry_only_fills_schema_gaps() {
         let filled = valid_diagram_design();
@@ -260,7 +236,6 @@ mod tests {
         assert!(fill_prompt.contains("Diagram figure missing diagram_spec"));
     }
 
-    /// 语义越界不是 schema 缺失：不该触发补全重试，直接失败。
     #[tokio::test]
     async fn semantic_errors_fail_without_retry() {
         let stub = StubGenerator::new("original task", &[]);

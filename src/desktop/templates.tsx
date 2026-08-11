@@ -4,31 +4,17 @@ import {
   importTemplateImage,
   importTemplatePack,
   listTemplates,
+  openExternal,
   pickDirectory
 } from '../api';
 import type { TemplateSummary } from '../types';
 import { PAPER_BANANA_BENCH_URL, type DesktopCopy } from './copy';
 import { DesktopCard, DesktopField, DesktopPick, DesktopSeg } from './forms';
 
-/** 模板库分两类：科研绘图模板（diagram + plot）与幻灯片母版（master）。
- *  两类分别喂给两条管道，混在一起选会串味，所以顶栏用分段控件硬分开。 */
 type Tab = 'figure' | 'master';
 type FigureKind = 'all' | 'diagram' | 'plot';
 
-/**
- * 列表缓存。
- *
- * shell 用 key={page} 换页，TemplateLibrary 每次切页都是整个重建，
- * state 跟着清空 —— 于是切回模板库先画一格空网格，等 IPC 回来才刷出图，
- * 就是用户看到的「先空页面再加载」。缓存必须挂在模块级、活在组件之外
- * 才接得住这次卸载；组件里的 useState/useRef 都会一起没。
- *
- * 命中缓存时先原样画旧结果、再在后台重新拉一次覆盖（stale-while-revalidate）：
- * 图片 URL 不变，配合 protocol.rs 那条 immutable 缓存头，浏览器直接复用
- * 已解码的位图，不再重新读盘解码。
- */
 const listCache = new Map<string, TemplateSummary[]>();
-/** 搜索框每敲一个字就是一个新 key，不设上限会一直涨 */
 const LIST_CACHE_MAX = 12;
 
 function cacheKey(tab: Tab, kind: FigureKind, query: string): string {
@@ -38,7 +24,6 @@ function cacheKey(tab: Tab, kind: FigureKind, query: string): string {
 function putCache(key: string, items: TemplateSummary[]) {
   listCache.delete(key);
   listCache.set(key, items);
-  // Map 按插入序迭代，队头就是最久没用到的那条
   while (listCache.size > LIST_CACHE_MAX) {
     const oldest = listCache.keys().next().value;
     if (oldest === undefined) break;
@@ -57,12 +42,10 @@ export function TemplateLibrary({
   const [figureKind, setFigureKind] = useState<FigureKind>('all');
   const [query, setQuery] = useState('');
   const key = cacheKey(tab, figureKind, query);
-  // 初值就取缓存：等到 effect 里再 setState 已经晚了一帧，那一帧就是空网格
   const [templates, setTemplates] = useState<TemplateSummary[]>(() => listCache.get(key) ?? []);
   const [pending, setPending] = useState(() => !listCache.has(key));
   const [busy, setBusy] = useState(false);
 
-  // 导入表单收进悬浮弹窗：常驻两张导入卡会跟图库抢高度，且左右填不满
   const [importOpen, setImportOpen] = useState(false);
   const importRef = useRef<HTMLDivElement>(null);
   const [file, setFile] = useState<File | null>(null);
@@ -71,21 +54,11 @@ export function TemplateLibrary({
   const [visualIntent, setVisualIntent] = useState('');
   const [contentSummary, setContentSummary] = useState('');
 
-  /**
-   * 批量删除。
-   *
-   * 单独一个「选择」模式，而不是每张卡常挂一个删除角标：图库里一屏几十张，
-   * 常挂的删除键太容易误触，而删除是不可撤销的。
-   *
-   * 确认走按钮自身的二段式（「删除」→「确认删除 N 张」），不用 window.confirm——
-   * 那是系统模态，在无边框窗口里样式不受控，且会打断这一列的操作节奏。
-   */
   const [picking, setPicking] = useState(false);
   const [chosen, setChosen] = useState<string[]>([]);
   const [confirming, setConfirming] = useState(false);
   const [removing, setRemoving] = useState(false);
 
-  // 母版页导入的一定是母版，类型不再让用户选
   const importKind = tab === 'master' ? 'master' : formKind;
 
   useEffect(() => {
@@ -98,8 +71,6 @@ export function TemplateLibrary({
   }, [importOpen]);
 
   async function load() {
-    // 科研图那一档要 diagram + plot 两类，后端只支持单类或全部，
-    // 所以取全部再在前端剔掉母版，省一次往返。
     const kind = tab === 'master' ? 'master' : figureKind === 'all' ? 'all' : figureKind;
     const items = await listTemplates(kind, query);
     return tab === 'figure' && kind === 'all' ? items.filter((item) => item.kind !== 'master') : items;
@@ -118,7 +89,6 @@ export function TemplateLibrary({
   useEffect(() => {
     let cancelled = false;
     const cached = listCache.get(key);
-    // 有缓存就先把旧结果摆上，后台再校验；没有才允许露出空状态
     setTemplates(cached ?? []);
     setPending(!cached);
     load()
@@ -138,8 +108,6 @@ export function TemplateLibrary({
     };
   }, [key]);
 
-  // 换了页签/筛选/搜索词，选中的那些多半已经不在眼前了：
-  // 留着它们会导致「看不见的模板被删掉」
   useEffect(() => {
     setChosen([]);
     setConfirming(false);
@@ -167,7 +135,6 @@ export function TemplateLibrary({
       onMessage(t.templates.removeNone, 'error');
       return;
     }
-    // 第一下只是把按钮换成确认态，第二下才真删
     if (!confirming) {
       setConfirming(true);
       return;
@@ -176,7 +143,6 @@ export function TemplateLibrary({
     try {
       onMessage(t.templates.removing);
       const count = await deleteTemplates(chosenVisible);
-      // 删除会命中所有筛选组合，跟导入一样整片作废
       listCache.clear();
       leavePicking();
       await refresh();
@@ -202,8 +168,6 @@ export function TemplateLibrary({
       setVisualIntent('');
       setContentSummary('');
       setImportOpen(false);
-      // 新模板会落进哪些筛选组合说不准（类型/分类/搜索词都可能命中），
-      // 与其逐个推算，不如整片作废重拉——导入是低频操作
       listCache.clear();
       await refresh();
       onMessage(t.templates.imported);
@@ -218,7 +182,6 @@ export function TemplateLibrary({
     setBusy(true);
     try {
       const path = await pickDirectory(t.templates.packHint);
-      // 用户取消选择不是错误，静默返回
       if (!path) return;
       onMessage(t.templates.importing);
       const pack = await importTemplatePack(path);
@@ -250,8 +213,6 @@ export function TemplateLibrary({
           <div className="dp-head-tools">
             <span className="dp-foot-note">{t.templates.count(templates.length)}</span>
             {picking ? (
-              // 选择模式下把筛选/搜索/导入让位给删除工具：
-              // 这一行装不下两套控件，而且选中态在换筛选后本来就得清空
               <>
                 <span className="dp-foot-note">{t.templates.selectedCount(chosenVisible.length)}</span>
                 <button
@@ -381,7 +342,15 @@ export function TemplateLibrary({
                             <button type="button" className="dp-ghost" disabled={busy} onClick={submitPack}>
                               {t.templates.pickPack}
                             </button>
-                            <a href={PAPER_BANANA_BENCH_URL} target="_blank" rel="noreferrer">
+                            <a
+                              href={PAPER_BANANA_BENCH_URL}
+                              target="_blank"
+                              rel="noreferrer"
+                              onClick={(event) => {
+                                event.preventDefault();
+                                void openExternal(PAPER_BANANA_BENCH_URL);
+                              }}
+                            >
                               {t.templates.emptyLink} ↗
                             </a>
                           </div>
@@ -397,8 +366,6 @@ export function TemplateLibrary({
         flush
       >
         {pending ? (
-          // 首次拉取期间画骨架而不是空状态：空状态写着「还没有模板」，
-          // 在数据还没回来时显示等于撒谎，而且会和随后刷出的网格闪一下
           <div className="dp-tiles wide" aria-busy="true">
             {Array.from({ length: 8 }, (_, index) => (
               <div key={index} className="dp-lib-card dp-lib-skeleton" aria-hidden="true" />
@@ -431,8 +398,6 @@ export function TemplateLibrary({
                   </span>
                 </figcaption>
               );
-              // 选择模式下整张卡是一个 checkbox 按钮：只在角标上开点击热区，
-              // 手要瞄那 18px 的小方块，一屏几十张时太难点
               if (!picking) {
                 return (
                   <figure key={item.id} className="dp-lib-card">

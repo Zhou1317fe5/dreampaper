@@ -5,6 +5,7 @@ use uuid::Uuid;
 
 use crate::error::{AppError, AppResult};
 
+use super::asset::protocol_url;
 use super::store::Store;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -119,12 +120,6 @@ impl<'a> JobService<'a> {
         Ok(records)
     }
 
-    /// 记录一个阶段：写 job_stages 并同步 jobs 的当前 stage/message。
-    ///
-    /// 同步那一步不许改动已经处于终态的任务。abort 只在 await 点生效，
-    /// 用户按下停止时管道可能正走在两个 await 之间的同步段里，之后还会
-    /// 再上报一个阶段——没有这道闸，那次上报会把 `cancelled` 盖回
-    /// `running`，任务就永远停在「进行中」，前端一直轮询一个没人在跑的 job。
     pub fn mark_stage(&self, job_id: &str, stage: &str, message: &str, status: &str) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
         let conn = self.store.connection()?;
@@ -156,10 +151,6 @@ impl<'a> JobService<'a> {
         Ok(serde_json::from_str(&raw)?)
     }
 
-    /// 成功收尾：落 result_json（含图片列表）并标记 completed。
-    ///
-    /// 同样不覆盖终态：用户按下停止的那一刻管道可能刚好跑完，
-    /// 已经答复过「已停止」就不该再翻成「完成」。
     pub fn finish(&self, job_id: &str, images: &[JobImage]) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
         let result = serde_json::json!({ "images": images });
@@ -186,8 +177,6 @@ impl<'a> JobService<'a> {
         self.mark_stage(job_id, "failed", message, "failed")
     }
 
-    /// 用户主动停止。单独一个终态，不写成 failed——
-    /// 「我按了停止」和「跑挂了」在近期任务列表里必须能分开看。
     pub fn cancel(&self, job_id: &str, message: &str) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
         let error = serde_json::json!({ "message": message, "cancelled_at": now });
@@ -210,7 +199,12 @@ impl<'a> JobService<'a> {
             return Ok(Vec::new());
         };
         let value: serde_json::Value = serde_json::from_str(&raw)?;
-        Ok(serde_json::from_value(value["images"].clone()).unwrap_or_default())
+        let mut images: Vec<JobImage> =
+            serde_json::from_value(value["images"].clone()).unwrap_or_default();
+        for image in &mut images {
+            image.url = normalize_asset_url(&image.url);
+        }
+        Ok(images)
     }
 
     fn events_for_job(&self, job_id: &str) -> AppResult<Vec<JobEvent>> {        let conn = self.store.connection()?;
@@ -229,9 +223,45 @@ impl<'a> JobService<'a> {
     }
 }
 
+/// Rebuild a stored output URL for the current platform.
+///
+/// `result_json` stores the full URL as built at generation time, and the URL
+/// form is platform-bound (see `asset::protocol_url`). Fixing only the
+/// generating side is not enough: jobs a Windows user ran before this fix, and
+/// app data moved over from macOS, would keep showing broken images under
+/// recent jobs. Resources are stored by id, so recovering the id from the URL
+/// and rebuilding is enough — no database migration needed.
+fn normalize_asset_url(url: &str) -> String {
+    if !url.contains("dp-asset") {
+        return url.to_string();
+    }
+    match url.rsplit('/').next() {
+        Some(id) if !id.is_empty() => protocol_url("dp-asset", id),
+        _ => url.to_string(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Old jobs hold the other platform's URL form; reads have to rebuild it
+    /// into one this machine can load, or images under recent jobs stay broken
+    /// after an upgrade. Non-dp-asset URLs pass through untouched.
+    #[test]
+    fn stored_image_urls_are_rebuilt_for_this_platform() {
+        let expected = protocol_url("dp-asset", "abc-123");
+        assert_eq!(normalize_asset_url("dp-asset://localhost/abc-123"), expected);
+        assert_eq!(
+            normalize_asset_url("http://dp-asset.localhost/abc-123"),
+            expected
+        );
+        assert_eq!(
+            normalize_asset_url("https://example.com/x.png"),
+            "https://example.com/x.png",
+            "external image links must not be rewritten"
+        );
+    }
 
     fn service_dir(tag: &str) -> std::path::PathBuf {
         let dir = std::env::temp_dir().join(format!(
@@ -244,8 +274,6 @@ mod tests {
         dir
     }
 
-    /// 用户按下停止之后，管道那边「迟到」的阶段上报不许把任务弄活。
-    /// 没有这道闸，任务会卡在 running，前端一直轮询一个已经没人跑的 job。
     #[test]
     fn a_cancelled_job_is_not_resurrected_by_late_reports() {
         let dir = service_dir("cancel");
@@ -259,7 +287,6 @@ mod tests {
             .expect("上报阶段");
         jobs.cancel(&job.id, "任务已停止").expect("停止");
 
-        // 管道在被 abort 之前还挤出了一次上报，以及一次成功收尾
         jobs.mark_stage(&job.id, "paper_implement", "制图中", "running")
             .expect("迟到的上报");
         jobs.finish(

@@ -1,17 +1,3 @@
-//! 幻灯片管道编排，移植自 `jobs.py::_run_ppt`。
-//!
-//! 阶段顺序不能改：
-//! `母版分析 → deck outline → 逐页规划(并发) → 合并校验 → 注入母版 prefix → 逐页出图(并发)`
-//!
-//! 两个关键先后关系：
-//! - 先出整套 outline 再逐页展开：逐页 worker 只看得到自己那页，
-//!   叙事连贯与「不互相重复」全靠 outline 这一层统一裁定。
-//! - prefix 必须在合并校验**之后**注入：校验要看模型自己写的 implement_prompt，
-//!   prefix 一注入就有几百字模板文案，长度与关键词检查会全部失真。
-//!
-//! 本模块不碰数据库：template 图与资料文本由 `execute.rs` 解析后传入，
-//! 因此整条编排可以脱离 Tauri 单测。
-
 use std::future::Future;
 
 use futures::stream::{StreamExt, TryStreamExt};
@@ -32,22 +18,16 @@ use crate::core::pipeline::visual::{build_visual_asset_context, visual_asset_con
 use crate::core::prompt::{compose_prompt, PromptAsset, PromptStore};
 use crate::error::{AppError, AppResult};
 
-/// design 侧的超时下限：母版分析与逐页规划都是长 JSON 输出，
-/// profile 默认的 120s 经常不够，取 profile 与本值的较大者。
 const PPT_DESIGN_TIMEOUT_SECONDS: u64 = 300;
 
-/// 逐页 prompt 的压缩上限。每页都要重发一遍这三段，
-/// 不压缩的话 N 页会把同样的长文重复 N 次，既慢又容易触发上下文上限。
 const PPT_PLAN_TEMPLATE_LIMIT: usize = 2600;
 const PPT_PLAN_MATERIAL_LIMIT: usize = 3200;
 const PPT_PLAN_VISUAL_CONTEXT_LIMIT: usize = 1400;
 
-/// 单个资料文件送进 prompt 的字符上限。
 pub const MATERIAL_TEXT_LIMIT: usize = 6000;
 
 const MAX_PAGE_COUNT: usize = 20;
 
-/// image2 未配置时的兜底出图参数，对齐 `IMAGE2_FALLBACK_OUTPUT`。
 const IMAGE2_FALLBACK_OUTPUT: [(&str, &str); 4] = [
     ("size", "1200x675"),
     ("quality", "auto"),
@@ -57,11 +37,8 @@ const IMAGE2_FALLBACK_OUTPUT: [(&str, &str); 4] = [
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct PptSlidePayload {
-    /// 上传得到的母版资源 id（网页版路径）。
     #[serde(default)]
     pub template_asset_id: String,
-    /// 模板库中的母版 id（桌面版路径）。两者取其一即可，
-    /// 桌面版把母版收进模板库后走这条，网页版仍走 asset 上传。
     #[serde(default)]
     pub template_id: Option<String>,
     #[serde(default)]
@@ -75,8 +52,6 @@ pub struct PptSlidePayload {
 }
 
 impl PptSlidePayload {
-    /// 母版来自模板库时返回其 id。空字符串按「未提供」处理，
-    /// 免得前端传了个空串却当成有效来源。
     pub fn template_ref(&self) -> Option<&str> {
         self.template_id
             .as_deref()
@@ -84,7 +59,6 @@ impl PptSlidePayload {
             .filter(|value| !value.is_empty())
     }
 
-    /// 母版来自上传资源时返回其 id。
     pub fn asset_ref(&self) -> Option<&str> {
         Some(self.template_asset_id.trim()).filter(|value| !value.is_empty())
     }
@@ -103,8 +77,6 @@ impl PptSlidePayload {
     }
 }
 
-/// 资料文件摘要，对齐 `_material_asset_summary`。
-/// （Python 版还带 asset id，那是给 internal_artifacts 用的；桌面端不落 artifacts，故省去。）
 #[derive(Clone, Debug)]
 pub struct MaterialAsset {
     pub filename: String,
@@ -138,9 +110,7 @@ impl MaterialAsset {
     }
 }
 
-/// 校验 payload。`execute.rs` 在 `ppt_validate` 阶段调用。
 pub fn validate_payload(payload: &PptSlidePayload) -> AppResult<()> {
-    // 母版可以来自模板库，也可以来自上传；两条来源都没有才算缺参数。
     if payload.template_ref().is_none() && payload.asset_ref().is_none() {
         return Err(AppError::new(
             "invalid_payload",
@@ -162,7 +132,6 @@ pub fn validate_payload(payload: &PptSlidePayload) -> AppResult<()> {
     Ok(())
 }
 
-/// 拼资料上下文，移植自 `_compose_material_context`。
 pub fn compose_material_context(material_text: &str, assets: &[MaterialAsset]) -> String {
     let mut sections: Vec<String> = Vec::new();
     if !material_text.trim().is_empty() {
@@ -190,8 +159,6 @@ pub fn compose_material_context(material_text: &str, assets: &[MaterialAsset]) -
     sections.join("\n\n---\n\n")
 }
 
-/// 并发数解析，移植自 `_resolve_ppt_concurrency`：
-/// 未配置时按页数全开，配置了也不会超过页数（多开的槽位没有任务可跑）。
 pub fn resolve_ppt_concurrency(configured: Option<i64>, page_count: usize) -> usize {
     let default_concurrency = page_count.max(1);
     let requested = match configured {
@@ -202,7 +169,6 @@ pub fn resolve_ppt_concurrency(configured: Option<i64>, page_count: usize) -> us
     requested.clamp(1, default_concurrency)
 }
 
-/// 超限时截断并附一行说明，让模型知道自己看到的是节选而非全文。
 pub fn truncate_text(text: &str, limit: usize) -> String {
     let length = text.chars().count();
     if length <= limit {
@@ -218,9 +184,6 @@ fn pick(value: &Value, key: &str) -> Value {
     value.get(key).cloned().unwrap_or(Value::Null)
 }
 
-/// 压缩母版分析，移植自 `_compact_template_analysis`。
-/// 只丢 `page_layout_rules` 这类逐页 worker 用不上的长文，
-/// 保留全部样式字段——它们是 prefix 的事实来源。
 pub fn compact_template_analysis(analysis: &Value) -> String {
     let wrapper = if analysis.get("template_analysis").is_some_and(Value::is_object) {
         &analysis["template_analysis"]
@@ -261,8 +224,6 @@ pub fn compact_template_analysis(analysis: &Value) -> String {
     )
 }
 
-/// 前后页 brief，移植自 `_adjacent_page_context`。
-/// 逐页 worker 靠它衔接转场，缺了各页会各写各的开场白。
 pub fn adjacent_page_context(deck_outline: &Value, page_number: i64) -> Value {
     let briefs = deck_outline["page_briefs"].as_array();
     let find = |target: i64| -> Value {
@@ -278,7 +239,6 @@ pub fn adjacent_page_context(deck_outline: &Value, page_number: i64) -> Value {
     json!({"previous": find(page_number - 1), "next": find(page_number + 1)})
 }
 
-/// 出图参数，移植自 `_ppt_output_defaults`。
 pub fn ppt_output_defaults(profile: &ModelProfile) -> Map<String, Value> {
     let protocol = if profile.protocol == "banna2" {
         "banana2"
@@ -319,10 +279,6 @@ pub fn ppt_output_defaults(profile: &ModelProfile) -> Map<String, Value> {
     }
 }
 
-/// 并发上限内保序执行，对应 `_run_in_ordered_batches`。
-///
-/// `buffered` 与 Python 的分批 gather 结果完全一致（输出顺序 = 输入顺序，
-/// 在飞请求不超过 concurrency），但不必等整批排空：慢的一页不会拖住下一批起跑。
 async fn run_ordered<T, F>(tasks: Vec<F>, concurrency: usize) -> AppResult<Vec<T>>
 where
     F: Future<Output = AppResult<T>>,
@@ -333,7 +289,6 @@ where
         .await
 }
 
-/// 逐页规划所需的共享上下文，对应 `_plan_single_ppt_page` 的一串关键字参数。
 struct PagePlanContext<'a> {
     profile: &'a ModelProfile,
     system_prompt: &'a str,
@@ -430,10 +385,6 @@ pub struct SlideRun<'a> {
 }
 
 impl SlideRun<'_> {
-    /// 返回逐页图片的 base64，顺序即页序。
-    ///
-    /// 前三个阶段（`ppt_validate` / `ppt_template` / `ppt_material`）由
-    /// `execute.rs` 在解析资源时上报，本方法从 `ppt_visual_assets` 接手。
     pub async fn run(
         &self,
         payload: &PptSlidePayload,
@@ -456,14 +407,12 @@ impl SlideRun<'_> {
             ));
         }
 
-        // —— 视觉素材检索：给逐页规划提供「这东西长什么样」的文字证据 ——
         stage("ppt_visual_assets", "检索产品/工具视觉素材线索");
         let visual_asset_context =
             build_visual_asset_context(&self.material_context, self.search_profile, proxy).await;
         let visual_asset_prompt = visual_asset_context_text(&visual_asset_context);
         let ppt_output = ppt_output_defaults(self.implement_profile);
 
-        // —— 母版分析：唯一一次把 template 图喂给模型 ——
         let analyzer_assets = self.prompts.load_all(&[
             "global/system.md",
             "modes/ppt_slide/analyzer.md",
@@ -500,7 +449,6 @@ impl SlideRun<'_> {
                 .await?
                 .parsed;
 
-        // —— deck outline：一次性裁定整套叙事，逐页 worker 只填自己那页 ——
         let page_assets = self.prompts.load_all(&[
             "global/system.md",
             "modes/ppt_slide/design.md",
@@ -565,7 +513,6 @@ impl SlideRun<'_> {
             .cloned()
             .unwrap_or_default();
 
-        // —— 逐页规划（并发）——
         stage(
             "ppt_page_plan_queue",
             &format!("按并发 {page_plan_concurrency} 排队规划 {page_count} 页"),
@@ -592,13 +539,11 @@ impl SlideRun<'_> {
         )
         .await?;
 
-        // —— 合并校验后再注入 prefix，顺序不可换 ——
         stage("ppt_merge_pages", "合并并校验页面规划");
         let pages_json = json!({ "pages": planned });
         let pages = validate_ppt_pages(&pages_json, page_count, Some(&template_analysis))?;
         let pages = apply_master_prompt_prefix(&pages, &template_analysis)?;
 
-        // —— 逐页出图（并发）——
         stage(
             "ppt_implement_queue",
             &format!("按并发 {image_concurrency} 排队生成图片"),
@@ -657,7 +602,6 @@ mod tests {
         }
     }
 
-    /// 未配置时按页数全开；配置值不会超过页数，也不会低于 1。
     #[test]
     fn concurrency_is_clamped_to_page_count() {
         assert_eq!(resolve_ppt_concurrency(None, 5), 5);
@@ -668,7 +612,6 @@ mod tests {
         assert_eq!(resolve_ppt_concurrency(None, 0), 1);
     }
 
-    /// 截断按字符计，中文资料不能按字节切（会切出半个字）。
     #[test]
     fn truncate_counts_characters() {
         let text = "科研图".repeat(10);
@@ -678,7 +621,6 @@ mod tests {
         assert_eq!(truncate_text("short", 12), "short");
     }
 
-    /// image2 用兜底补齐，profile 已配置的字段优先。
     #[test]
     fn image2_output_merges_over_fallback() {
         let defaults = ppt_output_defaults(&profile("image2", &[("response_format", "url")]));
@@ -687,7 +629,6 @@ mod tests {
         assert_eq!(defaults["output_format"], json!("png"));
     }
 
-    /// banana2 只认这四个字段，image2 的 size/quality 不能漏过去。
     #[test]
     fn banana2_output_is_restricted_to_known_fields() {
         let defaults = ppt_output_defaults(&profile(
@@ -700,7 +641,6 @@ mod tests {
         assert!(!defaults.contains_key("quality"));
     }
 
-    /// 空值字段要丢掉，否则会把 `size=""` 发给上游。
     #[test]
     fn empty_output_values_are_dropped() {
         let defaults = ppt_output_defaults(&profile("openai_chat", &[("size", ""), ("quality", "auto")]));
@@ -728,7 +668,6 @@ mod tests {
         assert!(context.contains(&format!("excerpt={MATERIAL_TEXT_LIMIT}/{} chars", MATERIAL_TEXT_LIMIT + 40)));
     }
 
-    /// 无可提取文本时给出说明，而不是留空段落。
     #[test]
     fn material_context_falls_back_for_empty_files() {
         let asset = MaterialAsset::new(
@@ -763,8 +702,6 @@ mod tests {
         assert!(last["next"].is_null());
     }
 
-    /// 压缩保留全部样式字段（prefix 的事实来源），只丢 worker 用不上的长文。
-    /// 对齐 Python `test_ppt_page_planner_context_is_compacted`。
     #[test]
     fn compact_analysis_keeps_master_style_fields() {
         let analysis = json!({"template_analysis": {
@@ -783,7 +720,6 @@ mod tests {
         for token in ["canvas", "palette", "typography", "forbidden_deviations", "红灰学术母版"] {
             assert!(compact.contains(token), "compact analysis missing {token}");
         }
-        // master_style_spec 内层的 page_layout_rules 不在保留名单里
         assert!(!compact.contains("worker 用不上的长文"));
         assert!(compact.contains("Body varies inside safe margins."));
 
@@ -818,8 +754,6 @@ mod tests {
         assert!(validate_payload(&no_template).is_err());
     }
 
-    /// 桌面版从模板库选母版：payload 里没有 asset，只有 template_id。
-    /// 这条通不过就意味着桌面版的幻灯片一律报「缺少母版」。
     #[test]
     fn payload_validation_accepts_master_from_template_library() {
         let from_library = PptSlidePayload {
@@ -834,16 +768,11 @@ mod tests {
         assert_eq!(from_library.template_ref(), Some("tpl-1"));
         assert_eq!(from_library.asset_ref(), None);
 
-        // 空白 template_id 不算来源，否则前端传空串会被当成有效母版，
-        // 一路走到管道里才炸。
         let mut blank = from_library.clone();
         blank.template_id = Some("   ".to_string());
         assert!(validate_payload(&blank).is_err());
     }
 
-    /// 对齐 Python `test_ordered_batches_queue_after_concurrency_limit`：
-    /// 既要保序（否则 slide_1.png 会存成别页的图），也要真的卡住并发上限
-    /// （否则 20 页会同时打满上游，配置项形同虚设）。
     #[tokio::test]
     async fn ordered_run_preserves_order_and_caps_concurrency() {
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -858,7 +787,6 @@ mod tests {
                 async move {
                     let current = running.fetch_add(1, Ordering::SeqCst) + 1;
                     peak.fetch_max(current, Ordering::SeqCst);
-                    // 后面的任务睡得更久：乱序完成也必须按输入顺序返回
                     tokio::time::sleep(std::time::Duration::from_millis(20 - index * 3)).await;
                     running.fetch_sub(1, Ordering::SeqCst);
                     Ok(index)
@@ -868,7 +796,6 @@ mod tests {
 
         let results = run_ordered(tasks, 2).await.unwrap();
         assert_eq!(results, vec![0, 1, 2, 3, 4, 5]);
-        // 断言「恰好 2」而非「不超过 2」：串行执行也满足 <=2，会让用例白跑
         assert_eq!(peak.load(Ordering::SeqCst), 2, "并发上限未被正确执行");
     }
 

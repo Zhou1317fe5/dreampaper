@@ -1,9 +1,3 @@
-//! 科研图两阶段管道，移植自 `jobs.py::_run_paper`。
-//!
-//! 拆成两阶段的理由（不能合并）：
-//! 阶段①只喂 template 图，模型不会把 template 里的研究内容误当成用户内容；
-//! 阶段②只喂结构骨架和用户文字、不再带图，避免生成内容被图面「带跑」。
-
 use serde::Deserialize;
 use serde_json::{Map, Value};
 
@@ -43,11 +37,8 @@ fn default_strength() -> String {
     "high".to_string()
 }
 
-/// 每个阶段回调一次，供上层写 job_stages 并推送事件。
 pub type StageSink<'a> = &'a (dyn Fn(&str, &str) + Send + Sync);
 
-/// 校验 payload。`execute.rs` 在 `paper_validate` 阶段调用——
-/// 校验要排在读 template 之前，取不到的 id 才不会先报成「模板不存在」。
 pub fn validate_payload(payload: &PaperFigurePayload) -> AppResult<()> {
     if payload.template_ids.is_empty() {
         return Err(AppError::new(
@@ -68,10 +59,6 @@ pub struct FigureRun<'a> {
 }
 
 impl FigureRun<'_> {
-    /// 返回生成图片的 base64。
-    ///
-    /// 前两个阶段（`paper_validate` / `paper_templates`）由 `execute.rs`
-    /// 在校验与解析 template 时上报，本方法从 `paper_structure_prompt` 接手。
     pub async fn run(
         &self,
         payload: &PaperFigurePayload,
@@ -82,7 +69,6 @@ impl FigureRun<'_> {
         let system = self.prompts.load("global/system.md")?;
         let template_summary = serde_json::to_string_pretty(&self.template_metadata)?;
 
-        // —— 阶段 1：只看 template 图，抽可复用的结构骨架 ——
         stage("paper_structure_prompt", "拼接 template 结构分析 prompt");
         let structure_assets = self.prompts.load_all(&[
             "global/system.md",
@@ -128,7 +114,6 @@ impl FigureRun<'_> {
         })
         .await?;
 
-        // —— 阶段 2：结构骨架 + 用户内容 → 完整 design JSON（不再带图）——
         stage("paper_prompt", "拼接内容填充与 implement prompt");
         let design_assets = self.prompts.load_all(&[
             "global/system.md",

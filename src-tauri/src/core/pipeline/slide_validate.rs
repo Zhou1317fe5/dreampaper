@@ -1,8 +1,3 @@
-//! 幻灯片校验与母版 prefix 注入，移植自 `jobs.py` 的 `_validate_ppt_*`
-//! 与 `_apply_ppt_master_prompt_prefix`。
-//!
-//! prefix 由代码拼、不由模型写：各页 prefix 逐字相同是「样式不漂」的保证。
-
 use regex::Regex;
 use serde_json::Value;
 
@@ -34,8 +29,6 @@ pub const PAGE_MASTER_BINDING_FIELDS: [&str; 8] = [
 pub const PAGE_VISUAL_PLAN_FIELDS: [&str; 3] =
     ["usage_decision", "elements", "text_visual_balance"];
 
-/// appearance 是本次新增的必填项：制图模型看不到网络图，
-/// 「长什么样」只能靠这段文字传递，缺了就会退回文字方框。
 pub const PAGE_VISUAL_ELEMENT_FIELDS: [&str; 7] = [
     "type", "subject", "appearance", "source_reference", "placement", "style", "size_ratio",
 ];
@@ -321,8 +314,6 @@ fn sanitize_page_prompt(prompt: &str) -> String {
         .to_string()
 }
 
-/// 母版 prefix：所有页逐字相同，implement model 拿不到母版图，
-/// 这段文字就是样式的唯一事实来源。
 fn master_prefix(analysis: &Value, page: &Value) -> Checked<String> {
     let master = master_style_spec(analysis)?;
     let binding = &page["master_style_binding"];
@@ -476,7 +467,6 @@ mod tests {
         })
     }
 
-    /// 对齐 Python `test_validates_template_analysis_and_pages`
     #[test]
     fn validates_pages_and_rejects_gaps() {
         let analysis = valid_template_analysis();
@@ -516,7 +506,6 @@ mod tests {
             .is_schema());
     }
 
-    /// appearance 缺失必须拦下 —— 少了它出图会退回文字方框
     #[test]
     fn missing_appearance_is_rejected() {
         let mut page = valid_page();
@@ -527,8 +516,6 @@ mod tests {
         assert!(validate_ppt_page_fields(&page).unwrap_err().is_schema());
     }
 
-    /// 对齐 Python `test_ppt_master_prefix_is_uniform_and_strips_api_settings`
-    /// 与 `test_implement_prompt_demands_real_depiction`
     #[test]
     fn master_prefix_is_uniform_and_demands_real_depiction() {
         let analysis = valid_template_analysis();
@@ -556,7 +543,6 @@ mod tests {
             assert!(prompt.contains("actual depictions of their subject"));
             assert!(prompt.contains("Do not substitute a labeled rectangle"));
         }
-        // appearance 必须随 visual_element_plan 传到制图侧
         assert!(merged[0]["implement_prompt"].as_str().unwrap().contains("散热格栅"));
     }
 }

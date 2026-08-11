@@ -1,8 +1,3 @@
-//! Design model 的输出契约字符串，逐字移植自 `backend/app/jobs.py`。
-//!
-//! 这些字符串是模型行为的唯一约束，改动会直接影响出图质量，
-//! 与 Python 版必须保持一致。
-
 /// `_structure_plan_contract`
 pub fn structure_plan() -> &'static str {
     r#"Return strict JSON only:
@@ -79,9 +74,6 @@ Contract:
 Omit `diagram_spec` only for plot/chart. Omit `plot_spec` only for diagram/workflow/comparison/mechanism."#
 }
 
-/// `_template_analysis_contract`
-///
-/// 用 r##"..."## 定界：契约里的十六进制色值含 `"#`，会提前终止 r#"..."#。
 pub fn template_analysis() -> &'static str {
     r##"Return strict JSON only with professional PPT master analysis:
 {
@@ -194,7 +186,6 @@ pub fn ppt_single_page(page_number: usize) -> String {
 mod tests {
     use super::*;
 
-    /// 对齐 Python `test_contracts_expose_strengthened_fields`
     #[test]
     fn contracts_expose_strengthened_fields() {
         for token in ["diagram_spec", "plot_spec", "quality_rubric", "data_integrity_rules"] {
@@ -223,7 +214,6 @@ mod tests {
         assert!(single.contains("Do not put API output parameters"));
     }
 
-    /// appearance 是实物呈现的关键字段，缺失会导致制图退回文字方框
     #[test]
     fn single_page_contract_requires_appearance() {
         assert!(ppt_single_page(3).contains("\"appearance\""));

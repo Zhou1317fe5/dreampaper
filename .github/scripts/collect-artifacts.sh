@@ -1,10 +1,4 @@
 #!/usr/bin/env bash
-# 把 Tauri 产出的包重命名成发布用的文件名，集中放到 release-artifacts/。
-#
-# Tauri 的输出名带 productName 与它自己的架构写法（DreamPaper_1.2.3_aarch64.dmg），
-# 与我们对外承诺的命名不一致，所以这里统一改名而不是让用户去认。
-#
-# 用法：collect-artifacts.sh <rust-target> <version>
 
 set -euo pipefail
 
@@ -17,8 +11,6 @@ out_dir="release-artifacts"
 
 mkdir -p "$out_dir"
 
-# 只取一个匹配项；命中 0 个或多个都说明产物布局变了，必须立刻失败——
-# 静默漏传一个安装包比构建失败更难发现。
 take_one() {
   local description="$1"
   shift
@@ -53,8 +45,6 @@ case "$target" in
     setup="$(take_one "NSIS 安装包" "$bundle_dir/nsis" -maxdepth 1 -name '*-setup.exe')"
     emit "$setup" "dreampaper-${version}-setup.exe"
 
-    # 便携版就是未打包的可执行文件本身。Cargo 按包名产出 dreampaper.exe，
-    # 但 Tauri 某些版本会按 productName 改名，两种都认。
     portable="$(take_one "便携版可执行文件" "$binary_dir" -maxdepth 1 -iname 'dreampaper.exe')"
     emit "$portable" "dreampaper-${version}-portable.exe"
     ;;

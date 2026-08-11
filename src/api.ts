@@ -6,20 +6,12 @@ import type {
   TemplateSummary
 } from './types';
 
-/**
- * 桌面版走 Tauri IPC，网页版走 HTTP。
- *
- * 两个外壳共用这一份 api，是为了让 PaperFigure / PptSlide / Settings
- * 这些表单组件原样复用——否则桌面版要把整套表单连同校验再写一遍，
- * 两边的字段迟早会各改各的。外壳（布局）不同，数据层相同。
- */
 const isDesktop =
   typeof window !== 'undefined' &&
   (Boolean((window as { isTauri?: boolean }).isTauri) || '__TAURI_INTERNALS__' in window);
 
 type InvokeFn = <T>(cmd: string, args?: Record<string, unknown>) => Promise<T>;
 
-// 动态 import：网页版的产物里不会打进 @tauri-apps/api
 let invokeFn: Promise<InvokeFn> | null = null;
 
 async function ipc<T>(command: string, args?: Record<string, unknown>): Promise<T> {
@@ -28,7 +20,6 @@ async function ipc<T>(command: string, args?: Record<string, unknown>): Promise<
   try {
     return await invoke<T>(command, args);
   } catch (error) {
-    // Rust 侧抛的是 AppError 结构体，不转换的话 UI 上会显示 [object Object]
     throw new Error(errorText(error));
   }
 }
@@ -50,11 +41,6 @@ async function request<T>(url: string, init?: RequestInit): Promise<T> {
   return response.json() as Promise<T>;
 }
 
-/**
- * Tauri 的 `Vec<u8>` 参数经 JSON 传输，会变成数字数组（约 4 倍膨胀）。
- * 模板图与母版图通常在几 MB 以内，可以接受；真正的大件（模板包）
- * 走的是目录路径而不是字节流，不经过这里。
- */
 async function fileBytes(file: File): Promise<number[]> {
   return Array.from(new Uint8Array(await file.arrayBuffer()));
 }
@@ -110,8 +96,6 @@ export function getJob(id: string) {
   return request<JobRecord>(`/api/jobs/${id}`);
 }
 
-// —— 以下仅桌面版可用：网页版的模板库由后端从 PaperBananaBench 目录直接读取 ——
-
 export function desktopAvailable() {
   return isDesktop;
 }
@@ -120,32 +104,18 @@ export function listJobs(limit = 20, offset = 0) {
   return ipc<JobRecord[]>('list_jobs', { limit, offset });
 }
 
-/**
- * 停止一个在跑的任务。
- *
- * 桌面独有：网页版的管道跑在 FastAPI 进程里，那边没有对应路由，
- * 所以按钮也只在桌面外壳里显示（`desktopAvailable()`）。
- */
 export function cancelJob(id: string) {
   return ipc<JobRecord>('cancel_job', { id });
 }
 
-/** 批量删除模板，返回真正删掉的条数（不存在的 id 不计入）。 */
 export function deleteTemplates(ids: string[]) {
   return ipc<number>('delete_templates', { ids });
 }
 
-/**
- * 保存资源到用户选定的路径。
- *
- * `<a download>` 对自定义协议不认：点下去只会把图片当页面导航过去，
- * 表现就是整扇窗被那张图占满，而且回不去。所以「下载」按钮先弹原生保存
- * 对话框让用户挑路径，再调这个命令把文件复制过去。
- */
 export async function saveAsset(assetId: string, defaultFilename: string): Promise<void> {
   const { save } = await import('@tauri-apps/plugin-dialog');
   const path = await save({ defaultPath: defaultFilename });
-  if (!path) return; // 用户取消
+  if (!path) return;
   return ipc('save_asset', { assetId, path });
 }
 
@@ -171,9 +141,36 @@ export function importTemplatePack(path: string) {
   return ipc<TemplatePackSummary>('import_template_pack', { path });
 }
 
-/** 打开原生目录选择器，取消时返回 null。 */
 export async function pickDirectory(title: string): Promise<string | null> {
   const { open } = await import('@tauri-apps/plugin-dialog');
   const selected = await open({ directory: true, multiple: false, title });
   return typeof selected === 'string' ? selected : null;
+}
+
+/**
+ * Open a URL in the user's default browser.
+ *
+ * Inside the Tauri webview a plain `<a target="_blank">` is a silent no-op:
+ * there is no window.open handler, so the click produces no navigation and no
+ * error. The URL has to be handed to the OS instead. Scoped in
+ * capabilities/default.json to https://huggingface.co/* — a URL outside that
+ * scope is rejected by the ACL.
+ */
+export async function openExternal(url: string): Promise<void> {
+  if (!isDesktop) {
+    window.open(url, '_blank', 'noreferrer');
+    return;
+  }
+  return ipc('plugin:opener|open_url', { url });
+}
+
+/**
+ * Open a generated image with the OS default viewer.
+ *
+ * Same root cause as openExternal: the `<a target="_blank">` preview link does
+ * nothing inside the webview. The backend resolves the id against the asset
+ * table, so the webview never handles a filesystem path.
+ */
+export async function openArtifact(assetId: string): Promise<void> {
+  return ipc('open_artifact', { artifactId: assetId });
 }

@@ -6,7 +6,6 @@
   line-height: 1.5;
   text-rendering: optimizeLegibility;
 
-  /* 布局 token：统一间距与断点行为 */
   --space-1: 8px;
   --space-2: 12px;
   --space-3: 16px;
@@ -77,7 +76,6 @@ button {
   cursor: pointer;
 }
 
-/* —— Shell：居中顶栏 + 内容 —— */
 .shell {
   display: grid;
   grid-template-columns: minmax(0, 1fr);
@@ -293,7 +291,6 @@ button {
 }
 
 /* —— Settings —— */
-/* 整宽折叠列表：每段独立开合，彻底避免多列网格下的等高拉伸留白 */
 .settings-stack {
   display: grid;
   gap: var(--space-2);
@@ -386,7 +383,6 @@ button {
   color: #2f3a35;
 }
 
-/* 0fr → 1fr 让高度过渡不依赖已知内容高度，且开合双向对称 */
 .settings-section-panel {
   display: grid;
   grid-template-rows: 0fr;
@@ -416,7 +412,6 @@ button {
 .settings-section.open .settings-section-body {
   opacity: 1;
   transform: translateY(0);
-  /* 略晚于高度展开，避免内容在还没撑开的容器里闪现 */
   transition-delay: 70ms;
 }
 
@@ -451,7 +446,6 @@ button {
   margin: 0;
 }
 
-/* 说明完整换行，禁止截断遮盖 */
 .settings-side-note {
   margin: 0;
   color: var(--text-muted);
@@ -571,9 +565,6 @@ textarea:focus {
     var(--shadow-recess);
 }
 
-/* 开关字段（目前只有 design 的流式）。
-   外框直接复用下面那条 input/select/textarea 规则（见选择器里的 .switch-field），
-   这里只补 flex 排布——复制一份配色迟早会和输入框走散。 */
 .switch-field {
   display: flex;
   align-items: center;
@@ -582,7 +573,6 @@ textarea:focus {
   user-select: none;
 }
 
-/* 勾选框本身要退出上面那条 input 规则给的整行尺寸，回到自然大小 */
 .switch-field input[type='checkbox'] {
   width: 18px;
   min-width: 18px;
@@ -596,7 +586,6 @@ textarea:focus {
   cursor: pointer;
 }
 
-
 .file-picker {
   display: grid;
   grid-template-columns: 104px minmax(0, 1fr);
@@ -609,7 +598,6 @@ textarea:focus {
   box-shadow: var(--shadow-recess);
 }
 
-/* 紧凑上传：仅按钮 + 短文件名，无拉长底槽 */
 .file-picker-compact {
   grid-template-columns: auto minmax(0, 1fr);
   gap: 10px;
@@ -795,10 +783,6 @@ textarea:focus {
   }
 }
 
-/* —— Figure page ——
-   左表单 / 右模板库：等分 + minmax(0) 防溢出
-*/
-/* 左表单(至约束说明) 与 右模板库 底边对齐；生成在说明下方 */
 .figure-layout {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1.05fr);
@@ -830,7 +814,6 @@ textarea:focus {
   gap: var(--stack-gap);
   min-width: 0;
   min-height: 0;
-  /* 不用 overflow:hidden，避免裁掉滚动条轨道上下端 */
   overflow: visible;
   align-self: start;
   box-sizing: border-box;
@@ -871,7 +854,6 @@ textarea:focus {
   scrollbar-color: rgba(140, 148, 158, 0.72) rgba(230, 224, 232, 0.9);
 }
 
-/* WebKit：完整轨道 + 圆角上下端 */
 .template-grid::-webkit-scrollbar {
   width: 10px;
 }
@@ -946,12 +928,6 @@ textarea:focus {
   line-height: 1.2;
 }
 
-/* —— Slide page ——
-   两列对齐：
-   左 = 母版选择 + 预览
-   右 = 页数/附件 + 资料（左缘与页数左缘对齐）
-   约束 / 生成 独占整行
-*/
 .slide-layout {
   display: grid;
   grid-template-columns: minmax(200px, 0.95fr) minmax(0, 1.35fr);
@@ -1068,7 +1044,6 @@ textarea:focus {
   box-shadow: none;
 }
 
-/* —— Result：紧凑进度（圆环 + 直线 + 最新步骤动效） —— */
 .progress-card {
   margin-bottom: var(--space-4);
   padding: var(--space-4);
@@ -1151,13 +1126,11 @@ textarea:focus {
   color: #7a3040;
 }
 
-/* 用户按停止和跑挂了要一眼分得开：失败是警示红，停止是中性灰 */
 .status-pill.cancelled {
   background: rgba(232, 232, 234, 0.95);
   color: #55595f;
 }
 
-/* 计时：等宽数字，秒位每秒变一次也不该让后面的元素左右抖 */
 .progress-elapsed {
   display: inline-flex;
   align-items: baseline;
@@ -1467,8 +1440,6 @@ textarea:focus {
   font-size: 0.9rem;
 }
 
-/* 桌面版这里是 <button>（走原生保存对话框），网页版是 <a download>。
-   两者共用这条规则，所以要显式清掉 button 自带的边框与背景。 */
 .download-button {
   display: inline-grid;
   min-height: 36px;
@@ -1514,9 +1485,7 @@ textarea:focus {
   }
 }
 
-/* —— Responsive ——
-   断点按「工作区内容是否还能舒适双列」设定，避免 minmax(360px) 溢出
-*/@media (max-width: 1280px) {
+@media (max-width: 1280px) {
   .template-grid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
@@ -1594,7 +1563,6 @@ textarea:focus {
     width: 44px;
   }
 
-  /* 窄屏：摘要与徽标让位，只保留标题和箭头 */
   .settings-section-header {
     grid-template-columns: minmax(0, 1fr) auto;
     padding: 0 var(--space-3);

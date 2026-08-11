@@ -1,7 +1,3 @@
-//! Design model 客户端，移植自 `backend/app/adapters.py::DesignClient`。
-//!
-//! 三种协议的差别只在请求体结构与取文本的路径，超时/重试/代理统一由 `net` 承担。
-
 use serde_json::{json, Value};
 
 use crate::core::config::ModelProfile;
@@ -11,11 +7,6 @@ use crate::core::net::{
 };
 use crate::error::AppResult;
 
-/// 流式开关，存在 `output_defaults.stream` 里。
-///
-/// 那本来就是一张自由的请求参数表（`response_format`、`size` 都在里面），
-/// 加一个键不用动配置 schema，老配置读出来就是「关」。
-/// 前端写进去的是字符串 `"true"`，所以布尔和字符串两种字面都认。
 pub fn stream_enabled(profile: &ModelProfile) -> bool {
     match profile.output_defaults.get("stream") {
         Some(Value::Bool(flag)) => *flag,
@@ -27,12 +18,7 @@ pub fn stream_enabled(profile: &ModelProfile) -> bool {
     }
 }
 
-/// 把 SSE 事件流拼回完整文本。
-///
-/// 三种协议的增量字段各不相同，但拼出来的结果必须和非流式那条路取到的文本
-/// 一字不差——下游 `parse_json_response` 对两条路是同一份代码。
 fn collect_stream_text(protocol: &str, events: &[Value]) -> AppResult<String> {
-    // 流里混着错误事件时，那才是真正的失败原因，比「没有文本」有用得多
     if let Some(message) = events.iter().find_map(stream_error_message) {
         return Err(model_error(format!("模型流式响应报错：{message}")));
     }
@@ -50,7 +36,6 @@ fn collect_stream_text(protocol: &str, events: &[Value]) -> AppResult<String> {
                         text.push_str(delta);
                     }
                 }
-                // 有的实现只在收尾事件里给全文，不发增量
                 Some("response.completed") if text.is_empty() => {
                     if let Some(full) = event["response"]["output_text"].as_str() {
                         text.push_str(full);
@@ -78,8 +63,6 @@ fn collect_stream_text(protocol: &str, events: &[Value]) -> AppResult<String> {
     Ok(text)
 }
 
-/// 流中途的错误事件。三家形状不同：OpenAI 兼容网关直接挂一个 `error` 对象，
-/// Responses 用 `type: error` / `response.failed`。
 fn stream_error_message(event: &Value) -> Option<String> {
     let candidate = match event.get("error") {
         Some(value) if !value.is_null() => value,
@@ -98,7 +81,6 @@ fn stream_error_message(event: &Value) -> Option<String> {
         .or_else(|| Some(candidate.to_string()))
 }
 
-/// 随 prompt 一同发给模型的参考图（template / 母版）。
 #[derive(Clone, Debug)]
 pub struct ImageInput {
     pub filename: String,
@@ -211,7 +193,6 @@ impl DesignClient {
                 return Ok(text.to_string());
             }
         }
-        // 回退：遍历 output[].content[] 找 output_text 块
         if let Some(items) = data["output"].as_array() {
             for item in items {
                 if let Some(parts) = item["content"].as_array() {
@@ -343,10 +324,6 @@ impl DesignClient {
         )])
     }
 
-    /// 流式请求，返回原始 SSE 事件；按协议拼文本交给 `collect_stream_text`。
-    ///
-    /// 错误分支和非流式那条刻意保持同一句措辞（`Model request failed: HTTP …`），
-    /// 这样开关流式之后，同一个上游故障在界面上还是同一条信息。
     async fn stream(
         profile: &ModelProfile,
         url: &str,
@@ -411,8 +388,6 @@ mod tests {
         }
     }
 
-    /// 前端把开关写成字符串 `"true"`，配置里也可能是布尔。两种都得认，
-    /// 而没写过这个键的老配置必须是「关」——不然升级一下就悄悄改了请求形状。
     #[test]
     fn stream_flag_accepts_both_literals_and_defaults_off() {
         assert!(!stream_enabled(&profile_with(None)));
@@ -422,7 +397,6 @@ mod tests {
         assert!(!stream_enabled(&profile_with(Some(Value::String("false".into())))));
     }
 
-    /// 三种协议的增量字段各不相同，拼出来必须和非流式取到的文本一致。
     #[test]
     fn collects_text_from_each_protocol() {
         let chat = events(&[
@@ -450,8 +424,6 @@ mod tests {
         assert_eq!(collect_stream_text("anthropic_messages", &anthropic).unwrap(), "图例");
     }
 
-    /// 有的实现不发增量，只在收尾事件里给全文。这时也得取到，
-    /// 不然界面上是「没有返回文本」，而上游其实成功了还计了费。
     #[test]
     fn falls_back_to_the_completed_event_when_no_deltas_arrive() {
         let only_completed = events(&[
@@ -461,8 +433,6 @@ mod tests {
         assert_eq!(collect_stream_text("openai_responses", &only_completed).unwrap(), "全文");
     }
 
-    /// 流中途报错时，报的必须是上游那句话。只说「没有文本」会把
-    /// 配额用尽、模型名写错这类一眼能改的问题藏起来。
     #[test]
     fn surfaces_an_error_event_instead_of_an_empty_result() {
         let failed = events(&[
@@ -477,8 +447,6 @@ mod tests {
         assert!(error.message.contains("model not found"), "实际：{}", error.message);
     }
 
-    /// 上游不支持 stream 时常见的表现是回一个空流。这时候要指路到开关，
-    /// 否则用户只看到「没有返回文本」，不知道去哪关。
     #[test]
     fn empty_stream_points_at_the_toggle() {
         let error = collect_stream_text("openai_chat", &[]).expect_err("空流应当报错");
