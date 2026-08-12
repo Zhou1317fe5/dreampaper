@@ -23,7 +23,11 @@ impl ValidationError {
 
 impl From<ValidationError> for AppError {
     fn from(error: ValidationError) -> Self {
-        let code = if error.is_schema() { "design_schema" } else { "design_value" };
+        let code = if error.is_schema() {
+            "design_schema"
+        } else {
+            "design_value"
+        };
         AppError::new(code, error.message())
     }
 }
@@ -70,8 +74,7 @@ pub const PLOT_SPEC_FIELDS: [&str; 8] = [
     "data_integrity_rules",
 ];
 
-pub const FIGURE_ASPECT_RATIOS: [&str; 7] =
-    ["inherit", "16:9", "4:3", "1:1", "3:2", "2:3", "9:16"];
+pub const FIGURE_ASPECT_RATIOS: [&str; 7] = ["inherit", "16:9", "4:3", "1:1", "3:2", "2:3", "9:16"];
 
 const FORBIDDEN_TEMPLATE_COPY_PHRASES: [&str; 6] = [
     "copy the template",
@@ -101,7 +104,10 @@ pub fn require_fields(data: &Value, fields: &[&str], label: &str) -> Checked<()>
     if missing.is_empty() {
         Ok(())
     } else {
-        schema(format!("{label} missing required fields: {}", missing.join(", ")))
+        schema(format!(
+            "{label} missing required fields: {}",
+            missing.join(", ")
+        ))
     }
 }
 
@@ -124,6 +130,18 @@ pub fn implement_prompt(design: &Value) -> Checked<String> {
     }
 }
 
+pub fn finalized_implement_prompt(design: &Value) -> Checked<String> {
+    let prompt = implement_prompt(design)?;
+    Ok(format!(
+        "{prompt}\n\nQUALITY AND TEMPLATE BOUNDARY / 质量与模板边界：\n\
+         - Publication quality: produce a polished academic paper figure with clear hierarchy and professional visual finish.\n\
+         - Faithfulness: preserve the user-provided operations and relationships; do not hallucinate unsupported content.\n\
+         - Conciseness: use short labels and visual abstraction without dropping required leaf-level steps.\n\
+         - Readability: keep typography legible, contrast strong, spacing clear, and arrows unambiguous.\n\
+         - Template boundary: use selected templates only as style, density, and layout references. Never copy, trace, edit, or use a template image as the drawing base."
+    ))
+}
+
 fn keyword_groups_present(text: &str, groups: &[(&str, &[&str])]) -> usize {
     let lowered = text.to_lowercase();
     groups
@@ -139,13 +157,43 @@ fn keyword_groups_present(text: &str, groups: &[(&str, &[&str])]) -> usize {
 pub fn validate_no_copy_request(prompt: &str) -> Checked<()> {
     let lowered = prompt.to_lowercase();
     let negations = [
-        "do not ", "don't ", "dont ", "never ", " no ", "not ", "avoid ", "must not ", "cannot ",
-        "can't ", "without ", "rather than ", "instead of ", "forbid", "forbidden", "prohibit",
-        "refrain", "禁止", "不要", "不得", "不能", "不可", "严禁", "避免", "勿",
+        "do not ",
+        "don't ",
+        "dont ",
+        "never ",
+        " no ",
+        "not ",
+        "avoid ",
+        "must not ",
+        "cannot ",
+        "can't ",
+        "without ",
+        "rather than ",
+        "instead of ",
+        "forbid",
+        "forbidden",
+        "prohibit",
+        "refrain",
+        "禁止",
+        "不要",
+        "不得",
+        "不能",
+        "不可",
+        "严禁",
+        "避免",
+        "勿",
     ];
     let allow_context = [
-        "reference only", "as reference", "style only", "layout only", "not as base", "not a base",
-        "not base image", "inspiration only", "few-shot", "few shot",
+        "reference only",
+        "as reference",
+        "style only",
+        "layout only",
+        "not as base",
+        "not a base",
+        "not base image",
+        "inspiration only",
+        "few-shot",
+        "few shot",
     ];
     let splitter = Regex::new(r"(?:[\.\!\?\n；;。！？])").expect("valid regex");
 
@@ -160,9 +208,7 @@ pub fn validate_no_copy_request(prompt: &str) -> Checked<()> {
                 let absolute = start + index;
                 let before = format!(" {}", &sentence[..absolute]);
                 let negated = negations.iter().any(|neg| before.contains(neg))
-                    || negations
-                        .iter()
-                        .any(|neg| sentence.starts_with(neg.trim()));
+                    || negations.iter().any(|neg| sentence.starts_with(neg.trim()));
                 let contextual_allow = allow_context.iter().any(|token| sentence.contains(token))
                     && negations.iter().any(|neg| sentence.contains(neg));
                 if !negated && !contextual_allow {
@@ -293,7 +339,11 @@ pub fn validate_design_content_coverage(design: &Value, title: &str, section: &s
         .filter(|item| !item_grounded_in_source(item, &source))
         .collect();
     if ungrounded.len() > std::cmp::max(2, inventory.len() / 3) {
-        let listed: Vec<&str> = ungrounded.iter().take(10).map(|item| item.as_str()).collect();
+        let listed: Vec<&str> = ungrounded
+            .iter()
+            .take(10)
+            .map(|item| item.as_str())
+            .collect();
         return schema(format!(
             "content_inventory contains too many items not grounded in the user section. \
              Fix or remove: {}",
@@ -318,9 +368,16 @@ pub fn validate_design_content_coverage(design: &Value, title: &str, section: &s
     }
 
     let lowered = prompt.to_lowercase();
-    let detail_ok = ["module detail", "模块细节", "per stage", "各阶段", "子模块", "leaf module"]
-        .iter()
-        .any(|marker| lowered.contains(marker) || prompt.contains(marker));
+    let detail_ok = [
+        "module detail",
+        "模块细节",
+        "per stage",
+        "各阶段",
+        "子模块",
+        "leaf module",
+    ]
+    .iter()
+    .any(|marker| lowered.contains(marker) || prompt.contains(marker));
     if !detail_ok && (!prompt.contains("阶段") || prompt.chars().count() < 450) {
         return schema(
             "implement_prompt must include a MODULE DETAIL / 模块细节 section listing leaf steps per stage",
@@ -348,23 +405,62 @@ pub fn validate_paper_design(design: &Value) -> Checked<()> {
     }
     match figure.get("visible_text") {
         Some(Value::Array(items))
-            if items
-                .iter()
-                .all(|item| item.as_str().is_some_and(|text| text.trim().chars().count() <= 80)) => {}
+            if items.iter().all(|item| {
+                item.as_str()
+                    .is_some_and(|text| text.trim().chars().count() <= 80)
+            }) => {}
         _ => return value_err("Paper figure visible_text must be short label strings"),
     }
     validate_no_copy_request(&prompt)?;
 
     let groups: [(&str, &[&str]); 5] = [
-        ("publication", &["publication", "academic", "paper", "论文", "出版"]),
-        ("faithfulness", &["faithful", "faithfulness", "grounded", "no hallucination", "忠实", "不虚构"]),
-        ("conciseness", &["concise", "abstraction", "short label", "简洁", "抽象", "短标签"]),
-        ("readability", &["readable", "legible", "contrast", "可读", "对比"]),
-        ("template_boundary", &["template", "reference", "not copy", "参考", "模板"]),
+        (
+            "publication",
+            &["publication", "academic", "paper", "论文", "出版"],
+        ),
+        (
+            "faithfulness",
+            &[
+                "faithful",
+                "faithfulness",
+                "grounded",
+                "no hallucination",
+                "忠实",
+                "不虚构",
+            ],
+        ),
+        (
+            "conciseness",
+            &[
+                "concise",
+                "abstraction",
+                "short label",
+                "简洁",
+                "抽象",
+                "短标签",
+            ],
+        ),
+        (
+            "readability",
+            &["readable", "legible", "contrast", "可读", "对比"],
+        ),
+        (
+            "template_boundary",
+            &["template", "reference", "not copy", "参考", "模板"],
+        ),
     ];
-    if keyword_groups_present(&prompt, &groups) < 4 {
+    let quality_context = serde_json::to_string(&serde_json::json!({
+        "implement_prompt": prompt,
+        "semantic_constraints": figure.get("semantic_constraints"),
+        "visual_constraints": figure.get("visual_constraints"),
+        "forbidden_errors": figure.get("forbidden_errors"),
+        "quality_rubric": figure.get("quality_rubric"),
+        "template_usage": figure.get("template_usage"),
+    }))
+    .unwrap_or_else(|_| prompt.clone());
+    if keyword_groups_present(&quality_context, &groups) < 4 {
         return schema(
-            "Paper figure implement_prompt must cover publication quality, faithfulness, conciseness, readability, and template boundary",
+            "Paper figure quality fields must cover publication quality, faithfulness, conciseness, readability, and template boundary",
         );
     }
 
@@ -400,7 +496,10 @@ pub fn validate_paper_design(design: &Value) -> Checked<()> {
         }
         for (index, connection) in connections.iter().enumerate() {
             if !connection.is_object() {
-                return schema(format!("Diagram connection {} must be an object", index + 1));
+                return schema(format!(
+                    "Diagram connection {} must be an object",
+                    index + 1
+                ));
             }
             require_fields(
                 connection,
@@ -408,16 +507,33 @@ pub fn validate_paper_design(design: &Value) -> Checked<()> {
                 &format!("Diagram connection {}", index + 1),
             )?;
         }
-        let grouping = spec["grouping_hierarchy"].as_str().unwrap_or_default().trim();
+        let grouping = spec["grouping_hierarchy"]
+            .as_str()
+            .unwrap_or_default()
+            .trim();
         if grouping.chars().count() < 12 {
             return schema("Diagram grouping_hierarchy must describe multi-stage/lane structure");
         }
         let markers = [
-            "stage", "pipeline", "multi", "branch", "group", "layer", "阶段", "支路", "分层",
-            "模块", "流程", "module detail", "模块细节",
+            "stage",
+            "pipeline",
+            "multi",
+            "branch",
+            "group",
+            "layer",
+            "阶段",
+            "支路",
+            "分层",
+            "模块",
+            "流程",
+            "module detail",
+            "模块细节",
         ];
         let lowered = prompt.to_lowercase();
-        if !markers.iter().any(|m| lowered.contains(m) || prompt.contains(m)) {
+        if !markers
+            .iter()
+            .any(|m| lowered.contains(m) || prompt.contains(m))
+        {
             return schema(
                 "implement_prompt must describe multi-stage/hierarchical flowchart layout \
                  with leaf module details from the user section",
@@ -446,7 +562,9 @@ pub fn validate_paper_design(design: &Value) -> Checked<()> {
         return Ok(());
     }
 
-    schema("Paper figure visual_type must be diagram, workflow, comparison, mechanism, plot, or chart")
+    schema(
+        "Paper figure visual_type must be diagram, workflow, comparison, mechanism, plot, or chart",
+    )
 }
 
 pub fn validate_structure_plan(data: &Value) -> Checked<Value> {
@@ -472,7 +590,12 @@ pub fn validate_structure_plan(data: &Value) -> Checked<Value> {
         ],
         "Structure plan",
     )?;
-    if plan["lanes_or_stages"].as_array().map(Vec::len).unwrap_or(0) < 2 {
+    if plan["lanes_or_stages"]
+        .as_array()
+        .map(Vec::len)
+        .unwrap_or(0)
+        < 2
+    {
         return schema("Structure plan lanes_or_stages needs at least 2 stages/lanes");
     }
     if plan["module_slots"].as_array().map(Vec::len).unwrap_or(0) < 6 {
@@ -480,10 +603,22 @@ pub fn validate_structure_plan(data: &Value) -> Checked<Value> {
             "Structure plan module_slots needs at least 6 abstract slots for template-like density",
         );
     }
-    if plan["connection_slots"].as_array().map(Vec::len).unwrap_or(0) < 5 {
+    if plan["connection_slots"]
+        .as_array()
+        .map(Vec::len)
+        .unwrap_or(0)
+        < 5
+    {
         return schema("Structure plan connection_slots needs at least 5 abstract edges");
     }
-    if plan["layout_skeleton"].as_str().unwrap_or_default().trim().chars().count() < 80 {
+    if plan["layout_skeleton"]
+        .as_str()
+        .unwrap_or_default()
+        .trim()
+        .chars()
+        .count()
+        < 80
+    {
         return schema("Structure plan layout_skeleton is too short");
     }
     Ok(plan.clone())
@@ -558,13 +693,49 @@ pub(crate) mod tests {
         validate_paper_design(&valid_diagram_design()).expect("valid diagram should pass");
 
         let mut missing_spec = valid_diagram_design();
-        missing_spec["figure"].as_object_mut().unwrap().remove("diagram_spec");
-        assert!(validate_paper_design(&missing_spec).unwrap_err().is_schema());
+        missing_spec["figure"]
+            .as_object_mut()
+            .unwrap()
+            .remove("diagram_spec");
+        assert!(validate_paper_design(&missing_spec)
+            .unwrap_err()
+            .is_schema());
 
         let mut copy_request = valid_diagram_design();
-        copy_request["figure"]["implement_prompt"] =
-            json!(long_figure_prompt("Copy the template exactly as a base image."));
-        assert!(validate_paper_design(&copy_request).unwrap_err().is_schema());
+        copy_request["figure"]["implement_prompt"] = json!(long_figure_prompt(
+            "Copy the template exactly as a base image."
+        ));
+        assert!(validate_paper_design(&copy_request)
+            .unwrap_err()
+            .is_schema());
+    }
+
+    #[test]
+    fn quality_requirements_can_live_in_structured_fields() {
+        let mut design = valid_diagram_design();
+        design["figure"]["implement_prompt"] = json!(
+            "Create a detailed multi-stage system diagram. MODULE DETAIL / 模块细节: arrange every leaf module stage by stage, retain all named components and route solid and dashed arrows between the specified groups. Use a clean white canvas with consistent box geometry, balanced spacing, aligned lanes, clear stage headers, and enough room for every visible label. Keep the complete operational sequence and render all connections exactly as listed in diagram_spec."
+        );
+
+        validate_paper_design(&design)
+            .expect("quality_rubric and constraint fields should satisfy quality validation");
+    }
+
+    #[test]
+    fn finalized_prompt_always_carries_quality_guardrails() {
+        let design = valid_diagram_design();
+        let prompt = finalized_implement_prompt(&design).expect("prompt should finalize");
+
+        for marker in [
+            "Publication quality",
+            "Faithfulness",
+            "Conciseness",
+            "Readability",
+            "Template boundary",
+            "Never copy",
+        ] {
+            assert!(prompt.contains(marker), "missing final guardrail: {marker}");
+        }
     }
 
     #[test]
@@ -592,14 +763,20 @@ pub(crate) mod tests {
         ] {
             let item = normalize_inventory_item(&json!(raw));
             assert!(item.contains(' '), "归一化不应删除空格: {item}");
-            assert!(item_grounded_in_source(&item, source), "{raw} 应判定为 grounded");
+            assert!(
+                item_grounded_in_source(&item, source),
+                "{raw} 应判定为 grounded"
+            );
         }
     }
 
     #[test]
     fn chinese_inventory_tolerates_inserted_spaces() {
         let item = normalize_inventory_item(&json!("混合 检索"));
-        assert!(item_grounded_in_source(&item, "本文采用混合检索与交叉重排流程"));
+        assert!(item_grounded_in_source(
+            &item,
+            "本文采用混合检索与交叉重排流程"
+        ));
         assert!(item_present_in_output(&item, "模块包含混合检索"));
     }
 

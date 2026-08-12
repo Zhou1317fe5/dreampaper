@@ -174,7 +174,8 @@ impl FigureRun<'_> {
         })
         .await?;
 
-        let implement_prompt = validate::implement_prompt(&design.parsed).map_err(AppError::from)?;
+        let implement_prompt =
+            validate::finalized_implement_prompt(&design.parsed).map_err(AppError::from)?;
 
         stage("paper_implement", "调用 implement model 生成图片");
         let image_b64 = ImplementClient::generate(
