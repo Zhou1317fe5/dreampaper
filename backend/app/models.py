@@ -48,7 +48,7 @@ class AppConfig(BaseModel):
     active_design_profile: str = "design-default"
     active_implement_profile: str = "implement-default"
     active_search_profile: str = "search-default"
-    proxy_url: str | None = "http://127.0.0.1:7890"
+    proxy_url: str | None = None
     ppt_page_plan_concurrency: int | None = Field(default=None, ge=1, le=20)
     ppt_image_concurrency: int | None = Field(default=None, ge=1, le=20)
     model_profiles: list[ModelProfile] = Field(default_factory=list)
@@ -134,4 +134,3 @@ class JobRecord(BaseModel):
     images: list[JobImage] = Field(default_factory=list)
     events: list[JobEvent] = Field(default_factory=list)
     internal_artifacts: dict[str, Any] = Field(default_factory=dict)
-

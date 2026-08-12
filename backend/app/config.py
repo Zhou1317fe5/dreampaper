@@ -11,9 +11,6 @@ def app_home() -> Path:
     return Path(os.getenv("DREAMPAPER_HOME", "~/.dreampaper")).expanduser()
 
 
-DEFAULT_PROXY_URL = "http://127.0.0.1:7890"
-
-
 def normalize_proxy_url(proxy_url: str | None) -> str | None:
     value = (proxy_url or "").strip()
     if not value:
@@ -41,7 +38,7 @@ def default_search_profile() -> ModelProfile:
 
 def default_config() -> AppConfig:
     return AppConfig(
-        proxy_url=DEFAULT_PROXY_URL,
+        proxy_url=None,
         active_search_profile="search-default",
         model_profiles=[
             ModelProfile(
@@ -188,4 +185,3 @@ class ConfigStore:
             has_api_key=bool(profile.api_key),
             api_key_hint=hint,
         )
-

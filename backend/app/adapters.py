@@ -105,6 +105,21 @@ def create_async_client(timeout: httpx.Timeout, proxy_url: str | None = None) ->
     return httpx.AsyncClient(timeout=timeout)
 
 
+def format_transport_error(error: httpx.TransportError, proxy_url: str | None = None) -> str:
+    error_type = error.__class__.__name__
+    if proxy_url:
+        return (
+            "模型请求网络错误：无法通过已配置代理建立连接。"
+            "请检查设置中的代理地址和代理服务，或清空代理后直连。"
+            f"（{error_type}）"
+        )
+    return (
+        "模型请求网络错误：无法连接模型服务。"
+        "请检查模型 Base URL、DNS 和网络连接。"
+        f"（{error_type}）"
+    )
+
+
 def retry_backoff_seconds(attempt: int, status_code: int | None = None) -> float:
     base = min(2**attempt, MAX_BACKOFF_SECONDS)
     # 网关 502/503 往往表示上游仍在出图或短暂过载，多等一会再重试
@@ -171,7 +186,7 @@ async def post_json_with_retries(
             "同步制图接口可能需要更长时间，请在 Model 配置中提高 implement 超时。"
         ) from last_error
     if last_error is not None:
-        raise ModelAdapterError(f"模型请求网络错误：{last_error.__class__.__name__}") from last_error
+        raise ModelAdapterError(format_transport_error(last_error, proxy_url)) from last_error
     if last_response is not None:
         return last_response
     raise ModelAdapterError("模型请求失败：未收到有效响应")
@@ -386,7 +401,7 @@ class ImplementClient:
         if isinstance(last_error, httpx.TimeoutException):
             raise ModelAdapterError(f"模型请求超时：读超时 {int(timeout.read)} 秒内未收到完整响应") from last_error
         if last_error is not None:
-            raise ModelAdapterError(f"模型请求网络错误：{last_error.__class__.__name__}") from last_error
+            raise ModelAdapterError(format_transport_error(last_error, proxy_url)) from last_error
         if last_response is not None:
             return last_response
         raise ModelAdapterError("模型请求失败：未收到有效响应")
