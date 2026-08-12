@@ -2,8 +2,8 @@ use serde_json::{json, Value};
 
 use crate::core::config::ModelProfile;
 use crate::core::net::{
-    data_url, model_error, normalize_base_url, post_json_with_retries, post_sse_with_retries,
-    require_api_key, PostOptions,
+    data_url, model_error, model_http_error, model_profile_error, normalize_base_url,
+    post_json_with_retries, post_sse_with_retries, require_api_key, PostOptions,
 };
 use crate::error::AppResult;
 
@@ -106,13 +106,37 @@ impl DesignClient {
         };
         match protocol {
             "openai_chat" => {
-                Self::openai_chat(profile, system_prompt, user_prompt, images, timeout_seconds, proxy_url).await
+                Self::openai_chat(
+                    profile,
+                    system_prompt,
+                    user_prompt,
+                    images,
+                    timeout_seconds,
+                    proxy_url,
+                )
+                .await
             }
             "openai_responses" => {
-                Self::openai_responses(profile, system_prompt, user_prompt, images, timeout_seconds, proxy_url).await
+                Self::openai_responses(
+                    profile,
+                    system_prompt,
+                    user_prompt,
+                    images,
+                    timeout_seconds,
+                    proxy_url,
+                )
+                .await
             }
             "anthropic_messages" => {
-                Self::anthropic_messages(profile, system_prompt, user_prompt, images, timeout_seconds, proxy_url).await
+                Self::anthropic_messages(
+                    profile,
+                    system_prompt,
+                    user_prompt,
+                    images,
+                    timeout_seconds,
+                    proxy_url,
+                )
+                .await
             }
             other => Err(model_error(format!("Unsupported design protocol: {other}"))),
         }
@@ -147,7 +171,15 @@ impl DesignClient {
         });
         if stream_enabled(profile) {
             payload["stream"] = Value::Bool(true);
-            let events = Self::stream(profile, &url, &payload, Self::bearer(profile)?, timeout_seconds, proxy_url).await?;
+            let events = Self::stream(
+                profile,
+                &url,
+                &payload,
+                Self::bearer(profile)?,
+                timeout_seconds,
+                proxy_url,
+            )
+            .await?;
             return collect_stream_text("openai_chat", &events);
         }
         let data = Self::post(profile, &url, &payload, timeout_seconds, proxy_url).await?;
@@ -184,7 +216,15 @@ impl DesignClient {
         });
         if stream_enabled(profile) {
             payload["stream"] = Value::Bool(true);
-            let events = Self::stream(profile, &url, &payload, Self::bearer(profile)?, timeout_seconds, proxy_url).await?;
+            let events = Self::stream(
+                profile,
+                &url,
+                &payload,
+                Self::bearer(profile)?,
+                timeout_seconds,
+                proxy_url,
+            )
+            .await?;
             return collect_stream_text("openai_responses", &events);
         }
         let data = Self::post(profile, &url, &payload, timeout_seconds, proxy_url).await?;
@@ -206,7 +246,9 @@ impl DesignClient {
                 }
             }
         }
-        Err(model_error("OpenAI Responses result did not contain output text"))
+        Err(model_error(
+            "OpenAI Responses result did not contain output text",
+        ))
     }
 
     async fn anthropic_messages(
@@ -234,7 +276,7 @@ impl DesignClient {
         }));
         let mut payload = json!({
             "model": profile.model,
-            "max_tokens": 4096,
+            "max_tokens": design_max_tokens(profile),
             "system": system_prompt,
             "messages": [{"role": "user", "content": content}]
         });
@@ -265,11 +307,13 @@ impl DesignClient {
         )
         .await?;
         if outcome.status >= 400 {
-            return Err(model_error(format!(
-                "Model request failed: HTTP {} {}",
+            return Err(model_http_error(
+                profile,
+                &url,
+                "Design",
                 outcome.status,
-                outcome.body.chars().take(400).collect::<String>()
-            )));
+                &outcome.body,
+            ));
         }
         let data: Value = serde_json::from_str(&outcome.body)
             .map_err(|error| model_error(format!("Anthropic 响应不是 JSON: {error}")))?;
@@ -307,11 +351,13 @@ impl DesignClient {
         )
         .await?;
         if outcome.status >= 400 {
-            return Err(model_error(format!(
-                "Model request failed: HTTP {} {}",
+            return Err(model_http_error(
+                profile,
+                url,
+                "Design",
                 outcome.status,
-                outcome.body.chars().take(400).collect::<String>()
-            )));
+                &outcome.body,
+            ));
         }
         serde_json::from_str(&outcome.body)
             .map_err(|error| model_error(format!("模型响应不是 JSON: {error}")))
@@ -345,11 +391,13 @@ impl DesignClient {
         )
         .await?;
         if outcome.status >= 400 {
-            return Err(model_error(format!(
-                "Model request failed: HTTP {} {}",
+            return Err(model_http_error(
+                profile,
+                url,
+                "Design",
                 outcome.status,
-                outcome.body.chars().take(400).collect::<String>()
-            )));
+                &outcome.body,
+            ));
         }
         Ok(outcome.events)
     }
@@ -392,9 +440,25 @@ mod tests {
     fn stream_flag_accepts_both_literals_and_defaults_off() {
         assert!(!stream_enabled(&profile_with(None)));
         assert!(stream_enabled(&profile_with(Some(Value::Bool(true)))));
-        assert!(stream_enabled(&profile_with(Some(Value::String("true".into())))));
-        assert!(stream_enabled(&profile_with(Some(Value::String(" ON ".into())))));
-        assert!(!stream_enabled(&profile_with(Some(Value::String("false".into())))));
+        assert!(stream_enabled(&profile_with(Some(Value::String(
+            "true".into()
+        )))));
+        assert!(stream_enabled(&profile_with(Some(Value::String(
+            " ON ".into()
+        )))));
+        assert!(!stream_enabled(&profile_with(Some(Value::String(
+            "false".into()
+        )))));
+    }
+
+    #[test]
+    fn design_max_tokens_defaults_high_and_accepts_an_override() {
+        let mut profile = profile_with(None);
+        assert_eq!(design_max_tokens(&profile), 8192);
+        profile
+            .output_defaults
+            .insert("max_tokens".to_string(), Value::String("12000".to_string()));
+        assert_eq!(design_max_tokens(&profile), 12000);
     }
 
     #[test]
@@ -405,7 +469,10 @@ mod tests {
             r#"{"choices":[{"delta":{"content":":1}"}}]}"#,
             r#"{"choices":[{"delta":{},"finish_reason":"stop"}]}"#,
         ]);
-        assert_eq!(collect_stream_text("openai_chat", &chat).unwrap(), "{\"layout\":1}");
+        assert_eq!(
+            collect_stream_text("openai_chat", &chat).unwrap(),
+            "{\"layout\":1}"
+        );
 
         let responses = events(&[
             r#"{"type":"response.created"}"#,
@@ -413,7 +480,10 @@ mod tests {
             r#"{"type":"response.output_text.delta","delta":"后半"}"#,
             r#"{"type":"response.completed"}"#,
         ]);
-        assert_eq!(collect_stream_text("openai_responses", &responses).unwrap(), "前半后半");
+        assert_eq!(
+            collect_stream_text("openai_responses", &responses).unwrap(),
+            "前半后半"
+        );
 
         let anthropic = events(&[
             r#"{"type":"message_start"}"#,
@@ -430,7 +500,10 @@ mod tests {
             r#"{"type":"response.created"}"#,
             r#"{"type":"response.completed","response":{"output_text":"全文"}}"#,
         ]);
-        assert_eq!(collect_stream_text("openai_responses", &only_completed).unwrap(), "全文");
+        assert_eq!(
+            collect_stream_text("openai_responses", &only_completed).unwrap(),
+            "全文"
+        );
     }
 
     #[test]
@@ -440,11 +513,22 @@ mod tests {
             r#"{"error":{"message":"insufficient quota"}}"#,
         ]);
         let error = collect_stream_text("openai_chat", &failed).expect_err("错误事件应当报错");
-        assert!(error.message.contains("insufficient quota"), "实际：{}", error.message);
+        assert!(
+            error.message.contains("insufficient quota"),
+            "实际：{}",
+            error.message
+        );
 
-        let refused = events(&[r#"{"type":"response.failed","response":{"error":{"message":"model not found"}}}"#]);
-        let error = collect_stream_text("openai_responses", &refused).expect_err("失败事件应当报错");
-        assert!(error.message.contains("model not found"), "实际：{}", error.message);
+        let refused = events(&[
+            r#"{"type":"response.failed","response":{"error":{"message":"model not found"}}}"#,
+        ]);
+        let error =
+            collect_stream_text("openai_responses", &refused).expect_err("失败事件应当报错");
+        assert!(
+            error.message.contains("model not found"),
+            "实际：{}",
+            error.message
+        );
     }
 
     #[test]
