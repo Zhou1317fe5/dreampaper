@@ -18,6 +18,19 @@ pub fn stream_enabled(profile: &ModelProfile) -> bool {
     }
 }
 
+fn design_max_tokens(profile: &ModelProfile) -> u64 {
+    profile
+        .output_defaults
+        .get("max_tokens")
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|text| text.trim().parse().ok()))
+        })
+        .unwrap_or(8192)
+        .clamp(256, 32768)
+}
+
 fn collect_stream_text(protocol: &str, events: &[Value]) -> AppResult<String> {
     if let Some(message) = events.iter().find_map(stream_error_message) {
         return Err(model_error(format!("模型流式响应报错：{message}")));
@@ -58,6 +71,16 @@ fn collect_stream_text(protocol: &str, events: &[Value]) -> AppResult<String> {
     if text.trim().is_empty() {
         return Err(model_error(
             "模型流式响应没有返回文本。若上游不支持 stream，请在 Model 配置里关掉流式。",
+        ));
+    }
+    if protocol == "anthropic_messages"
+        && events.iter().any(|event| {
+            event["type"].as_str() == Some("message_delta")
+                && event["delta"]["stop_reason"].as_str() == Some("max_tokens")
+        })
+    {
+        return Err(model_error(
+            "Anthropic 响应达到 max_tokens 后被截断。请提高 Design 的 max_tokens。",
         ));
     }
     Ok(text)
@@ -291,7 +314,8 @@ impl DesignClient {
         ];
         if stream_enabled(profile) {
             payload["stream"] = Value::Bool(true);
-            let events = Self::stream(profile, &url, &payload, headers, timeout_seconds, proxy_url).await?;
+            let events =
+                Self::stream(profile, &url, &payload, headers, timeout_seconds, proxy_url).await?;
             return collect_stream_text("anthropic_messages", &events);
         }
         let outcome = post_json_with_retries(
@@ -328,6 +352,39 @@ impl DesignClient {
                     .join("\n")
             })
             .unwrap_or_default();
+        if data["stop_reason"].as_str() == Some("max_tokens") {
+            return Err(model_profile_error(
+                profile,
+                &url,
+                "model_output_truncated",
+                format!(
+                    "Anthropic 响应达到 max_tokens={} 后被截断，无法保证 JSON 完整。",
+                    design_max_tokens(profile)
+                ),
+                None,
+                "请在 Design 高级参数中提高 max_tokens，或减少一次请求的上下文。",
+            ));
+        }
+        if text.trim().is_empty() {
+            let content_types = data["content"]
+                .as_array()
+                .map(|parts| {
+                    parts
+                        .iter()
+                        .filter_map(|part| part["type"].as_str())
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                })
+                .unwrap_or_else(|| "missing content array".to_string());
+            return Err(model_profile_error(
+                profile,
+                &url,
+                "model_empty_output",
+                format!("Anthropic 响应没有可用文本（content types: {content_types}）。"),
+                None,
+                "请检查该中转服务是否完整兼容 Anthropic Messages 响应格式，或稍后重试。",
+            ));
+        }
         Ok(text)
     }
 
@@ -491,7 +548,10 @@ mod tests {
             r#"{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"忽略"}}"#,
             r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"例"}}"#,
         ]);
-        assert_eq!(collect_stream_text("anthropic_messages", &anthropic).unwrap(), "图例");
+        assert_eq!(
+            collect_stream_text("anthropic_messages", &anthropic).unwrap(),
+            "图例"
+        );
     }
 
     #[test]
@@ -535,5 +595,16 @@ mod tests {
     fn empty_stream_points_at_the_toggle() {
         let error = collect_stream_text("openai_chat", &[]).expect_err("空流应当报错");
         assert!(error.message.contains("stream"), "实际：{}", error.message);
+    }
+
+    #[test]
+    fn truncated_anthropic_stream_is_not_returned_as_complete_json() {
+        let truncated = events(&[
+            r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"{\"partial\":"}}"#,
+            r#"{"type":"message_delta","delta":{"stop_reason":"max_tokens"}}"#,
+        ]);
+        let error =
+            collect_stream_text("anthropic_messages", &truncated).expect_err("截断输出必须报错");
+        assert!(error.message.contains("max_tokens"));
     }
 }

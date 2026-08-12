@@ -580,15 +580,20 @@ pub fn parse_json_response(text: &str) -> AppResult<Value> {
     if let Ok(value) = serde_json::from_str::<Value>(cleaned) {
         return Ok(value);
     }
-    let start = cleaned.find('{');
-    let end = cleaned.rfind('}');
-    if let (Some(start), Some(end)) = (start, end) {
-        if end > start {
-            return serde_json::from_str::<Value>(&cleaned[start..=end])
-                .map_err(|error| model_error(format!("模型返回的不是合法 JSON: {error}")));
+    for (start, ch) in cleaned.char_indices() {
+        if !matches!(ch, '{' | '[') {
+            continue;
+        }
+        let mut deserializer = serde_json::Deserializer::from_str(&cleaned[start..]);
+        if let Ok(value) = Value::deserialize(&mut deserializer) {
+            return Ok(value);
         }
     }
-    Err(model_error("模型返回的不是合法 JSON"))
+    let direct_error =
+        serde_json::from_str::<Value>(cleaned).expect_err("direct parse was already checked above");
+    Err(model_error(format!(
+        "模型返回的不是合法 JSON: {direct_error}"
+    )))
 }
 
 #[cfg(test)]
@@ -698,11 +703,19 @@ mod tests {
         let mut buffer = Vec::new();
         buffer.extend_from_slice(b"data: {\"a\":1}\n\ndata: {\"b\"");
         let first = drain_sse_events(&mut buffer);
-        assert_eq!(first, vec!["{\"a\":1}".to_string()], "完整的一行要立刻交出去");
+        assert_eq!(
+            first,
+            vec!["{\"a\":1}".to_string()],
+            "完整的一行要立刻交出去"
+        );
 
         buffer.extend_from_slice(b":2}\n\n");
         let second = drain_sse_events(&mut buffer);
-        assert_eq!(second, vec!["{\"b\":2}".to_string()], "跨 chunk 的后半截要接上");
+        assert_eq!(
+            second,
+            vec!["{\"b\":2}".to_string()],
+            "跨 chunk 的后半截要接上"
+        );
     }
 
     #[test]
@@ -711,17 +724,26 @@ mod tests {
         let line = "data: {\"t\":\"图\"}\n".as_bytes().to_vec();
         let (head, tail) = line.split_at(line.len() - 3);
         buffer.extend_from_slice(head);
-        assert!(drain_sse_events(&mut buffer).is_empty(), "没收到换行就不该交出去");
+        assert!(
+            drain_sse_events(&mut buffer).is_empty(),
+            "没收到换行就不该交出去"
+        );
 
         buffer.extend_from_slice(tail);
-        assert_eq!(drain_sse_events(&mut buffer), vec!["{\"t\":\"图\"}".to_string()]);
+        assert_eq!(
+            drain_sse_events(&mut buffer),
+            vec!["{\"t\":\"图\"}".to_string()]
+        );
     }
 
     #[test]
     fn sse_framing_skips_terminators_and_comments() {
         let mut buffer =
             b": ping\r\nevent: message\r\ndata: {\"ok\":true}\r\n\r\ndata: [DONE]\r\n\r\n".to_vec();
-        assert_eq!(drain_sse_events(&mut buffer), vec!["{\"ok\":true}".to_string()]);
+        assert_eq!(
+            drain_sse_events(&mut buffer),
+            vec!["{\"ok\":true}".to_string()]
+        );
     }
 
     #[test]

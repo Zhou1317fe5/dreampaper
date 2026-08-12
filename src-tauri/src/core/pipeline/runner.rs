@@ -4,7 +4,7 @@ use serde_json::Value;
 
 use crate::core::config::ModelProfile;
 use crate::core::model::design::{DesignClient, ImageInput};
-use crate::core::net::parse_json_response;
+use crate::core::net::{model_error, model_profile_error, normalize_base_url, parse_json_response};
 use crate::core::pipeline::validate::ValidationError;
 use crate::error::{AppError, AppResult};
 
@@ -18,6 +18,14 @@ fn excerpt(text: &str, limit: usize) -> String {
 pub trait DesignGenerator {
     fn user_prompt(&self) -> &str;
     fn generate(&self, prompt: String) -> impl Future<Output = AppResult<String>> + Send;
+
+    fn invalid_json_error(&self, _parse_error: &str, output: &str) -> AppError {
+        model_error(format!(
+            "模型多次返回无效 JSON（{}；响应字符数：{}）。",
+            response_shape(output),
+            output.chars().count()
+        ))
+    }
 }
 
 pub struct DesignCall<'a> {
@@ -44,6 +52,49 @@ impl DesignGenerator for DesignCall<'_> {
             self.proxy_url,
         )
         .await
+    }
+
+    fn invalid_json_error(&self, parse_error: &str, output: &str) -> AppError {
+        let endpoint = design_endpoint(self.profile);
+        model_profile_error(
+            self.profile,
+            &endpoint,
+            "model_invalid_json",
+            format!(
+                "Design 模型在重新生成和修复后仍未返回合法 JSON（{}；响应字符数：{}；解析错误：{}）。",
+                response_shape(output),
+                output.chars().count(),
+                excerpt(parse_error, 240)
+            ),
+            None,
+            "请重试；若持续出现，请确认中转服务完整返回模型文本，或切换同模型支持的协议。",
+        )
+    }
+}
+
+fn design_endpoint(profile: &ModelProfile) -> String {
+    let suffix = match profile.protocol.as_str() {
+        "openai_chat" => "chat/completions",
+        "openai_responses" => "responses",
+        "anthropic_messages" => "messages",
+        _ => return profile.base_url.clone(),
+    };
+    format!(
+        "{}/{suffix}",
+        normalize_base_url(&profile.base_url, &profile.protocol)
+    )
+}
+
+fn response_shape(output: &str) -> &'static str {
+    let trimmed = output.trim();
+    if trimmed.is_empty() {
+        "空响应"
+    } else if trimmed.starts_with('<') || trimmed.to_ascii_lowercase().contains("<html") {
+        "HTML 响应"
+    } else if !trimmed.contains('{') && !trimmed.contains('[') {
+        "纯文本响应，未发现 JSON 起始符"
+    } else {
+        "JSON 语法不完整或损坏"
     }
 }
 
@@ -76,7 +127,11 @@ pub async fn parse_or_repair<G: DesignGenerator>(call: &G, text: &str) -> AppRes
         }
     }
 
-    let source = if retry_text.is_empty() { text } else { &retry_text };
+    let source = if retry_text.is_empty() {
+        text
+    } else {
+        &retry_text
+    };
     let repair_prompt = format!(
         "The previous model output was not valid JSON. Convert it into strict JSON only, preserving all useful content.\n\
          Return JSON only. Do not wrap in Markdown. Do not explain.\n\n\
@@ -86,6 +141,7 @@ pub async fn parse_or_repair<G: DesignGenerator>(call: &G, text: &str) -> AppRes
     );
     let repaired = call.generate(repair_prompt).await?;
     parse_json_response(&repaired)
+        .map_err(|error| call.invalid_json_error(&error.message, &repaired))
 }
 
 #[derive(Debug)]
@@ -154,7 +210,13 @@ mod tests {
         fn new(user_prompt: &str, responses: &[&str]) -> Self {
             Self {
                 user_prompt: user_prompt.to_string(),
-                responses: Mutex::new(responses.iter().rev().map(|item| item.to_string()).collect()),
+                responses: Mutex::new(
+                    responses
+                        .iter()
+                        .rev()
+                        .map(|item| item.to_string())
+                        .collect(),
+                ),
                 prompts: Mutex::new(Vec::new()),
             }
         }
@@ -185,6 +247,17 @@ mod tests {
 
     fn valid_diagram_design() -> Value {
         crate::core::pipeline::validate::tests::valid_diagram_design()
+    }
+
+    #[test]
+    fn response_shape_distinguishes_common_gateway_failures() {
+        assert_eq!(response_shape("  "), "空响应");
+        assert_eq!(response_shape("<html>gateway</html>"), "HTML 响应");
+        assert_eq!(
+            response_shape("I cannot provide that format"),
+            "纯文本响应，未发现 JSON 起始符"
+        );
+        assert_eq!(response_shape("{\"partial\":"), "JSON 语法不完整或损坏");
     }
 
     #[tokio::test]
@@ -219,7 +292,10 @@ mod tests {
         let stub = StubGenerator::new("original task", &[&filled.to_string()]);
 
         let mut initial = valid_diagram_design();
-        initial["figure"].as_object_mut().unwrap().remove("diagram_spec");
+        initial["figure"]
+            .as_object_mut()
+            .unwrap()
+            .remove("diagram_spec");
 
         let result = parse_validate_or_fill(&stub, &initial.to_string(), |value| {
             validate_paper_design(value)
