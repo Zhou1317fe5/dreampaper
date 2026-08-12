@@ -23,6 +23,22 @@ pub struct JobEvent {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct JobError {
+    pub summary: String,
+    pub code: String,
+    pub stage: Option<String>,
+    pub role: Option<String>,
+    pub profile_id: Option<String>,
+    pub profile_name: Option<String>,
+    pub protocol: Option<String>,
+    pub model: Option<String>,
+    pub base_url: Option<String>,
+    pub endpoint: Option<String>,
+    pub http_status: Option<u16>,
+    pub suggestion: Option<String>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct JobRecord {
     pub id: String,
     pub mode: String,
@@ -33,6 +49,7 @@ pub struct JobRecord {
     pub updated_at: String,
     pub images: Vec<JobImage>,
     pub events: Vec<JobEvent>,
+    pub error: Option<JobError>,
 }
 
 pub struct JobService<'a> {
@@ -82,6 +99,7 @@ impl<'a> JobService<'a> {
                     updated_at: row.get(6)?,
                     images: Vec::new(),
                     events: Vec::new(),
+                    error: None,
                 })
             })
             .map_err(|error| match error {
@@ -92,6 +110,7 @@ impl<'a> JobService<'a> {
             })?;
         record.events = self.events_for_job(&record.id)?;
         record.images = self.images_for_job(&record.id)?;
+        record.error = self.error_for_job(&record.id, &record.events)?;
         Ok(record)
     }
 
@@ -110,12 +129,14 @@ impl<'a> JobService<'a> {
                 updated_at: row.get(6)?,
                 images: Vec::new(),
                 events: Vec::new(),
+                error: None,
             })
         })?;
         let mut records = rows.collect::<Result<Vec<_>, _>>()?;
         for record in &mut records {
             record.events = self.events_for_job(&record.id)?;
             record.images = self.images_for_job(&record.id)?;
+            record.error = self.error_for_job(&record.id, &record.events)?;
         }
         Ok(records)
     }
@@ -165,16 +186,28 @@ impl<'a> JobService<'a> {
         self.mark_stage(job_id, "completed", "任务完成", "succeeded")
     }
 
-    pub fn fail(&self, job_id: &str, message: &str) -> AppResult<()> {
+    pub fn fail(&self, job_id: &str, message: &str, detail: Option<&serde_json::Value>) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
-        let error = serde_json::json!({ "message": message, "failed_at": now });
+        let stage = self.events_for_job(job_id)?.last().map(|event| event.stage.clone());
+        let mut error = detail.cloned().unwrap_or_else(|| serde_json::json!({}));
+        if let Some(object) = error.as_object_mut() {
+            object.insert("summary".to_string(), serde_json::Value::String(message.to_string()));
+            object.insert("message".to_string(), serde_json::Value::String(message.to_string()));
+            object.insert("failed_at".to_string(), serde_json::Value::String(now.clone()));
+            if object.get("stage").map(serde_json::Value::is_null).unwrap_or(true) {
+                object.insert("stage".to_string(), serde_json::to_value(stage.clone())?);
+            }
+            if !object.contains_key("code") {
+                object.insert("code".to_string(), serde_json::Value::String("job_failed".to_string()));
+            }
+        }
         let conn = self.store.connection()?;
         conn.execute(
             "UPDATE jobs SET error_json = ?1, updated_at = ?2 WHERE id = ?3",
             params![serde_json::to_string(&error)?, now, job_id],
         )?;
         drop(conn);
-        self.mark_stage(job_id, "failed", message, "failed")
+        self.mark_stage(job_id, stage.as_deref().unwrap_or("failed"), message, "failed")
     }
 
     pub fn cancel(&self, job_id: &str, message: &str) -> AppResult<()> {
@@ -220,6 +253,31 @@ impl<'a> JobService<'a> {
             })
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
+    }
+
+    fn error_for_job(&self, job_id: &str, events: &[JobEvent]) -> AppResult<Option<JobError>> {
+        let conn = self.store.connection()?;
+        let raw: Option<String> = conn
+            .query_row("SELECT error_json FROM jobs WHERE id = ?1", params![job_id], |row| row.get(0))
+            .unwrap_or(None);
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
+        let mut value: serde_json::Value = serde_json::from_str(&raw)?;
+        if let Some(object) = value.as_object_mut() {
+            if !object.contains_key("summary") {
+                let summary = object.get("message").and_then(serde_json::Value::as_str).unwrap_or("任务失败").to_string();
+                object.insert("summary".to_string(), serde_json::Value::String(summary));
+            }
+            if !object.contains_key("code") {
+                object.insert("code".to_string(), serde_json::Value::String("job_failed".to_string()));
+            }
+            if !object.contains_key("stage") {
+                let stage = events.iter().rev().find(|event| event.stage != "failed").map(|event| event.stage.clone());
+                object.insert("stage".to_string(), serde_json::to_value(stage)?);
+            }
+        }
+        Ok(serde_json::from_value(value).ok())
     }
 }
 

@@ -55,8 +55,13 @@ pub fn spawn(app: AppHandle, core: Arc<Core>, job_id: String) {
                     emit("completed", "任务完成", "succeeded");
                 }
                 Err(error) => {
-                    let _ = JobService::new(&core.store).fail(&job_id, &error.message);
-                    emit("failed", &error.message, "failed");
+                    let failed_stage = JobService::new(&core.store)
+                        .get_job(job_id.clone())
+                        .ok()
+                        .and_then(|job| job.stage)
+                        .unwrap_or_else(|| "failed".to_string());
+                    let _ = JobService::new(&core.store).fail(&job_id, &error.message, error.detail.as_ref());
+                    emit(&failed_stage, &error.message, "failed");
                 }
             }
             core.cancels.finish(&job_id);

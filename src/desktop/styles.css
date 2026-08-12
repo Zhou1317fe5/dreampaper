@@ -1608,6 +1608,22 @@
   font-size: 11px;
 }
 
+.desktop-shell .error-diagnostic {
+  border-color: rgba(229, 72, 77, 0.16);
+  border-radius: var(--r-inner);
+  background: rgba(229, 72, 77, 0.06);
+}
+
+.desktop-shell .error-diagnostic h3 {
+  color: var(--rose);
+  font-size: 12px;
+}
+
+.desktop-shell .error-diagnostic dt,
+.desktop-shell .error-diagnostic dd {
+  font-size: 11px;
+}
+
 .desktop-shell .result-grid {
   gap: 12px;
 }

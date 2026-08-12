@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import html
 import json
 import re
 from typing import Any
@@ -13,7 +14,39 @@ from .models import ModelProfile
 
 
 class ModelAdapterError(RuntimeError):
-    pass
+    def __init__(
+        self,
+        message: str,
+        *,
+        profile: ModelProfile | None = None,
+        endpoint: str | None = None,
+        http_status: int | None = None,
+        suggestion: str | None = None,
+        code: str = "model_request_failed",
+    ) -> None:
+        super().__init__(message)
+        self.profile = profile
+        self.endpoint = endpoint
+        self.http_status = http_status
+        self.suggestion = suggestion
+        self.code = code
+
+    def diagnostic(self, stage: str | None = None) -> dict[str, Any]:
+        profile = self.profile
+        return {
+            "summary": str(self),
+            "code": self.code,
+            "stage": stage,
+            "role": profile.role if profile else None,
+            "profile_id": profile.id if profile else None,
+            "profile_name": profile.name if profile else None,
+            "protocol": ("banana2" if profile.protocol == "banna2" else profile.protocol) if profile else None,
+            "model": profile.model if profile else None,
+            "base_url": profile.base_url if profile else None,
+            "endpoint": self.endpoint,
+            "http_status": self.http_status,
+            "suggestion": self.suggestion,
+        }
 
 
 SENSITIVE_HEADER_NAMES = {"authorization", "x-api-key", "x-goog-api-key"}
@@ -63,7 +96,12 @@ def normalize_base_url(base_url: str, protocol: str) -> str:
 
 def require_api_key(profile: ModelProfile) -> str:
     if not profile.api_key:
-        raise ModelAdapterError(f"{profile.name} 缺少 API key")
+        raise ModelAdapterError(
+            f"{profile.role.capitalize()} 配置“{profile.name}”缺少 API key。",
+            profile=profile,
+            suggestion="请在设置中填写该配置的 API key 并保存。",
+            code="missing_api_key",
+        )
     return profile.api_key
 
 
@@ -105,6 +143,21 @@ def create_async_client(timeout: httpx.Timeout, proxy_url: str | None = None) ->
     return httpx.AsyncClient(timeout=timeout)
 
 
+def format_transport_error(error: httpx.TransportError, proxy_url: str | None = None) -> str:
+    error_type = error.__class__.__name__
+    if proxy_url:
+        return (
+            "模型请求网络错误：无法通过已配置代理建立连接。"
+            "请检查设置中的代理地址和代理服务，或清空代理后直连。"
+            f"（{error_type}）"
+        )
+    return (
+        "模型请求网络错误：无法连接模型服务。"
+        "请检查模型 Base URL、DNS 和网络连接。"
+        f"（{error_type}）"
+    )
+
+
 def retry_backoff_seconds(attempt: int, status_code: int | None = None) -> float:
     base = min(2**attempt, MAX_BACKOFF_SECONDS)
     # 网关 502/503 往往表示上游仍在出图或短暂过载，多等一会再重试
@@ -115,18 +168,53 @@ def retry_backoff_seconds(attempt: int, status_code: int | None = None) -> float
     return float(base)
 
 
+def response_error_summary(body: str) -> str:
+    raw = (body or "").strip()
+    if not raw:
+        return ""
+    try:
+        data = json.loads(raw)
+        if isinstance(data, dict):
+            error = data.get("error")
+            if isinstance(error, dict):
+                candidate = error.get("message") or error.get("detail") or error.get("type")
+            else:
+                candidate = error or data.get("message") or data.get("detail")
+            if candidate:
+                return re.sub(r"\s+", " ", str(candidate)).strip()[:240]
+    except (TypeError, ValueError):
+        pass
+    title = re.search(r"<title[^>]*>(.*?)</title>", raw, flags=re.I | re.S)
+    if title:
+        return re.sub(r"\s+", " ", html.unescape(re.sub(r"<[^>]+>", " ", title.group(1)))).strip()[:240]
+    text = html.unescape(re.sub(r"<[^>]+>", " ", raw))
+    return re.sub(r"\s+", " ", text).strip()[:240]
+
+
+def http_error_suggestion(role: str, status_code: int) -> str:
+    if status_code in {502, 503, 504}:
+        if role == "implement":
+            return "上游制图网关异常。可稍后重试，并检查 Implement 地址、超时和重试次数。"
+        return f"上游模型网关异常。请稍后重试；若持续出现，请检查 {role.capitalize()} 地址或更换中转服务。"
+    if status_code == 401:
+        return f"请检查 {role.capitalize()} 配置的 API key。"
+    if status_code == 403:
+        return f"请检查 {role.capitalize()} 配置的 API key、模型权限和服务商访问策略。"
+    if status_code == 404:
+        return f"请检查 {role.capitalize()} 的 Base URL、协议和模型名。"
+    if status_code == 429:
+        return "请求频率或额度受限。请稍后重试，并检查账户额度。"
+    return f"请检查 {role.capitalize()} 的 Base URL、协议、模型名和服务商状态。"
+
+
 def format_http_error(kind: str, status_code: int, body: str) -> str:
-    snippet = (body or "").strip().replace("\n", " ")[:280]
+    detail = response_error_summary(body)
+    suffix = f" 服务返回：{detail}" if detail else ""
     if status_code == 502:
-        return (
-            f"{kind} failed: HTTP 502 Bad Gateway. "
-            "上游网关在同步等待出图时断开（图片可能已在服务端生成）。"
-            "请提高 implement 超时（建议 ≥600s）、增加重试，并优先使用 response_format=url。"
-            f" body={snippet}"
-        )
+        return f"{kind} 请求失败：HTTP 502，上游网关无法完成请求。{suffix}"
     if status_code in {503, 504}:
-        return f"{kind} failed: HTTP {status_code}. 上游维护或超时，请稍后重试。 body={snippet}"
-    return f"{kind} failed: HTTP {status_code} {snippet}"
+        return f"{kind} 请求失败：HTTP {status_code}，上游网关维护、超时或无法连接模型服务。{suffix}"
+    return f"{kind} 请求失败：HTTP {status_code}。{suffix}"
 
 
 async def post_json_with_retries(
@@ -168,10 +256,24 @@ async def post_json_with_retries(
     if isinstance(last_error, httpx.TimeoutException):
         raise ModelAdapterError(
             f"模型请求超时：读超时 {int(timeout.read)} 秒内未收到完整响应。"
-            "同步制图接口可能需要更长时间，请在 Model 配置中提高 implement 超时。"
+            "同步接口可能需要更长时间。",
+            profile=profile,
+            endpoint=url,
+            suggestion=f"请在设置中提高 {profile.role.capitalize()} 超时，或检查服务商状态。",
+            code="model_timeout",
         ) from last_error
     if last_error is not None:
-        raise ModelAdapterError(f"模型请求网络错误：{last_error.__class__.__name__}") from last_error
+        raise ModelAdapterError(
+            format_transport_error(last_error, proxy_url),
+            profile=profile,
+            endpoint=url,
+            suggestion=(
+                "请检查代理地址和代理服务，或清空代理后直连。"
+                if proxy_url
+                else f"请检查 {profile.role.capitalize()} 的 Base URL、DNS 和网络连接。"
+            ),
+            code="model_network_error",
+        ) from last_error
     if last_response is not None:
         return last_response
     raise ModelAdapterError("模型请求失败：未收到有效响应")
@@ -283,8 +385,25 @@ class DesignClient:
     ) -> dict[str, Any]:
         response = await post_json_with_retries(profile, url, payload, headers, timeout_seconds, proxy_url)
         if response.status_code >= 400:
-            raise ModelAdapterError(f"Model request failed: HTTP {response.status_code} {response.text[:400]}")
-        return response.json()
+            raise ModelAdapterError(
+                format_http_error("Design", response.status_code, response.text),
+                profile=profile,
+                endpoint=url,
+                http_status=response.status_code,
+                suggestion=http_error_suggestion(profile.role, response.status_code),
+                code="model_http_error",
+            )
+        try:
+            return response.json()
+        except ValueError as exc:
+            detail = response_error_summary(response.text)
+            raise ModelAdapterError(
+                f"Design 响应不是 JSON。{f' 服务返回：{detail}' if detail else ''}",
+                profile=profile,
+                endpoint=url,
+                suggestion="请检查 Design 协议是否与服务商接口兼容。",
+                code="invalid_model_response",
+            ) from exc
 
 
 class ImplementClient:
@@ -334,11 +453,24 @@ class ImplementClient:
                 minimum_timeout=MIN_IMAGE_TIMEOUT_SECONDS,
             )
         if response.status_code >= 400:
-            raise ModelAdapterError(format_http_error("Image request", response.status_code, response.text))
+            raise ModelAdapterError(
+                format_http_error("Implement", response.status_code, response.text),
+                profile=profile,
+                endpoint=url,
+                http_status=response.status_code,
+                suggestion=http_error_suggestion(profile.role, response.status_code),
+                code="model_http_error",
+            )
         try:
             data = response.json()
         except Exception as exc:
-            raise ModelAdapterError(f"Image response is not JSON: {response.text[:200]}") from exc
+            raise ModelAdapterError(
+                f"Implement 响应不是 JSON。 服务返回：{response_error_summary(response.text)}",
+                profile=profile,
+                endpoint=url,
+                suggestion="请检查 Implement 协议是否与服务商接口兼容。",
+                code="invalid_model_response",
+            ) from exc
         image = data.get("data", [{}])[0] if isinstance(data.get("data"), list) and data.get("data") else {}
         if not isinstance(image, dict):
             image = {}
@@ -348,7 +480,14 @@ class ImplementClient:
             async with create_async_client(timeout, proxy_url) as client:
                 image_response = await client.get(image["url"])
             if image_response.status_code >= 400:
-                raise ModelAdapterError(format_http_error("Image download", image_response.status_code, image_response.text))
+                raise ModelAdapterError(
+                    format_http_error("图片下载", image_response.status_code, image_response.text),
+                    profile=profile,
+                    endpoint=image["url"],
+                    http_status=image_response.status_code,
+                    suggestion="图片已生成但下载失败，请检查返回 URL 是否可访问。",
+                    code="image_download_error",
+                )
             return base64.b64encode(image_response.content).decode("ascii")
         raise ModelAdapterError("Image response did not contain b64_json or url")
 
@@ -384,9 +523,25 @@ class ImplementClient:
                     break
             await asyncio.sleep(retry_backoff_seconds(attempt))
         if isinstance(last_error, httpx.TimeoutException):
-            raise ModelAdapterError(f"模型请求超时：读超时 {int(timeout.read)} 秒内未收到完整响应") from last_error
+            raise ModelAdapterError(
+                f"模型请求超时：读超时 {int(timeout.read)} 秒内未收到完整响应。",
+                profile=profile,
+                endpoint=url,
+                suggestion="请在设置中提高 Implement 超时，或检查服务商状态。",
+                code="model_timeout",
+            ) from last_error
         if last_error is not None:
-            raise ModelAdapterError(f"模型请求网络错误：{last_error.__class__.__name__}") from last_error
+            raise ModelAdapterError(
+                format_transport_error(last_error, proxy_url),
+                profile=profile,
+                endpoint=url,
+                suggestion=(
+                    "请检查代理地址和代理服务，或清空代理后直连。"
+                    if proxy_url
+                    else "请检查 Implement 的 Base URL、DNS 和网络连接。"
+                ),
+                code="model_network_error",
+            ) from last_error
         if last_response is not None:
             return last_response
         raise ModelAdapterError("模型请求失败：未收到有效响应")
@@ -439,7 +594,14 @@ class ImplementClient:
             minimum_timeout=MIN_IMAGE_TIMEOUT_SECONDS,
         )
         if response.status_code >= 400:
-            raise ModelAdapterError(format_http_error("Gemini image request", response.status_code, response.text))
+            raise ModelAdapterError(
+                format_http_error("Implement", response.status_code, response.text),
+                profile=profile,
+                endpoint=url,
+                http_status=response.status_code,
+                suggestion=http_error_suggestion(profile.role, response.status_code),
+                code="model_http_error",
+            )
         data = response.json()
         image = self._extract_gemini_image(data)
         if not image:
