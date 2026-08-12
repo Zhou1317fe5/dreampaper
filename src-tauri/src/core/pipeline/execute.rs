@@ -168,6 +168,12 @@ async fn run(
 }
 
 fn read_image_input(path: &std::path::Path, mime_type: &str) -> AppResult<ImageInput> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        AppError::new(
+            "template_image_read_failed",
+            format!("Failed to read template image {}: {error}", path.display()),
+        )
+    })?;
     Ok(ImageInput {
         filename: path
             .file_name()
@@ -175,7 +181,7 @@ fn read_image_input(path: &std::path::Path, mime_type: &str) -> AppResult<ImageI
             .unwrap_or("template.png")
             .to_string(),
         mime_type: mime_type.to_string(),
-        b64: encode_b64(&std::fs::read(path)?),
+        b64: encode_b64(&bytes),
     })
 }
 
