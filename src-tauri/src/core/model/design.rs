@@ -2,7 +2,7 @@ use serde_json::{json, Value};
 
 use crate::core::config::ModelProfile;
 use crate::core::net::{
-    data_url, model_error, model_http_error, model_profile_error, normalize_base_url,
+    data_url, model_error, model_http_error, normalize_base_url,
     post_json_with_retries, post_sse_with_retries, require_api_key, PostOptions,
 };
 use crate::error::AppResult;
@@ -276,7 +276,7 @@ impl DesignClient {
         }));
         let mut payload = json!({
             "model": profile.model,
-            "max_tokens": design_max_tokens(profile),
+            "max_tokens": 4096,
             "system": system_prompt,
             "messages": [{"role": "user", "content": content}]
         });

@@ -2,7 +2,6 @@ use std::time::Duration;
 
 use base64::Engine;
 use regex::Regex;
-use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::core::config::ModelProfile;

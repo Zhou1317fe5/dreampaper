@@ -60,7 +60,11 @@ pub fn spawn(app: AppHandle, core: Arc<Core>, job_id: String) {
                         .ok()
                         .and_then(|job| job.stage)
                         .unwrap_or_else(|| "failed".to_string());
-                    let _ = JobService::new(&core.store).fail(&job_id, &error.message, error.detail.as_ref());
+                    let _ = JobService::new(&core.store).fail(
+                        &job_id,
+                        &error.message,
+                        error.detail.as_ref(),
+                    );
                     emit(&failed_stage, &error.message, "failed");
                 }
             }
@@ -104,10 +108,7 @@ async fn run(
             for id in payload.template_ids.iter().take(MAX_FIGURE_TEMPLATES) {
                 let detail = templates.template_detail(id)?;
                 metadata.push(detail.metadata());
-                images.push(read_image_input(
-                    &detail.image_path,
-                    &detail.mime_type,
-                )?);
+                images.push(read_image_input(&detail.image_path, &detail.mime_type)?);
             }
 
             let run = FigureRun {
@@ -117,6 +118,8 @@ async fn run(
                 implement_profile: &implement_profile,
                 template_images: images,
                 template_metadata: serde_json::Value::Array(metadata),
+                app_data: &core.app_data,
+                job_id,
             };
             let image_b64 = run.run(&payload, stage).await?;
             Ok(vec![save_image(core, job_id, "figure.png", &image_b64)?])

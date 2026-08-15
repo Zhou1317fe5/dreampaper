@@ -1,5 +1,6 @@
 use serde::Deserialize;
 use serde_json::{Map, Value};
+use std::path::{Path, PathBuf};
 
 use crate::core::config::{AppConfig, ModelProfile};
 use crate::core::model::design::ImageInput;
@@ -56,6 +57,64 @@ pub struct FigureRun<'a> {
     pub implement_profile: &'a ModelProfile,
     pub template_images: Vec<ImageInput>,
     pub template_metadata: Value,
+    pub app_data: &'a Path,
+    pub job_id: &'a str,
+}
+
+fn save_design_diagnostic(app_data: &Path, job_id: &str, text: &str) -> AppResult<PathBuf> {
+    let dir = app_data.join("logs").join(job_id);
+    std::fs::create_dir_all(&dir)?;
+    let path = dir.join("paper_design_raw.txt");
+    std::fs::write(&path, text)?;
+    Ok(path)
+}
+
+fn visible_text_diagnostic(text: &str) -> Value {
+    let parsed = serde_json::from_str::<Value>(text).ok();
+    let value = parsed
+        .as_ref()
+        .and_then(|root| root.get("figure").or(Some(root)))
+        .and_then(|figure| figure.get("visible_text"));
+    match value {
+        Some(Value::Array(items)) => {
+            let invalid = items
+                .iter()
+                .enumerate()
+                .filter_map(|(index, item)| match item.as_str() {
+                    Some(text) if text.trim().chars().count() <= 80 => None,
+                    Some(text) => Some(serde_json::json!({
+                        "index": index,
+                        "type": "string",
+                        "length": text.trim().chars().count(),
+                        "excerpt": text.chars().take(120).collect::<String>(),
+                    })),
+                    None => Some(serde_json::json!({
+                        "index": index,
+                        "type": match item {
+                            Value::Object(_) => "object",
+                            Value::Array(_) => "array",
+                            Value::Number(_) => "number",
+                            Value::Bool(_) => "boolean",
+                            Value::Null => "null",
+                            Value::String(_) => "string",
+                        },
+                    })),
+                })
+                .collect::<Vec<_>>();
+            serde_json::json!({"type": "array", "count": items.len(), "invalid_items": invalid})
+        }
+        Some(value) => serde_json::json!({
+            "type": match value {
+                Value::Object(_) => "object",
+                Value::Array(_) => "array",
+                Value::String(_) => "string",
+                Value::Number(_) => "number",
+                Value::Bool(_) => "boolean",
+                Value::Null => "null",
+            }
+        }),
+        None => serde_json::json!({"type": "missing_or_unparseable"}),
+    }
 }
 
 impl FigureRun<'_> {
@@ -155,6 +214,7 @@ impl FigureRun<'_> {
             proxy,
         )
         .await?;
+        let diagnostic_path = save_design_diagnostic(self.app_data, self.job_id, &design_text)?;
 
         stage("paper_parse", "解析并校验 design JSON");
         let design_call = DesignCall {
@@ -167,14 +227,34 @@ impl FigureRun<'_> {
         };
         let title = payload.figure_title.trim().to_string();
         let section = payload.section_description.trim().to_string();
-        let design = parse_validate_or_fill(&design_call, &design_text, move |value| {
+        let design_result = parse_validate_or_fill(&design_call, &design_text, move |value| {
             validate::validate_paper_design(value)?;
             validate::validate_design_content_coverage(value, &title, &section)?;
             Ok(())
         })
-        .await?;
+        .await;
+        let design = design_result.map_err(|error| {
+            let mut detail = error.detail.unwrap_or_else(|| serde_json::json!({}));
+            if !detail.is_object() {
+                detail = serde_json::json!({"upstream_detail": detail});
+            }
+            if let Some(object) = detail.as_object_mut() {
+                object.insert(
+                    "design_raw_path".to_string(),
+                    Value::String(diagnostic_path.display().to_string()),
+                );
+                object.insert(
+                    "visible_text".to_string(),
+                    visible_text_diagnostic(&design_text),
+                );
+                object.insert("summary".to_string(), Value::String(error.message.clone()));
+                object.insert("code".to_string(), Value::String(error.code.clone()));
+            }
+            AppError::with_detail(error.code, error.message, detail)
+        })?;
 
-        let implement_prompt = validate::implement_prompt(&design.parsed).map_err(AppError::from)?;
+        let implement_prompt =
+            validate::implement_prompt(&design.parsed).map_err(AppError::from)?;
 
         stage("paper_implement", "调用 implement model 生成图片");
         let image_b64 = ImplementClient::generate(
