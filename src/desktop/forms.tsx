@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
 import { createJob, listTemplates, uploadAsset } from '../api';
-import { JobPanel, copy, type Lang } from '../app';
+import { JobPanel, copy, isJobSettled, type Lang } from '../app';
 import type { AssetUpload, JobRecord, TemplateSummary } from '../types';
 import type { DesktopCopy } from './copy';
 
@@ -309,6 +309,10 @@ export function FigureForm({
   }
 
   async function submit() {
+    if (active) {
+      onMessage(t.result.waiting, 'error');
+      return;
+    }
     try {
       onMessage(t.paper.submitted);
       const created = await createJob({
@@ -331,6 +335,7 @@ export function FigureForm({
   }
 
   const ready = Boolean(title.trim() && description.trim() && selected.length > 0);
+  const active = Boolean(job && !isJobSettled(job.status));
 
   return (
     <div className="dp-work">
@@ -339,8 +344,8 @@ export function FigureForm({
         foot={
           <>
             <span className="dp-foot-note">{d.pane.selected(selected.length, MAX_TEMPLATES)}</span>
-            <button type="button" className="dp-primary" disabled={!ready} onClick={submit}>
-              {t.paper.generate}
+            <button type="button" className="dp-primary" disabled={!ready || active} onClick={submit}>
+              {active ? t.paper.generating : t.paper.generate}
             </button>
           </>
         }
@@ -544,6 +549,7 @@ export function SlideForm({
   }
 
   const ready = Boolean(master && (material.trim() || materials.length > 0));
+  const active = Boolean(job && !isJobSettled(job.status));
   const materialLabel = materials.length ? `${t.common.uploadedFiles} ${materials.length}` : '';
 
   return (
@@ -553,8 +559,8 @@ export function SlideForm({
         foot={
           <>
             <span className="dp-foot-note">{master ? master.category || master.kind : d.pane.masterNone}</span>
-            <button type="button" className="dp-primary" disabled={!ready} onClick={submit}>
-              {t.ppt.generate}
+            <button type="button" className="dp-primary" disabled={!ready || active} onClick={submit}>
+              {active ? t.ppt.generating : t.ppt.generate}
             </button>
           </>
         }
