@@ -61,10 +61,15 @@ pub struct FigureRun<'a> {
     pub job_id: &'a str,
 }
 
-fn save_design_diagnostic(app_data: &Path, job_id: &str, text: &str) -> AppResult<PathBuf> {
+fn save_design_diagnostic(
+    app_data: &Path,
+    job_id: &str,
+    name: &str,
+    text: &str,
+) -> AppResult<PathBuf> {
     let dir = app_data.join("logs").join(job_id);
     std::fs::create_dir_all(&dir)?;
-    let path = dir.join("paper_design_raw.txt");
+    let path = dir.join(name);
     std::fs::write(&path, text)?;
     Ok(path)
 }
@@ -149,14 +154,6 @@ impl FigureRun<'_> {
         );
 
         stage("paper_structure", "调用 design model 分析 template 结构");
-        let structure_call = DesignCall {
-            profile: self.design_profile,
-            system_prompt: &system.content,
-            user_prompt: &structure_prompt,
-            images: &self.template_images,
-            timeout_seconds: None,
-            proxy_url: proxy,
-        };
         let structure_text = crate::core::model::design::DesignClient::generate(
             self.design_profile,
             &system.content,
@@ -166,8 +163,37 @@ impl FigureRun<'_> {
             proxy,
         )
         .await?;
+        save_design_diagnostic(
+            self.app_data,
+            self.job_id,
+            "paper_structure_raw.txt",
+            &structure_text,
+        )?;
 
         stage("paper_structure_parse", "解析并校验结构规划 JSON");
+        let structure_retry_count = std::sync::Mutex::new(0usize);
+        let structure_app_data = self.app_data;
+        let structure_job_id = self.job_id;
+        let structure_retry_sink = move |text: &str| {
+            let mut count = structure_retry_count.lock().unwrap();
+            *count += 1;
+            let name = format!("paper_structure_raw_retry{count}.txt");
+            if save_design_diagnostic(structure_app_data, structure_job_id, &name, text).is_ok() {
+                stage(
+                    "paper_structure_parse",
+                    &format!("校验未通过,自动重新请求 design model(第 {count} 次)"),
+                );
+            }
+        };
+        let structure_call = DesignCall {
+            profile: self.design_profile,
+            system_prompt: &system.content,
+            user_prompt: &structure_prompt,
+            images: &self.template_images,
+            timeout_seconds: None,
+            proxy_url: proxy,
+            response_sink: Some(&structure_retry_sink),
+        };
         let structure = parse_validate_or_fill(&structure_call, &structure_text, |value| {
             validate::validate_structure_plan(value)
         })
@@ -214,9 +240,28 @@ impl FigureRun<'_> {
             proxy,
         )
         .await?;
-        let diagnostic_path = save_design_diagnostic(self.app_data, self.job_id, &design_text)?;
+        let diagnostic_path = save_design_diagnostic(
+            self.app_data,
+            self.job_id,
+            "paper_design_raw.txt",
+            &design_text,
+        )?;
 
         stage("paper_parse", "解析并校验 design JSON");
+        let retry_count = std::sync::Mutex::new(0usize);
+        let app_data = self.app_data;
+        let job_id = self.job_id;
+        let retry_sink = move |text: &str| {
+            let mut count = retry_count.lock().unwrap();
+            *count += 1;
+            let name = format!("paper_design_raw_retry{count}.txt");
+            if save_design_diagnostic(app_data, job_id, &name, text).is_ok() {
+                stage(
+                    "paper_parse",
+                    &format!("校验未通过,自动重新请求 design model(第 {count} 次)"),
+                );
+            }
+        };
         let design_call = DesignCall {
             profile: self.design_profile,
             system_prompt: &system.content,
@@ -224,6 +269,7 @@ impl FigureRun<'_> {
             images: &no_images,
             timeout_seconds: None,
             proxy_url: proxy,
+            response_sink: Some(&retry_sink),
         };
         let title = payload.figure_title.trim().to_string();
         let section = payload.section_description.trim().to_string();

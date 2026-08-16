@@ -250,6 +250,9 @@ pub fn build_client(
     proxy_url: Option<&str>,
 ) -> AppResult<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
+        // Some gateways' bot protection serves empty 200 responses to rustls
+        // HTTP/2 fingerprints on large payloads; HTTP/1.1 is accepted everywhere.
+        .http1_only()
         .connect_timeout(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECONDS))
         .timeout(Duration::from_secs(read_timeout_seconds.max(1)))
         .tcp_keepalive(Duration::from_secs(30))
@@ -280,8 +283,10 @@ pub fn merged_headers(
     profile: &ModelProfile,
     extra: Vec<(String, String)>,
 ) -> Vec<(String, String)> {
-    let mut headers: Vec<(String, String)> =
-        vec![("Content-Type".to_string(), "application/json".to_string())];
+    // Content-Type is intentionally not set here: request builders (.json() /
+    // .multipart()) already set it, and duplicating it makes some gateways
+    // answer `200 "Header Content-Type Error"` instead of the model output.
+    let mut headers: Vec<(String, String)> = Vec::new();
     for (key, value) in &profile.headers {
         if let Some(text) = value.as_str() {
             headers.push((key.clone(), text.to_string()));
@@ -579,15 +584,61 @@ pub fn parse_json_response(text: &str) -> AppResult<Value> {
     if let Ok(value) = serde_json::from_str::<Value>(cleaned) {
         return Ok(value);
     }
-    let start = cleaned.find('{');
-    let end = cleaned.rfind('}');
-    if let (Some(start), Some(end)) = (start, end) {
-        if end > start {
-            return serde_json::from_str::<Value>(&cleaned[start..=end])
-                .map_err(|error| model_error(format!("模型返回的不是合法 JSON: {error}")));
+    let mut last_error = None;
+    for candidate in balanced_json_values(&cleaned) {
+        match serde_json::from_str::<Value>(candidate) {
+            Ok(value) => return Ok(value),
+            Err(error) => last_error = Some(error),
         }
     }
-    Err(model_error("模型返回的不是合法 JSON"))
+    match last_error {
+        Some(error) => Err(model_error(format!("模型返回的不是合法 JSON: {error}"))),
+        None => Err(model_error("模型返回的不是合法 JSON")),
+    }
+}
+
+/// Yields top-level balanced `{...}` / `[...]` substrings in arrival order,
+/// skipping brackets that appear inside JSON string literals.
+fn balanced_json_values(text: &str) -> Vec<&str> {
+    let mut candidates = Vec::new();
+    let mut start: Option<usize> = None;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, character) in text.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match character {
+            '"' => in_string = true,
+            '{' | '[' => {
+                if depth == 0 {
+                    start = Some(index);
+                }
+                depth += 1;
+            }
+            '}' | ']' => {
+                if depth > 0 {
+                    depth -= 1;
+                    if depth == 0 {
+                        if let Some(start) = start {
+                            candidates.push(&text[start..=index]);
+                        }
+                        start = None;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    candidates
 }
 
 #[cfg(test)]

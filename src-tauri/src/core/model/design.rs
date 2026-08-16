@@ -8,14 +8,58 @@ use crate::core::net::{
 use crate::error::AppResult;
 
 pub fn stream_enabled(profile: &ModelProfile) -> bool {
+    stream_enabled_for(&profile.protocol, profile)
+}
+
+/// Explicit `output_defaults.stream` wins; otherwise anthropic_messages defaults
+/// to streaming because many gateways time out non-streaming requests that take
+/// longer than ~60s to generate.
+pub fn stream_enabled_for(protocol: &str, profile: &ModelProfile) -> bool {
     match profile.output_defaults.get("stream") {
         Some(Value::Bool(flag)) => *flag,
         Some(Value::String(text)) => matches!(
             text.trim().to_ascii_lowercase().as_str(),
             "1" | "on" | "true" | "yes"
         ),
-        _ => false,
+        _ => protocol == "anthropic_messages",
     }
+}
+
+fn design_max_tokens(profile: &ModelProfile) -> u64 {
+    profile
+        .output_defaults
+        .get("max_tokens")
+        .and_then(|value| {
+            value
+                .as_u64()
+                .or_else(|| value.as_str().and_then(|text| text.trim().parse().ok()))
+        })
+        .unwrap_or(16384)
+        .clamp(256, 32768)
+}
+
+const EMPTY_TEXT_RETRY_ATTEMPTS: usize = 3;
+
+/// Gateways sometimes wrap an upstream failure in an HTTP 200 `{"error": ...}` body.
+fn upstream_error_message(data: &Value) -> Option<String> {
+    let error = data.get("error")?;
+    if error.is_null() {
+        return None;
+    }
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .map(str::to_string)
+        .unwrap_or_else(|| serde_json::to_string(error).unwrap_or_default());
+    Some(message)
+}
+
+fn response_excerpt(data: &Value) -> String {
+    serde_json::to_string(data)
+        .unwrap_or_default()
+        .chars()
+        .take(400)
+        .collect()
 }
 
 fn collect_stream_text(protocol: &str, events: &[Value]) -> AppResult<String> {
@@ -183,10 +227,18 @@ impl DesignClient {
             return collect_stream_text("openai_chat", &events);
         }
         let data = Self::post(profile, &url, &payload, timeout_seconds, proxy_url).await?;
+        if let Some(error) = upstream_error_message(&data) {
+            return Err(model_error(format!("模型在 HTTP 200 中返回错误对象: {error}")));
+        }
         data["choices"][0]["message"]["content"]
             .as_str()
             .map(str::to_string)
-            .ok_or_else(|| model_error("OpenAI Chat 响应缺少 message.content"))
+            .ok_or_else(|| {
+                model_error(format!(
+                    "OpenAI Chat 响应缺少 message.content，响应摘录: {}",
+                    response_excerpt(&data)
+                ))
+            })
     }
 
     async fn openai_responses(
@@ -228,6 +280,9 @@ impl DesignClient {
             return collect_stream_text("openai_responses", &events);
         }
         let data = Self::post(profile, &url, &payload, timeout_seconds, proxy_url).await?;
+        if let Some(error) = upstream_error_message(&data) {
+            return Err(model_error(format!("模型在 HTTP 200 中返回错误对象: {error}")));
+        }
         if let Some(text) = data["output_text"].as_str() {
             if !text.is_empty() {
                 return Ok(text.to_string());
@@ -246,9 +301,10 @@ impl DesignClient {
                 }
             }
         }
-        Err(model_error(
-            "OpenAI Responses result did not contain output text",
-        ))
+        Err(model_error(format!(
+            "OpenAI Responses result did not contain output text，响应摘录: {}",
+            response_excerpt(&data)
+        )))
     }
 
     async fn anthropic_messages(
@@ -276,7 +332,7 @@ impl DesignClient {
         }));
         let mut payload = json!({
             "model": profile.model,
-            "max_tokens": 4096,
+            "max_tokens": design_max_tokens(profile),
             "system": system_prompt,
             "messages": [{"role": "user", "content": content}]
         });
@@ -294,41 +350,57 @@ impl DesignClient {
             let events = Self::stream(profile, &url, &payload, headers, timeout_seconds, proxy_url).await?;
             return collect_stream_text("anthropic_messages", &events);
         }
-        let outcome = post_json_with_retries(
-            profile,
-            &url,
-            &payload,
-            headers,
-            PostOptions {
-                timeout_seconds,
-                proxy_url,
-                ..Default::default()
-            },
-        )
-        .await?;
-        if outcome.status >= 400 {
-            return Err(model_http_error(
+        let mut last_empty_detail = String::new();
+        for _ in 0..EMPTY_TEXT_RETRY_ATTEMPTS {
+            let outcome = post_json_with_retries(
                 profile,
                 &url,
-                "Design",
-                outcome.status,
-                &outcome.body,
-            ));
+                &payload,
+                headers.clone(),
+                PostOptions {
+                    timeout_seconds,
+                    proxy_url,
+                    ..Default::default()
+                },
+            )
+            .await?;
+            if outcome.status >= 400 {
+                return Err(model_http_error(
+                    profile,
+                    &url,
+                    "Design",
+                    outcome.status,
+                    &outcome.body,
+                ));
+            }
+            let data: Value = serde_json::from_str(&outcome.body)
+                .map_err(|error| model_error(format!("Anthropic 响应不是 JSON: {error}")))?;
+            if let Some(error) = upstream_error_message(&data) {
+                return Err(model_error(format!("模型在 HTTP 200 中返回错误对象: {error}")));
+            }
+            let text = data["content"]
+                .as_array()
+                .map(|parts| {
+                    parts
+                        .iter()
+                        .filter(|part| part["type"].as_str() == Some("text"))
+                        .filter_map(|part| part["text"].as_str())
+                        .collect::<Vec<_>>()
+                        .join("\n")
+                })
+                .unwrap_or_default();
+            if !text.trim().is_empty() {
+                return Ok(text);
+            }
+            let stop = data["stop_reason"].as_str().unwrap_or("unknown");
+            last_empty_detail = format!(
+                "stop_reason: {stop}，原始响应摘录: {}",
+                outcome.body.chars().take(600).collect::<String>()
+            );
         }
-        let data: Value = serde_json::from_str(&outcome.body)
-            .map_err(|error| model_error(format!("Anthropic 响应不是 JSON: {error}")))?;
-        let text = data["content"]
-            .as_array()
-            .map(|parts| {
-                parts
-                    .iter()
-                    .filter(|part| part["type"].as_str() == Some("text"))
-                    .filter_map(|part| part["text"].as_str())
-                    .collect::<Vec<_>>()
-                    .join("\n")
-            })
-            .unwrap_or_default();
-        Ok(text)
+        Err(model_error(format!(
+            "Anthropic 响应缺少文本内容(已重试 {EMPTY_TEXT_RETRY_ATTEMPTS} 次)，{last_empty_detail}"
+        )))
     }
 
     async fn post(
@@ -407,6 +479,30 @@ impl DesignClient {
 mod tests {
     use super::*;
 
+    #[test]
+    fn upstream_error_message_extracts_gateway_error_bodies() {
+        let payload: Value = serde_json::from_str(
+            r#"{"error":{"message":"max_tokens must be less than or equal to 2147483647","type":"invalid_request_error"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            upstream_error_message(&payload).as_deref(),
+            Some("max_tokens must be less than or equal to 2147483647")
+        );
+
+        let opaque: Value = serde_json::from_str(r#"{"error":"quota exhausted"}"#).unwrap();
+        assert_eq!(
+            upstream_error_message(&opaque).as_deref(),
+            Some("\"quota exhausted\"")
+        );
+
+        let normal: Value = serde_json::from_str(r#"{"choices":[]}"#).unwrap();
+        assert_eq!(upstream_error_message(&normal), None);
+
+        let null_error: Value = serde_json::from_str(r#"{"error":null,"content":[]}"#).unwrap();
+        assert_eq!(upstream_error_message(&null_error), None);
+    }
+
     fn events(raw: &[&str]) -> Vec<Value> {
         raw.iter()
             .map(|line| serde_json::from_str(line).expect("测试数据是合法 JSON"))
@@ -454,11 +550,26 @@ mod tests {
     #[test]
     fn design_max_tokens_defaults_high_and_accepts_an_override() {
         let mut profile = profile_with(None);
-        assert_eq!(design_max_tokens(&profile), 8192);
+        assert_eq!(design_max_tokens(&profile), 16384);
         profile
             .output_defaults
             .insert("max_tokens".to_string(), Value::String("12000".to_string()));
         assert_eq!(design_max_tokens(&profile), 12000);
+    }
+
+    #[test]
+    fn anthropic_defaults_to_streaming_unless_overridden() {
+        let mut profile = profile_with(None);
+        assert!(!stream_enabled_for("openai_chat", &profile));
+        assert!(stream_enabled_for("anthropic_messages", &profile));
+        profile
+            .output_defaults
+            .insert("stream".to_string(), Value::Bool(false));
+        assert!(!stream_enabled_for("anthropic_messages", &profile));
+        profile
+            .output_defaults
+            .insert("stream".to_string(), Value::String("true".into()));
+        assert!(stream_enabled_for("openai_chat", &profile));
     }
 
     #[test]
