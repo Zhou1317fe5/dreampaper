@@ -254,6 +254,7 @@ export function DesktopApp() {
               onJob={setPaperJob}
               onMessage={showMessage}
               onGoTemplates={() => transitionToPage('templates')}
+              onOpenTask={openJob}
               t={t}
               d={d}
             />
@@ -266,6 +267,7 @@ export function DesktopApp() {
               onJob={setPptJob}
               onMessage={showMessage}
               onGoTemplates={() => transitionToPage('templates')}
+              onOpenTask={openJob}
               t={t}
               d={d}
             />

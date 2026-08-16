@@ -211,6 +211,7 @@ function ResultPane({
   activeJobs,
   emptyText,
   onJob,
+  onOpenTask,
   onCancel,
   onMessage
 }: {
@@ -219,6 +220,7 @@ function ResultPane({
   activeJobs: JobRecord[];
   emptyText: string;
   onJob: (job: JobRecord) => void;
+  onOpenTask: (job: JobRecord) => void;
   onCancel: (job: JobRecord) => void;
   onMessage: (text: string, tone?: 'info' | 'error') => void;
 }) {
@@ -227,7 +229,13 @@ function ResultPane({
   return (
     <div className="result-stack">
       {pending.length > 0 && (
-        <ActiveJobList jobs={pending} current={currentJob} t={t} onPick={onJob} onCancel={onCancel} />
+        <ActiveJobList
+          jobs={pending}
+          current={currentJob}
+          t={t}
+          onPick={onOpenTask}
+          onCancel={onCancel}
+        />
       )}
       {job ? (
         <JobPanel
@@ -318,6 +326,7 @@ export function FigureForm({
   onJob,
   onMessage,
   onGoTemplates,
+  onOpenTask,
   t,
   d
 }: {
@@ -327,6 +336,7 @@ export function FigureForm({
   onJob: (job: JobRecord) => void;
   onMessage: (text: string, tone?: 'info' | 'error') => void;
   onGoTemplates: () => void;
+  onOpenTask: (job: JobRecord) => void;
   t: Copy;
   d: DesktopCopy;
 }) {
@@ -523,6 +533,7 @@ export function FigureForm({
             activeJobs={activeJobs}
             emptyText={d.pane.resultEmpty}
             onJob={onJob}
+            onOpenTask={onOpenTask}
             onCancel={async (item) => {
               try {
                 onJob(await cancelJob(item.id));
@@ -561,6 +572,7 @@ export function SlideForm({
   onJob,
   onMessage,
   onGoTemplates,
+  onOpenTask,
   t,
   d
 }: {
@@ -570,6 +582,7 @@ export function SlideForm({
   onJob: (job: JobRecord) => void;
   onMessage: (text: string, tone?: 'info' | 'error') => void;
   onGoTemplates: () => void;
+  onOpenTask: (job: JobRecord) => void;
   t: Copy;
   d: DesktopCopy;
 }) {
@@ -770,6 +783,7 @@ export function SlideForm({
             activeJobs={activeJobs}
             emptyText={d.pane.resultEmpty}
             onJob={onJob}
+            onOpenTask={onOpenTask}
             onCancel={async (item) => {
               try {
                 onJob(await cancelJob(item.id));
