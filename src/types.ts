@@ -61,6 +61,21 @@ export interface JobEvent {
   timestamp: string;
 }
 
+export interface JobError {
+  summary: string;
+  code: string;
+  stage?: string | null;
+  role?: ModelRole | null;
+  profile_id?: string | null;
+  profile_name?: string | null;
+  protocol?: string | null;
+  model?: string | null;
+  base_url?: string | null;
+  endpoint?: string | null;
+  http_status?: number | null;
+  suggestion?: string | null;
+}
+
 export interface JobRecord {
   id: string;
   mode: Mode;
@@ -71,5 +86,5 @@ export interface JobRecord {
   updated_at: string;
   images: Array<{ name: string; url: string }>;
   events?: JobEvent[];
+  error?: JobError | null;
 }
-

@@ -7,7 +7,7 @@ use crate::core::config::ModelProfile;
 use crate::core::model::design::ImageInput;
 use crate::core::net::{
     build_client, decode_b64, describe_transport_error, effective_timeout, encode_b64,
-    format_http_error, is_retryable, merged_headers, model_error, normalize_base_url,
+    format_http_error, is_retryable, merged_headers, model_error, model_http_error, normalize_base_url,
     post_json_with_retries, require_api_key, retry_backoff, retry_delay,
     IMAGE_RETRY_INTERVAL_SECONDS, MIN_IMAGE_TIMEOUT_SECONDS, PostOptions,
 };
@@ -106,6 +106,11 @@ impl ImplementClient {
         let fields = Self::image2_fields(&defaults);
         let api_key = require_api_key(profile)?;
         let read_timeout = effective_timeout(profile, None, Some(MIN_IMAGE_TIMEOUT_SECONDS));
+        let endpoint = if reference_images.is_empty() {
+            format!("{base}/images/generations")
+        } else {
+            format!("{base}/images/edits")
+        };
 
         let (status, body) = if reference_images.is_empty() {
             let mut payload = json!({"model": profile.model, "prompt": prompt});
@@ -116,7 +121,7 @@ impl ImplementClient {
             }
             let outcome = post_json_with_retries(
                 profile,
-                &format!("{base}/images/generations"),
+                &endpoint,
                 &payload,
                 vec![("Authorization".to_string(), format!("Bearer {api_key}"))],
                 image_post_options(proxy_url),
@@ -126,7 +131,7 @@ impl ImplementClient {
         } else {
             Self::post_multipart(
                 profile,
-                &format!("{base}/images/edits"),
+                &endpoint,
                 prompt,
                 reference_images,
                 &fields,
@@ -137,10 +142,12 @@ impl ImplementClient {
             .await?
         };
 
-        Self::resolve_response("Image request", status, &body, read_timeout, proxy_url).await
+        Self::resolve_response(profile, &endpoint, "Implement", status, &body, read_timeout, proxy_url).await
     }
 
     async fn resolve_response(
+        profile: &ModelProfile,
+        endpoint: &str,
         kind: &str,
         status: u16,
         body: &str,
@@ -161,7 +168,7 @@ impl ImplementClient {
             };
         }
         if status >= 400 {
-            return Err(model_error(format_http_error(kind, status, body)));
+            return Err(model_http_error(profile, endpoint, kind, status, body));
         }
         let snippet: String = body.trim().chars().take(280).collect();
         if parsed.is_none() {
@@ -366,7 +373,9 @@ impl ImplementClient {
         }
         let read_timeout = effective_timeout(profile, None, Some(MIN_IMAGE_TIMEOUT_SECONDS));
         Self::resolve_response(
-            "Gemini image request",
+            profile,
+            &url,
+            "Implement",
             outcome.status,
             &outcome.body,
             read_timeout,

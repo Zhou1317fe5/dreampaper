@@ -1365,6 +1365,54 @@ textarea:focus {
   font-size: 0.76rem;
 }
 
+.error-diagnostic {
+  margin-top: 12px;
+  padding: 14px;
+  border: 1px solid rgba(211, 105, 126, 0.22);
+  border-radius: 12px;
+  background: rgba(255, 248, 249, 0.86);
+}
+
+.error-diagnostic h3 {
+  margin: 0 0 10px;
+  color: #9d3f54;
+  font-size: 0.84rem;
+  letter-spacing: 0;
+}
+
+.error-diagnostic dl {
+  display: grid;
+  grid-template-columns: minmax(88px, 112px) minmax(0, 1fr);
+  gap: 7px 12px;
+  margin: 0;
+}
+
+.error-diagnostic dt {
+  color: var(--text-muted);
+  font-size: 0.76rem;
+  font-weight: 650;
+}
+
+.error-diagnostic dd {
+  min-width: 0;
+  margin: 0;
+  color: #3b4650;
+  font-size: 0.8rem;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 620px) {
+  .error-diagnostic dl {
+    grid-template-columns: 1fr;
+    gap: 3px;
+  }
+
+  .error-diagnostic dd + dt {
+    margin-top: 7px;
+  }
+}
+
 @keyframes step-swap {
   from {
     opacity: 0;

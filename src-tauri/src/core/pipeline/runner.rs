@@ -10,6 +10,7 @@ use crate::error::{AppError, AppResult};
 
 const JSON_CONTEXT_RETRY_ATTEMPTS: usize = 1;
 const JSON_RETRY_EXCERPT_LIMIT: usize = 4000;
+const VALIDATION_REPAIR_ROUNDS: usize = 2;
 
 fn excerpt(text: &str, limit: usize) -> String {
     text.chars().take(limit).collect()
@@ -27,6 +28,7 @@ pub struct DesignCall<'a> {
     pub images: &'a [ImageInput],
     pub timeout_seconds: Option<u64>,
     pub proxy_url: Option<&'a str>,
+    pub response_sink: Option<&'a (dyn Fn(&str) + Send + Sync)>,
 }
 
 impl DesignGenerator for DesignCall<'_> {
@@ -35,7 +37,7 @@ impl DesignGenerator for DesignCall<'_> {
     }
 
     async fn generate(&self, prompt: String) -> AppResult<String> {
-        DesignClient::generate(
+        let text = DesignClient::generate(
             self.profile,
             self.system_prompt,
             &prompt,
@@ -43,7 +45,11 @@ impl DesignGenerator for DesignCall<'_> {
             self.timeout_seconds,
             self.proxy_url,
         )
-        .await
+        .await?;
+        if let Some(sink) = self.response_sink {
+            sink(&text);
+        }
+        Ok(text)
     }
 }
 
@@ -104,37 +110,46 @@ where
     G: DesignGenerator,
     F: Fn(&Value) -> Result<T, ValidationError>,
 {
-    let parsed = parse_or_repair(call, text).await?;
-    let error = match validator(&parsed) {
-        Ok(value) => {
-            return Ok(Validated {
-                parsed,
-                value,
-                retried: false,
-            })
-        }
-        Err(error) => error,
-    };
-    if !error.is_schema() {
-        return Err(AppError::from(error));
+    let mut parsed = parse_or_repair(call, text).await?;
+    let mut retried = false;
+    for _ in 0..VALIDATION_REPAIR_ROUNDS {
+        let error = match validator(&parsed) {
+            Ok(value) => {
+                return Ok(Validated {
+                    parsed,
+                    value,
+                    retried,
+                })
+            }
+            Err(error) => error,
+        };
+        let instruction = if error.is_schema() {
+            "The previous model output was valid JSON but failed the required structured output contract.\n\
+             Return strict JSON only. Preserve all valid content and do not redesign the figure, slide master, or page plan.\n\
+             Only fill, normalize, or add the missing required fields and constraints named by the validation error."
+        } else {
+            "The previous model output was valid JSON but failed semantic validation.\n\
+             Return strict JSON only. Do not redesign the figure, slide master, or page plan, and keep every field that already satisfies the contract unchanged.\n\
+             Fix only the entries named by the validation error. When shorter strings are required, replace them with concise labels that keep the original language and meaning."
+        };
+        let repair_prompt = format!(
+            "{instruction}\n\n\
+             Validation error:\n{}\n\n\
+             Original task:\n{}\n\n\
+             Current JSON:\n{}",
+            error.message(),
+            call.user_prompt(),
+            serde_json::to_string_pretty(&parsed).unwrap_or_default()
+        );
+        retried = true;
+        let repaired_text = call.generate(repair_prompt).await?;
+        parsed = parse_json_response(&repaired_text)?;
     }
-
-    let fill_prompt = format!(
-        "The previous model output was valid JSON but failed the required structured output contract.\n\
-         Return strict JSON only. Preserve all valid content and do not redesign the figure, slide master, or page plan.\n\
-         Only fill, normalize, or add the missing required fields and constraints named by the validation error.\n\n\
-         Validation error:\n{}\n\nOriginal task:\n{}\n\nCurrent JSON:\n{}",
-        error.message(),
-        call.user_prompt(),
-        serde_json::to_string_pretty(&parsed).unwrap_or_default()
-    );
-    let filled_text = call.generate(fill_prompt).await?;
-    let filled = parse_json_response(&filled_text)?;
-    let value = validator(&filled).map_err(AppError::from)?;
+    let value = validator(&parsed).map_err(AppError::from)?;
     Ok(Validated {
-        parsed: filled,
+        parsed,
         value,
-        retried: true,
+        retried,
     })
 }
 
@@ -237,15 +252,46 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn semantic_errors_fail_without_retry() {
-        let stub = StubGenerator::new("original task", &[]);
+    async fn semantic_errors_retry_then_fail_after_exhaustion() {
+        let stub = StubGenerator::new("original task", &[r#"{"still": "bad"}"#, r#"{"still": "bad"}"#]);
         let error = parse_validate_or_fill(&stub, r#"{"ok": true}"#, |_| {
             Err::<(), _>(ValidationError::Value("page 3 out of order".to_string()))
         })
         .await
         .unwrap_err();
 
-        assert_eq!(stub.calls(), 0);
+        assert_eq!(stub.calls(), 2);
         assert_eq!(error.message, "page 3 out of order");
+        for round in 0..stub.calls() {
+            assert!(stub.prompt(round).contains("failed semantic validation"));
+            assert!(stub.prompt(round).contains("page 3 out of order"));
+        }
+    }
+
+    #[tokio::test]
+    async fn semantic_error_repaired_without_redesign() {
+        let mut broken = valid_diagram_design();
+        let long_label = "x".repeat(81);
+        broken["figure"]["visible_text"]
+            .as_array_mut()
+            .unwrap()
+            .push(serde_json::Value::String(long_label));
+        let fixed = valid_diagram_design();
+
+        let stub = StubGenerator::new("original task", &[&fixed.to_string()]);
+
+        let result = parse_validate_or_fill(&stub, &broken.to_string(), |value| {
+            validate_paper_design(value)
+        })
+        .await
+        .unwrap();
+
+        assert_eq!(result.parsed, fixed);
+        assert!(result.retried);
+        assert_eq!(stub.calls(), 1);
+        let repair_prompt = stub.prompt(0);
+        assert!(repair_prompt.contains("failed semantic validation"));
+        assert!(repair_prompt.contains("visible_text must be short label strings"));
+        assert!(repair_prompt.contains("concise labels"));
     }
 }

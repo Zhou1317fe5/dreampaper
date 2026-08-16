@@ -55,8 +55,17 @@ pub fn spawn(app: AppHandle, core: Arc<Core>, job_id: String) {
                     emit("completed", "任务完成", "succeeded");
                 }
                 Err(error) => {
-                    let _ = JobService::new(&core.store).fail(&job_id, &error.message);
-                    emit("failed", &error.message, "failed");
+                    let failed_stage = JobService::new(&core.store)
+                        .get_job(job_id.clone())
+                        .ok()
+                        .and_then(|job| job.stage)
+                        .unwrap_or_else(|| "failed".to_string());
+                    let _ = JobService::new(&core.store).fail(
+                        &job_id,
+                        &error.message,
+                        error.detail.as_ref(),
+                    );
+                    emit(&failed_stage, &error.message, "failed");
                 }
             }
             core.cancels.finish(&job_id);
@@ -99,10 +108,7 @@ async fn run(
             for id in payload.template_ids.iter().take(MAX_FIGURE_TEMPLATES) {
                 let detail = templates.template_detail(id)?;
                 metadata.push(detail.metadata());
-                images.push(read_image_input(
-                    &detail.image_path,
-                    &detail.mime_type,
-                )?);
+                images.push(read_image_input(&detail.image_path, &detail.mime_type)?);
             }
 
             let run = FigureRun {
@@ -112,6 +118,8 @@ async fn run(
                 implement_profile: &implement_profile,
                 template_images: images,
                 template_metadata: serde_json::Value::Array(metadata),
+                app_data: &core.app_data,
+                job_id,
             };
             let image_b64 = run.run(&payload, stage).await?;
             Ok(vec![save_image(core, job_id, "figure.png", &image_b64)?])
@@ -168,6 +176,12 @@ async fn run(
 }
 
 fn read_image_input(path: &std::path::Path, mime_type: &str) -> AppResult<ImageInput> {
+    let bytes = std::fs::read(path).map_err(|error| {
+        AppError::new(
+            "template_image_read_failed",
+            format!("Failed to read template image {}: {error}", path.display()),
+        )
+    })?;
     Ok(ImageInput {
         filename: path
             .file_name()
@@ -175,7 +189,7 @@ fn read_image_input(path: &std::path::Path, mime_type: &str) -> AppResult<ImageI
             .unwrap_or("template.png")
             .to_string(),
         mime_type: mime_type.to_string(),
-        b64: encode_b64(&std::fs::read(path)?),
+        b64: encode_b64(&bytes),
     })
 }
 
