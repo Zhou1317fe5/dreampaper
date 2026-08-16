@@ -2,9 +2,27 @@ import type { Lang } from '../app';
 
 export const desktopCopy = {
   zh: {
-    nav: { paper: '科研图', ppt: '幻灯片', templates: '模板库', settings: '设置' },
+    nav: { paper: '科研图', ppt: '幻灯片', templates: '模板库', history: '历史', settings: '设置' },
     settingsIntro: '配置 Design / Implement / Search 模型，以及代理与并发。',
-    recent: { title: '近期任务', empty: '还没有任务', failed: '失败', running: '进行中', done: '完成' },
+    recent: { title: '近期任务', empty: '还没有任务', failed: '失败', running: '进行中', done: '完成', untitled: '未命名任务', finishedAt: '完成于', delete: '删除', confirmDelete: '确认删除', deleteFailed: '删除任务失败', rerun: '重跑', rerunFailed: '重跑失败', rerunUnavailable: '该任务缺少原始输入，无法重跑' },
+    history: {
+      title: '历史记录',
+      intro: '全部任务的完整档案：分页浏览，按类型与状态筛选，按标题搜索。',
+      all: '全部',
+      filterMode: '按类型筛选',
+      filterStatus: '按状态筛选',
+      searchPlaceholder: '搜索标题…',
+      emptyFiltered: '没有符合筛选条件的任务',
+      prev: '上一页',
+      next: '下一页',
+      count: (n: number) => `共 ${n} 条`,
+      today: '今天',
+      yesterday: '昨天',
+      earlier: '更早',
+      stopped: '已停止',
+      zoom: '放大图片',
+      closePreview: '关闭预览'
+    },
     pane: {
       form: '参数',
       templates: '模板',
@@ -73,9 +91,27 @@ export const desktopCopy = {
     }
   },
   en: {
-    nav: { paper: 'Figure', ppt: 'Slide', templates: 'Templates', settings: 'Settings' },
+    nav: { paper: 'Figure', ppt: 'Slide', templates: 'Templates', history: 'History', settings: 'Settings' },
     settingsIntro: 'Configure Design / Implement / Search models, proxy and concurrency.',
-    recent: { title: 'Recent jobs', empty: 'No jobs yet', failed: 'failed', running: 'running', done: 'done' },
+    recent: { title: 'Recent jobs', empty: 'No jobs yet', failed: 'failed', running: 'running', done: 'done', untitled: 'Untitled task', finishedAt: 'finished at', delete: 'Delete', confirmDelete: 'Confirm', deleteFailed: 'Failed to delete job', rerun: 'Rerun', rerunFailed: 'Rerun failed', rerunUnavailable: 'Original input missing, cannot rerun' },
+    history: {
+      title: 'History',
+      intro: 'The full archive of every job: paginated, filterable by kind and status, searchable by title.',
+      all: 'All',
+      filterMode: 'Filter by kind',
+      filterStatus: 'Filter by status',
+      searchPlaceholder: 'Search titles…',
+      emptyFiltered: 'No jobs match the current filters',
+      prev: 'Previous',
+      next: 'Next',
+      count: (n: number) => `${n} total`,
+      today: 'Today',
+      yesterday: 'Yesterday',
+      earlier: 'Earlier',
+      stopped: 'Stopped',
+      zoom: 'Zoom image',
+      closePreview: 'Close preview'
+    },
     pane: {
       form: 'Parameters',
       templates: 'Templates',

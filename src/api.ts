@@ -108,6 +108,10 @@ export function cancelJob(id: string) {
   return ipc<JobRecord>('cancel_job', { id });
 }
 
+export function deleteJob(id: string) {
+  return ipc<null>('delete_job', { id });
+}
+
 export function deleteTemplates(ids: string[]) {
   return ipc<number>('delete_templates', { ids });
 }
@@ -174,3 +178,4 @@ export async function openExternal(url: string): Promise<void> {
 export async function openArtifact(assetId: string): Promise<void> {
   return ipc('open_artifact', { artifactId: assetId });
 }
+

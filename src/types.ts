@@ -87,4 +87,7 @@ export interface JobRecord {
   images: Array<{ name: string; url: string }>;
   events?: JobEvent[];
   error?: JobError | null;
+  title?: string | null;
+  thumbnail?: string | null;
+  payload?: { mode: string; payload: unknown } | null;
 }
