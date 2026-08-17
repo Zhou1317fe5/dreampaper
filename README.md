@@ -148,6 +148,64 @@ npm run dev
 
 ---
 
+## 模型配置介绍
+
+三个角色分开配置，各自独立的协议 / URL / 模型 / 密钥，在「设置」页保存后写入 `~/.dreampaper/config.json`。
+
+1. **`design model`（规划模型，需支持多模态输入）**：负责对用户上传的资料 / 图片进行深度理解，编排目标成图的内容与布局，生成最终的制图描述。强风格一致性约束来自 template 底图。上游模型需支持图像输入，支持 OpenAI / Anthropic 协议。
+2. **`implement model`（制图模型）**：接收 `design model` 的输出内容，制作最终的效果图。支持 OpenAI 的 `v1/images/generations` 和 gemini 的协议，可接入 gpt-image-2、nano-banana-2。
+3. **`search model`（搜索模型）**：抽取用户输入资料 / 图片中的实物素材，如硬件实物（雷达、相机、无人机等）、软件产品（Claude Code、Codex、Pi 等）。复用现实网络素材图片，辅助 `design model` 进行规划，抑制图像编造，并丰富图像展示效果。可自定义 xAI search（配置 Grok search model）或使用 Tavily，默认 DuckDuckGo。
+
+### 协议下拉
+
+| 角色 | 协议 | 请求端点 | 典型配置 |
+| --- | --- | --- | --- |
+| design | `openai_responses`（默认） | `{URL}/v1/responses` | `https://api.openai.com` + `gpt-5.4` |
+| design | `openai_chat` | `{URL}/v1/chat/completions` | 任意 OpenAI 兼容网关 |
+| design | `anthropic_messages` | `{URL}/v1/messages` | `https://api.anthropic.com` |
+| implement | `image2`（默认） | `{URL}/v1/images/generations`，带底图时走 `/v1/images/edits` | `https://api.openai.com` + `gpt-image-2` |
+| implement | `banana2` | `{URL}/{版本}/interactions` | gemini 协议网关 + `nano-banana-2` |
+| search | `duckduckgo_html`（默认） | DuckDuckGo HTML | 免密钥，密钥框自动禁用 |
+| search | `tavily` | `{URL}/search` | `https://api.tavily.com`，需 API key |
+| search | `openai_chat (search model)` | `{URL}/chat/completions` | `https://api.x.ai/v1` + `grok-3` |
+
+> URL 只填到域名即可，未带 `/v1` 时会自动补全；`banana2` 例外，版本由「版本」字段控制（默认 `v1beta`）。
+
+### 出图参数下拉
+
+`implement` 选 `image2` 时：
+
+| 字段 | 可选值 | 默认 | 说明 |
+| --- | --- | --- | --- |
+| 尺寸 `size` | `auto` / `16:9` / `1024x1024` / `1200x675` / `928x1664` / `3000x1000` | `1200x675` | OpenAI 尺寸。支持 auto、比例字符串，或任意 宽x高 / 宽*高；尺寸会自动归到最接近比例，并按面积推导 1K/2K/4K。 |
+| 质量 `quality` | `auto` / `low` / `medium` / `high` / `hd` | `auto` | 兼容字段；size 为具体尺寸时由尺寸优先推导分辨率；size 为空、auto 或比例时，medium 映射到 2K，high/hd 映射到 4K，其它默认 1K。 |
+| 格式 `output_format` | `png` / `jpeg` / `webp` | `png` | 图片格式 |
+| response `response_format` | `url` / `b64_json` | `url` | 响应格式，`url` 图片 URL，`b64_json` 图片 Base64 编码 |
+
+`implement` 选 `banana2` 时：
+
+| 字段 | 可选值 | 默认 |
+| --- | --- | --- |
+| 比例 `aspect_ratio` | `16:9` / `4:3` / `1:1` / `3:2` | `16:9` |
+| 清晰度 `image_size` | `1K` / `2K` / `4K` | `4K` |
+| 倾向 `thinking_level` | `minimal` / `high` | `high` |
+| 格式 `mime_type` | `image/png` / `image/jpeg` / `image/webp` | `image/png` |
+| 版本 `api_version` | 手填 | `v1beta` |
+
+### 通用与运行时参数
+
+| 字段 | 适用角色 | 范围 | 默认 / 建议 |
+| --- | --- | --- | --- |
+| 超时(秒) | 全部 | 5–1800 | design 120；implement 600–900（同步出图慢）；search 15 |
+| 重试次数 | 全部 | 0–8 | design 2 / implement 3 / search 1 |
+| 流式 | design | 开 / 关 | 关 |
+| 结果数 | search | 1–8 | 3 |
+| 代理 | 全局 | URL 或端口号 | `http://127.0.0.1:7890`，留空表示不指定代理 |
+| 规划并发 | 全局（幻灯片） | 1–20 | 留空 = 跟随页数 |
+| 制图并发 | 全局（幻灯片） | 1–20 | 留空 = 跟随页数，建议先设 1 降低网关 502 |
+
+---
+
 ## 使用
 
 1. **设置**：配置 Design / Implement（及可选 Search、代理、并发），保存  

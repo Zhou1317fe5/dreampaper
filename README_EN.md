@@ -136,6 +136,64 @@ Open http://127.0.0.1:5173
 
 ---
 
+## Model configuration
+
+Three roles are configured separately, each with its own protocol / URL / model / key. Saving on the Settings page writes them to `~/.dreampaper/config.json`.
+
+1. **`design model` (planner, needs multimodal input)** — reads the uploaded material and images in depth, arranges the content and layout of the target image, and produces the final drawing description. Strong style consistency comes from the template image. The upstream model must accept image input; OpenAI and Anthropic protocols are supported.
+2. **`implement model` (renderer)** — takes the `design model` output and produces the final image. Supports OpenAI `v1/images/generations` and the gemini protocol; works with gpt-image-2 and nano-banana-2.
+3. **`search model`** — extracts real-world objects from the uploaded material and images: hardware (radar, cameras, drones, …) and software products (Claude Code, Codex, Pi, …). It reuses real reference images from the web to guide the `design model`, suppressing invented visuals and enriching the result. Point it at xAI search (a Grok search model) or Tavily; DuckDuckGo is the default.
+
+### Protocol dropdown
+
+| Role | Protocol | Endpoint | Typical setup |
+| --- | --- | --- | --- |
+| design | `openai_responses` (default) | `{URL}/v1/responses` | `https://api.openai.com` + `gpt-5.4` |
+| design | `openai_chat` | `{URL}/v1/chat/completions` | any OpenAI-compatible gateway |
+| design | `anthropic_messages` | `{URL}/v1/messages` | `https://api.anthropic.com` |
+| implement | `image2` (default) | `{URL}/v1/images/generations`, or `/v1/images/edits` when reference images are attached | `https://api.openai.com` + `gpt-image-2` |
+| implement | `banana2` | `{URL}/{version}/interactions` | gemini-protocol gateway + `nano-banana-2` |
+| search | `duckduckgo_html` (default) | DuckDuckGo HTML | no key needed; the key field is disabled |
+| search | `tavily` | `{URL}/search` | `https://api.tavily.com`, API key required |
+| search | `openai_chat (search model)` | `{URL}/chat/completions` | `https://api.x.ai/v1` + `grok-3` |
+
+> The URL only needs the host; `/v1` is appended automatically when missing. `banana2` is the exception — its version comes from the Version field (default `v1beta`).
+
+### Image parameter dropdowns
+
+`implement` with `image2`:
+
+| Field | Options | Default |
+| --- | --- | --- |
+| Size `size` | `auto` / `16:9` / `1024x1024` / `1200x675` / `928x1664` / `3000x1000` | `1200x675` |
+| Quality `quality` | `auto` / `low` / `medium` / `high` / `hd` | `auto` |
+| Format `output_format` | `png` / `jpeg` / `webp` | `png` |
+| response `response_format` | `url` / `b64_json` | `url` |
+
+`implement` with `banana2`:
+
+| Field | Options | Default |
+| --- | --- | --- |
+| Ratio `aspect_ratio` | `16:9` / `4:3` / `1:1` / `3:2` | `16:9` |
+| Sharpness `image_size` | `1K` / `2K` / `4K` | `4K` |
+| Quality `thinking_level` | `minimal` / `high` | `high` |
+| Format `mime_type` | `image/png` / `image/jpeg` / `image/webp` | `image/png` |
+| Version `api_version` | free text | `v1beta` |
+
+### Shared and runtime parameters
+
+| Field | Role | Range | Default / suggestion |
+| --- | --- | --- | --- |
+| Timeout (s) | all | 5–1800 | design 120; implement 600–900 (sync image APIs are slow); search 15 |
+| Retries | all | 0–8 | design 2 / implement 3 / search 1 |
+| Stream | design | on / off | off |
+| Results | search | 1–8 | 3 |
+| Proxy | global | URL or port | `http://127.0.0.1:7890`; empty means no explicit proxy |
+| Plan workers | global (slides) | 1–20 | empty = follow page count |
+| Image workers | global (slides) | 1–20 | empty = follow page count; start at 1 to reduce gateway 502s |
+
+---
+
 ## Usage
 
 1. **Settings** — configure Design / Implement (optional Search, proxy, concurrency), save  
