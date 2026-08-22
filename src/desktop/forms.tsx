@@ -1,6 +1,6 @@
 import { useEffect, useId, useState, type ReactNode } from 'react';
-import { createJob, listTemplates, uploadAsset } from '../api';
-import { JobPanel, copy, type Lang } from '../app';
+import { cancelJob, createJob, getJob, listTemplates, uploadAsset } from '../api';
+import { JobPanel, copy, isJobSettled, type Lang } from '../app';
 import type { AssetUpload, JobRecord, TemplateSummary } from '../types';
 import type { DesktopCopy } from './copy';
 
@@ -208,27 +208,90 @@ function TileGrid({
 function ResultPane({
   job,
   t,
+  activeJobs,
   emptyText,
   onJob,
+  onOpenTask,
+  onCancel,
   onMessage
 }: {
   job: JobRecord | null;
   t: Copy;
+  activeJobs: JobRecord[];
   emptyText: string;
   onJob: (job: JobRecord) => void;
+  onOpenTask: (job: JobRecord) => void;
+  onCancel: (job: JobRecord) => void;
   onMessage: (text: string, tone?: 'info' | 'error') => void;
 }) {
-  if (!job) return <div className="dp-empty">{emptyText}</div>;
+  const pending = activeJobs.filter((item) => !isJobSettled(item.status));
+  const currentJob = job && !activeJobs.some((item) => item.id === job.id) ? job : job;
   return (
-    <JobPanel
-      job={job}
-      t={t}
-      onCancelled={(next) => {
-        onJob(next);
-        onMessage(t.result.stopped);
-      }}
-      onError={(message) => onMessage(message, 'error')}
-    />
+    <div className="result-stack">
+      {pending.length > 0 && (
+        <ActiveJobList
+          jobs={pending}
+          current={currentJob}
+          t={t}
+          onPick={onOpenTask}
+          onCancel={onCancel}
+        />
+      )}
+      {job ? (
+        <JobPanel
+          job={job}
+          t={t}
+          onCancelled={(next) => {
+            onJob(next);
+            onMessage(t.result.stopped);
+          }}
+          onError={(message) => onMessage(message, 'error')}
+        />
+      ) : (
+        <div className="dp-empty">{emptyText}</div>
+      )}
+    </div>
+  );
+}
+
+function ActiveJobList({
+  jobs,
+  current,
+  t,
+  onPick,
+  onCancel
+}: {
+  jobs: JobRecord[];
+  current: JobRecord | null;
+  t: Copy;
+  onPick: (job: JobRecord) => void;
+  onCancel: (job: JobRecord) => void;
+}) {
+  if (jobs.length === 0) return null;
+  return (
+    <section className="active-jobs" aria-label={t.result.activeJobs}>
+      <h3>{t.result.activeJobs}</h3>
+      <ul>
+        {jobs.map((job) => (
+          <li key={job.id} className={`active-job${current?.id === job.id ? ' current' : ''}`}>
+            <button type="button" className="active-job-main" onClick={() => onPick(job)}>
+              <span className={`job-dot job-dot-${job.status}`} aria-hidden="true" />
+              <span className="active-job-title">{job.title || t.result.waiting}</span>
+              <span className="active-job-meta">{job.message || job.stage}</span>
+            </button>
+            <button
+              type="button"
+              className="active-job-stop"
+              aria-label={t.result.stop}
+              title={t.result.stop}
+              onClick={() => onCancel(job)}
+            >
+              {t.result.stop}
+            </button>
+          </li>
+        ))}
+      </ul>
+    </section>
   );
 }
 
@@ -263,6 +326,7 @@ export function FigureForm({
   onJob,
   onMessage,
   onGoTemplates,
+  onOpenTask,
   t,
   d
 }: {
@@ -272,11 +336,29 @@ export function FigureForm({
   onJob: (job: JobRecord) => void;
   onMessage: (text: string, tone?: 'info' | 'error') => void;
   onGoTemplates: () => void;
+  onOpenTask: (job: JobRecord) => void;
   t: Copy;
   d: DesktopCopy;
 }) {
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [pane, setPane] = useState<'templates' | 'result'>('templates');
+  const [activeJobs, setActiveJobs] = useState<JobRecord[]>([]);
+
+  // Refresh every in-flight job created from this form.
+  useEffect(() => {
+    const pending = activeJobs.filter((item) => !isJobSettled(item.status));
+    if (pending.length === 0) return;
+    const timer = window.setInterval(() => {
+      Promise.all(pending.map((item) => getJob(item.id)))
+        .then((updated) => {
+          setActiveJobs((current) =>
+            current.map((item) => updated.find((u) => u.id === item.id) ?? item)
+          );
+        })
+        .catch(() => {});
+    }, 1800);
+    return () => window.clearInterval(timer);
+  }, [activeJobs]);
   const { kind, query, selected, title, description, aspectRatio, layoutFidelity, styleStrength, custom } = state;
 
   function patch(values: Partial<FigureFormState>) {
@@ -325,6 +407,7 @@ export function FigureForm({
         }
       });
       onJob(created);
+      setActiveJobs((current) => [created, ...current.filter((item) => item.id !== created.id)]);
     } catch (error) {
       onMessage(error instanceof Error ? error.message : t.common.submitFailed, 'error');
     }
@@ -444,7 +527,22 @@ export function FigureForm({
             }
           />
         ) : (
-          <ResultPane job={job} t={t} emptyText={d.pane.resultEmpty} onJob={onJob} onMessage={onMessage} />
+          <ResultPane
+            job={job}
+            t={t}
+            activeJobs={activeJobs}
+            emptyText={d.pane.resultEmpty}
+            onJob={onJob}
+            onOpenTask={onOpenTask}
+            onCancel={async (item) => {
+              try {
+                onJob(await cancelJob(item.id));
+              } catch (error) {
+                onMessage(error instanceof Error ? error.message : t.result.stopFailed, 'error');
+              }
+            }}
+            onMessage={onMessage}
+          />
         )}
       </Card>
     </div>
@@ -474,6 +572,7 @@ export function SlideForm({
   onJob,
   onMessage,
   onGoTemplates,
+  onOpenTask,
   t,
   d
 }: {
@@ -483,12 +582,29 @@ export function SlideForm({
   onJob: (job: JobRecord) => void;
   onMessage: (text: string, tone?: 'info' | 'error') => void;
   onGoTemplates: () => void;
+  onOpenTask: (job: JobRecord) => void;
   t: Copy;
   d: DesktopCopy;
 }) {
   const [masters, setMasters] = useState<TemplateSummary[]>([]);
   const [query, setQuery] = useState('');
   const [pane, setPane] = useState<'master' | 'result'>('master');
+  const [activeJobs, setActiveJobs] = useState<JobRecord[]>([]);
+
+  useEffect(() => {
+    const pending = activeJobs.filter((item) => !isJobSettled(item.status));
+    if (pending.length === 0) return;
+    const timer = window.setInterval(() => {
+      Promise.all(pending.map((item) => getJob(item.id)))
+        .then((updated) => {
+          setActiveJobs((current) =>
+            current.map((item) => updated.find((u) => u.id === item.id) ?? item)
+          );
+        })
+        .catch(() => {});
+    }, 1800);
+    return () => window.clearInterval(timer);
+  }, [activeJobs]);
   const { master, materials, material, pages, custom } = state;
 
   function patch(values: Partial<SlideFormState>) {
@@ -538,6 +654,7 @@ export function SlideForm({
         }
       });
       onJob(created);
+      setActiveJobs((current) => [created, ...current.filter((item) => item.id !== created.id)]);
     } catch (error) {
       onMessage(error instanceof Error ? error.message : t.common.submitFailed, 'error');
     }
@@ -660,7 +777,22 @@ export function SlideForm({
             }
           />
         ) : (
-          <ResultPane job={job} t={t} emptyText={d.pane.resultEmpty} onJob={onJob} onMessage={onMessage} />
+          <ResultPane
+            job={job}
+            t={t}
+            activeJobs={activeJobs}
+            emptyText={d.pane.resultEmpty}
+            onJob={onJob}
+            onOpenTask={onOpenTask}
+            onCancel={async (item) => {
+              try {
+                onJob(await cancelJob(item.id));
+              } catch (error) {
+                onMessage(error instanceof Error ? error.message : t.result.stopFailed, 'error');
+              }
+            }}
+            onMessage={onMessage}
+          />
         )}
       </Card>
     </div>

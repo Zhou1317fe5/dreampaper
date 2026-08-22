@@ -69,6 +69,9 @@ jobs:
       - name: 安装前端依赖
         run: npm ci
 
+      - name: 运行 Rust 单元测试
+        run: cargo test --manifest-path src-tauri/Cargo.toml
+
       # 安装包内显示的版本必须跟 tag 一致，否则用户装完看到的还是 0.1.0
       - name: 对齐 tag 与包内版本号
         shell: bash

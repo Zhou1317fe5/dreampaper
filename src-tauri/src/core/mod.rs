@@ -141,6 +141,10 @@ impl Core {
         jobs.get_job(id)
     }
 
+    pub fn delete_job(&self, id: String) -> AppResult<()> {
+        JobService::new(&self.store).delete(&self.app_data, &id)
+    }
+
     pub fn delete_templates(&self, ids: Vec<String>) -> AppResult<usize> {
         TemplateService::new(&self.store, &self.app_data).delete_templates(&ids)
     }

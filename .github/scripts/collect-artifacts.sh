@@ -40,12 +40,23 @@ emit() {
   echo "$src → $out_dir/$dest"
 }
 
+verify_embedded_prompts() {
+  local exe="$1"
+  # This literal comes from prompts/global/system.md and proves include_str!
+  # put the runtime prompt payload inside the standalone Windows executable.
+  if ! grep -aFq "internal dreampaper design agent" "$exe"; then
+    echo "错误：Windows 可执行文件未内置 prompt 资源：$exe" >&2
+    exit 1
+  fi
+}
+
 case "$target" in
   *windows*)
     setup="$(take_one "NSIS 安装包" "$bundle_dir/nsis" -maxdepth 1 -name '*-setup.exe')"
     emit "$setup" "dreampaper-${version}-setup.exe"
 
     portable="$(take_one "便携版可执行文件" "$binary_dir" -maxdepth 1 -iname 'dreampaper.exe')"
+    verify_embedded_prompts "$portable"
     emit "$portable" "dreampaper-${version}-portable.exe"
     ;;
   x86_64-apple-darwin)

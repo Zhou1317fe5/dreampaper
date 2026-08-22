@@ -3,7 +3,51 @@ use std::path::{Path, PathBuf};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
+
+const EMBEDDED_PROMPTS: &[(&str, &str)] = &[
+    ("global/system.md", include_str!("../../../prompts/global/system.md")),
+    (
+        "global/figure_style.md",
+        include_str!("../../../prompts/global/figure_style.md"),
+    ),
+    (
+        "modes/paper_figure/structure.md",
+        include_str!("../../../prompts/modes/paper_figure/structure.md"),
+    ),
+    (
+        "modes/paper_figure/design.md",
+        include_str!("../../../prompts/modes/paper_figure/design.md"),
+    ),
+    (
+        "modes/paper_figure/diagram_rules.md",
+        include_str!("../../../prompts/modes/paper_figure/diagram_rules.md"),
+    ),
+    (
+        "modes/paper_figure/plot_rules.md",
+        include_str!("../../../prompts/modes/paper_figure/plot_rules.md"),
+    ),
+    (
+        "modes/paper_figure/validator.md",
+        include_str!("../../../prompts/modes/paper_figure/validator.md"),
+    ),
+    (
+        "modes/ppt_slide/analyzer.md",
+        include_str!("../../../prompts/modes/ppt_slide/analyzer.md"),
+    ),
+    (
+        "modes/ppt_slide/design.md",
+        include_str!("../../../prompts/modes/ppt_slide/design.md"),
+    ),
+    (
+        "modes/ppt_slide/master_rules.md",
+        include_str!("../../../prompts/modes/ppt_slide/master_rules.md"),
+    ),
+    (
+        "styles/academic_ppt.md",
+        include_str!("../../../prompts/styles/academic_ppt.md"),
+    ),
+];
 
 #[derive(Clone, Debug)]
 pub struct PromptStore {
@@ -25,7 +69,23 @@ impl PromptStore {
 
     pub fn load(&self, key: &str) -> AppResult<PromptAsset> {
         let path = self.root.join(Path::new(key));
-        let content = std::fs::read_to_string(path)?;
+        let content = match std::fs::read_to_string(&path) {
+            Ok(content) => content,
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => embedded_prompt(key)
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    AppError::new(
+                        "prompt_not_found",
+                        format!("Prompt resource not found: {}", path.display()),
+                    )
+                })?,
+            Err(error) => {
+                return Err(AppError::new(
+                    "prompt_read_failed",
+                    format!("Failed to read prompt resource {}: {error}", path.display()),
+                ))
+            }
+        };
         let hash = short_hash(&content);
         Ok(PromptAsset {
             key: key.to_string(),
@@ -37,6 +97,12 @@ impl PromptStore {
     pub fn load_all(&self, keys: &[&str]) -> AppResult<Vec<PromptAsset>> {
         keys.iter().map(|key| self.load(key)).collect()
     }
+}
+
+fn embedded_prompt(key: &str) -> Option<&'static str> {
+    EMBEDDED_PROMPTS
+        .iter()
+        .find_map(|(name, content)| (*name == key).then_some(*content))
 }
 
 pub fn compose_prompt(assets: &[PromptAsset], sections: &[(&str, String)]) -> String {
@@ -98,5 +164,15 @@ mod tests {
     fn missing_prompt_asset_is_an_error() {
         let store = PromptStore::new(prompt_root());
         assert!(store.load("modes/does_not_exist.md").is_err());
+    }
+
+    #[test]
+    fn packaged_prompts_work_without_an_external_resource_directory() {
+        let store = PromptStore::new(prompt_root().join("missing-resource-directory"));
+        let asset = store
+            .load("global/system.md")
+            .expect("packaged prompt should be embedded in the executable");
+
+        assert!(asset.content.contains("dreampaper design agent"));
     }
 }

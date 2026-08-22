@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use base64::Engine;
 use regex::Regex;
-use serde_json::Value;
+use serde_json::{json, Value};
 
 use crate::core::config::ModelProfile;
 use crate::error::{AppError, AppResult};
@@ -38,7 +38,10 @@ pub fn normalize_base_url(base_url: &str, protocol: &str) -> String {
     }
     let version_pattern = Regex::new(r"/v\d+(?:beta)?(?:/|$)").expect("valid regex");
     let path = base.split_once("://").map(|(_, rest)| rest).unwrap_or(base);
-    let path = path.split_once('/').map(|(_, rest)| format!("/{rest}")).unwrap_or_default();
+    let path = path
+        .split_once('/')
+        .map(|(_, rest)| format!("/{rest}"))
+        .unwrap_or_default();
     if version_pattern.is_match(&path) {
         return base.to_string();
     }
@@ -66,6 +69,34 @@ pub fn safe_error_message(message: &str) -> String {
 
 pub fn model_error(message: impl AsRef<str>) -> AppError {
     AppError::new("model_error", safe_error_message(message.as_ref()))
+}
+
+pub fn model_profile_error(
+    profile: &ModelProfile,
+    endpoint: &str,
+    code: &str,
+    message: impl AsRef<str>,
+    http_status: Option<u16>,
+    suggestion: impl AsRef<str>,
+) -> AppError {
+    let summary = safe_error_message(message.as_ref());
+    AppError::with_detail(
+        code,
+        &summary,
+        json!({
+            "summary": summary.clone(),
+            "code": code,
+            "role": &profile.role,
+            "profile_id": &profile.id,
+            "profile_name": &profile.name,
+            "protocol": &profile.protocol,
+            "model": &profile.model,
+            "base_url": &profile.base_url,
+            "endpoint": endpoint,
+            "http_status": http_status,
+            "suggestion": suggestion.as_ref(),
+        }),
+    )
 }
 
 pub fn retry_backoff(attempt: u32, status: Option<u16>) -> Duration {
@@ -115,15 +146,103 @@ pub fn describe_transport_error(error: &reqwest::Error) -> String {
 }
 
 pub fn format_http_error(kind: &str, status: u16, body: &str) -> String {
-    let snippet: String = body.trim().replace('\n', " ").chars().take(280).collect();
+    let detail = response_error_summary(body);
+    let suffix = if detail.is_empty() {
+        String::new()
+    } else {
+        format!(" 服务返回：{detail}")
+    };
     match status {
-        502 => format!(
-            "{kind} failed: HTTP 502 Bad Gateway. 上游网关在同步等待出图时断开（图片可能已在服务端生成）。\
-             请提高 implement 超时（建议 ≥600s）、增加重试，并优先使用 response_format=url。 body={snippet}"
+        502 => format!("{kind} 请求失败：HTTP 502，上游网关无法完成请求。{suffix}"),
+        503 | 504 => format!(
+            "{kind} 请求失败：HTTP {status}，上游网关维护、超时或无法连接模型服务。{suffix}"
         ),
-        503 | 504 => format!("{kind} failed: HTTP {status}. 上游维护或超时，请稍后重试。 body={snippet}"),
-        _ => format!("{kind} failed: HTTP {status} {snippet}"),
+        _ => format!("{kind} 请求失败：HTTP {status}。{suffix}"),
     }
+}
+
+pub fn response_error_summary(body: &str) -> String {
+    let raw = body.trim();
+    if raw.is_empty() {
+        return String::new();
+    }
+    if let Ok(value) = serde_json::from_str::<Value>(raw) {
+        let candidate = value["error"]["message"]
+            .as_str()
+            .or_else(|| value["error"]["detail"].as_str())
+            .or_else(|| value["message"].as_str())
+            .or_else(|| value["detail"].as_str());
+        if let Some(text) = candidate {
+            return text
+                .split_whitespace()
+                .collect::<Vec<_>>()
+                .join(" ")
+                .chars()
+                .take(240)
+                .collect();
+        }
+    }
+    let title = Regex::new(r"(?is)<title[^>]*>(.*?)</title>").expect("valid title regex");
+    let tags = Regex::new(r"(?is)<[^>]+>").expect("valid tag regex");
+    let source = title
+        .captures(raw)
+        .and_then(|capture| capture.get(1).map(|item| item.as_str()))
+        .unwrap_or(raw);
+    tags.replace_all(source, " ")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .chars()
+        .take(240)
+        .collect()
+}
+
+pub fn http_error_suggestion(role: &str, status: u16) -> String {
+    match status {
+        502 | 503 | 504 => format!(
+            "{} 上游网关异常，请稍后重试；若持续出现，请检查该服务地址或更换中转服务。",
+            capitalize_role(role)
+        ),
+        401 => format!("请检查 {} 配置的 API key。", capitalize_role(role)),
+        403 => format!(
+            "请检查 {} 配置的 API key、模型权限和服务商访问策略。",
+            capitalize_role(role)
+        ),
+        404 => format!(
+            "请检查 {} 的 Base URL、协议和模型名。",
+            capitalize_role(role)
+        ),
+        429 => "请求频率或额度受限。请稍后重试，并检查账户额度。".to_string(),
+        _ => format!(
+            "请检查 {} 的 Base URL、协议、模型名和服务商状态。",
+            capitalize_role(role)
+        ),
+    }
+}
+
+fn capitalize_role(role: &str) -> String {
+    let mut chars = role.chars();
+    match chars.next() {
+        Some(first) => first.to_uppercase().collect::<String>() + chars.as_str(),
+        None => String::new(),
+    }
+}
+
+pub fn model_http_error(
+    profile: &ModelProfile,
+    endpoint: &str,
+    kind: &str,
+    status: u16,
+    body: &str,
+) -> AppError {
+    model_profile_error(
+        profile,
+        endpoint,
+        "model_http_error",
+        format_http_error(kind, status, body),
+        Some(status),
+        http_error_suggestion(&profile.role, status),
+    )
 }
 
 pub fn build_client(
@@ -131,6 +250,9 @@ pub fn build_client(
     proxy_url: Option<&str>,
 ) -> AppResult<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
+        // Some gateways' bot protection serves empty 200 responses to rustls
+        // HTTP/2 fingerprints on large payloads; HTTP/1.1 is accepted everywhere.
+        .http1_only()
         .connect_timeout(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECONDS))
         .timeout(Duration::from_secs(read_timeout_seconds.max(1)))
         .tcp_keepalive(Duration::from_secs(30))
@@ -145,7 +267,11 @@ pub fn build_client(
         .map_err(|error| model_error(format!("HTTP client 构建失败: {error}")))
 }
 
-pub fn effective_timeout(profile: &ModelProfile, override_seconds: Option<u64>, minimum: Option<u64>) -> u64 {
+pub fn effective_timeout(
+    profile: &ModelProfile,
+    override_seconds: Option<u64>,
+    minimum: Option<u64>,
+) -> u64 {
     let base = override_seconds.unwrap_or(profile.timeout_seconds.max(1) as u64);
     match minimum {
         Some(floor) => base.max(floor),
@@ -157,10 +283,10 @@ pub fn merged_headers(
     profile: &ModelProfile,
     extra: Vec<(String, String)>,
 ) -> Vec<(String, String)> {
-    let mut headers: Vec<(String, String)> = vec![(
-        "Content-Type".to_string(),
-        "application/json".to_string(),
-    )];
+    // Content-Type is intentionally not set here: request builders (.json() /
+    // .multipart()) already set it, and duplicating it makes some gateways
+    // answer `200 "Header Content-Type Error"` instead of the model output.
+    let mut headers: Vec<(String, String)> = Vec::new();
     for (key, value) in &profile.headers {
         if let Some(text) = value.as_str() {
             headers.push((key.clone(), text.to_string()));
@@ -232,13 +358,34 @@ pub async fn post_json_with_retries(
                 if attempt == attempts - 1 {
                     break;
                 }
-                tokio::time::sleep(retry_delay(attempt, None, options.retry_interval_seconds)).await;
+                tokio::time::sleep(retry_delay(attempt, None, options.retry_interval_seconds))
+                    .await;
             }
         }
     }
 
-    Err(model_error(
-        last_transport_error.unwrap_or_else(|| "模型请求失败：未收到有效响应".to_string()),
+    let message =
+        last_transport_error.unwrap_or_else(|| "模型请求失败：未收到有效响应".to_string());
+    let suggestion = if options
+        .proxy_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some()
+    {
+        "请检查代理地址和代理服务，或清空代理后直连。".to_string()
+    } else {
+        format!(
+            "请检查 {} 的 Base URL、DNS 和网络连接。",
+            capitalize_role(&profile.role)
+        )
+    };
+    Err(model_profile_error(
+        profile,
+        url,
+        "model_network_error",
+        message,
+        None,
+        suggestion,
     ))
 }
 
@@ -265,7 +412,10 @@ pub fn drain_sse_events(buffer: &mut Vec<u8>) -> Vec<String> {
     events
 }
 
-fn build_stream_client(idle_timeout_seconds: u64, proxy_url: Option<&str>) -> AppResult<reqwest::Client> {
+fn build_stream_client(
+    idle_timeout_seconds: u64,
+    proxy_url: Option<&str>,
+) -> AppResult<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECONDS))
         .read_timeout(Duration::from_secs(idle_timeout_seconds.max(1)))
@@ -307,7 +457,11 @@ pub async fn post_sse_with_retries(
                 if status >= 400 {
                     let body = response.text().await.unwrap_or_default();
                     if !is_retryable(status) || attempt == attempts - 1 {
-                        return Ok(SseOutcome { status, body, events: Vec::new() });
+                        return Ok(SseOutcome {
+                            status,
+                            body,
+                            events: Vec::new(),
+                        });
                     }
                     tokio::time::sleep(retry_delay(
                         attempt,
@@ -318,14 +472,24 @@ pub async fn post_sse_with_retries(
                     continue;
                 }
                 match read_sse_events(response).await {
-                    Ok(events) => return Ok(SseOutcome { status, body: String::new(), events }),
+                    Ok(events) => {
+                        return Ok(SseOutcome {
+                            status,
+                            body: String::new(),
+                            events,
+                        })
+                    }
                     Err(error) => {
                         last_error = Some(error.message);
                         if attempt == attempts - 1 {
                             break;
                         }
-                        tokio::time::sleep(retry_delay(attempt, None, options.retry_interval_seconds))
-                            .await;
+                        tokio::time::sleep(retry_delay(
+                            attempt,
+                            None,
+                            options.retry_interval_seconds,
+                        ))
+                        .await;
                     }
                 }
             }
@@ -345,13 +509,33 @@ pub async fn post_sse_with_retries(
                 if attempt == attempts - 1 {
                     break;
                 }
-                tokio::time::sleep(retry_delay(attempt, None, options.retry_interval_seconds)).await;
+                tokio::time::sleep(retry_delay(attempt, None, options.retry_interval_seconds))
+                    .await;
             }
         }
     }
 
-    Err(model_error(
-        last_error.unwrap_or_else(|| "模型流式请求失败：未收到有效响应".to_string()),
+    let message = last_error.unwrap_or_else(|| "模型流式请求失败：未收到有效响应".to_string());
+    let suggestion = if options
+        .proxy_url
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .is_some()
+    {
+        "请检查代理地址和代理服务，或清空代理后直连。".to_string()
+    } else {
+        format!(
+            "请检查 {} 的 Base URL、DNS 和网络连接。",
+            capitalize_role(&profile.role)
+        )
+    };
+    Err(model_profile_error(
+        profile,
+        url,
+        "model_network_error",
+        message,
+        None,
+        suggestion,
     ))
 }
 
@@ -400,15 +584,61 @@ pub fn parse_json_response(text: &str) -> AppResult<Value> {
     if let Ok(value) = serde_json::from_str::<Value>(cleaned) {
         return Ok(value);
     }
-    let start = cleaned.find('{');
-    let end = cleaned.rfind('}');
-    if let (Some(start), Some(end)) = (start, end) {
-        if end > start {
-            return serde_json::from_str::<Value>(&cleaned[start..=end])
-                .map_err(|error| model_error(format!("模型返回的不是合法 JSON: {error}")));
+    let mut last_error = None;
+    for candidate in balanced_json_values(&cleaned) {
+        match serde_json::from_str::<Value>(candidate) {
+            Ok(value) => return Ok(value),
+            Err(error) => last_error = Some(error),
         }
     }
-    Err(model_error("模型返回的不是合法 JSON"))
+    match last_error {
+        Some(error) => Err(model_error(format!("模型返回的不是合法 JSON: {error}"))),
+        None => Err(model_error("模型返回的不是合法 JSON")),
+    }
+}
+
+/// Yields top-level balanced `{...}` / `[...]` substrings in arrival order,
+/// skipping brackets that appear inside JSON string literals.
+fn balanced_json_values(text: &str) -> Vec<&str> {
+    let mut candidates = Vec::new();
+    let mut start: Option<usize> = None;
+    let mut depth = 0usize;
+    let mut in_string = false;
+    let mut escaped = false;
+    for (index, character) in text.char_indices() {
+        if in_string {
+            if escaped {
+                escaped = false;
+            } else if character == '\\' {
+                escaped = true;
+            } else if character == '"' {
+                in_string = false;
+            }
+            continue;
+        }
+        match character {
+            '"' => in_string = true,
+            '{' | '[' => {
+                if depth == 0 {
+                    start = Some(index);
+                }
+                depth += 1;
+            }
+            '}' | ']' => {
+                if depth > 0 {
+                    depth -= 1;
+                    if depth == 0 {
+                        if let Some(start) = start {
+                            candidates.push(&text[start..=index]);
+                        }
+                        start = None;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    candidates
 }
 
 #[cfg(test)]
@@ -417,17 +647,89 @@ mod tests {
 
     #[test]
     fn normalizes_base_url() {
-        assert_eq!(normalize_base_url("https://api.openai.com", "openai_chat"), "https://api.openai.com/v1");
-        assert_eq!(normalize_base_url("https://api.openai.com/v1", "openai_chat"), "https://api.openai.com/v1");
-        assert_eq!(normalize_base_url("https://x.com/v1beta/", "openai_chat"), "https://x.com/v1beta");
-        assert_eq!(normalize_base_url("https://gw.example.com/", "banana2"), "https://gw.example.com");
+        assert_eq!(
+            normalize_base_url("https://api.openai.com", "openai_chat"),
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            normalize_base_url("https://api.openai.com/v1", "openai_chat"),
+            "https://api.openai.com/v1"
+        );
+        assert_eq!(
+            normalize_base_url("https://x.com/v1beta/", "openai_chat"),
+            "https://x.com/v1beta"
+        );
+        assert_eq!(
+            normalize_base_url("https://gw.example.com/", "banana2"),
+            "https://gw.example.com"
+        );
+    }
+
+    #[test]
+    fn extracts_the_first_complete_json_value_from_noisy_text() {
+        let noisy = "analysis mentions {an invalid example} first\n{\"ok\":true,\"text\":\"brace } inside string\"}\ntrailing {notes}";
+        let parsed = parse_json_response(noisy).expect("完整 JSON 对象应被提取");
+        assert_eq!(parsed["ok"], true);
+        assert_eq!(parsed["text"], "brace } inside string");
+    }
+
+    #[test]
+    fn parses_json_arrays_wrapped_in_prose() {
+        let parsed =
+            parse_json_response("Result follows: [1, {\"x\": 2}] done").expect("数组也应支持");
+        assert_eq!(parsed[1]["x"], 2);
     }
 
     #[test]
     fn redacts_secrets_in_errors() {
-        let message = safe_error_message("failed with Bearer sk-abc123def456 and api_key=topsecret");
+        let message =
+            safe_error_message("failed with Bearer sk-abc123def456 and api_key=topsecret");
         assert!(message.contains("Bearer <redacted>"));
         assert!(!message.contains("topsecret"));
+    }
+
+    #[test]
+    fn extracts_gateway_html_title_without_leaking_the_page() {
+        let body = r#"<html><head><title>无法连接到服务器</title></head><body><style>large page</style></body></html>"#;
+        assert_eq!(response_error_summary(body), "无法连接到服务器");
+        let message = format_http_error("Design", 504, body);
+        assert!(message.contains("HTTP 504"));
+        assert!(message.contains("无法连接到服务器"));
+        assert!(!message.contains("<html"));
+    }
+
+    #[test]
+    fn model_http_errors_include_the_profile_and_endpoint() {
+        let profile = ModelProfile {
+            id: "design-default".to_string(),
+            role: "design".to_string(),
+            name: "Design model".to_string(),
+            protocol: "openai_responses".to_string(),
+            base_url: "https://gateway.example".to_string(),
+            model: "model-a".to_string(),
+            api_key: Some("secret".to_string()),
+            api_version: None,
+            headers: serde_json::Map::new(),
+            timeout_seconds: 120,
+            max_retries: 2,
+            output_defaults: serde_json::Map::new(),
+            has_api_key: None,
+            api_key_hint: None,
+        };
+        let error = model_http_error(
+            &profile,
+            "https://gateway.example/v1/responses",
+            "Design",
+            504,
+            "<title>upstream unavailable</title>",
+        );
+        let detail = error.detail.expect("structured detail");
+        assert_eq!(detail["role"], "design");
+        assert_eq!(detail["profile_id"], "design-default");
+        assert_eq!(detail["model"], "model-a");
+        assert_eq!(detail["http_status"], 504);
+        assert_eq!(detail["endpoint"], "https://gateway.example/v1/responses");
+        assert!(!detail.to_string().contains("secret"));
     }
 
     #[test]
@@ -435,7 +737,10 @@ mod tests {
         assert_eq!(retry_backoff(0, Some(502)), Duration::from_secs(10));
         assert_eq!(retry_backoff(0, Some(429)), Duration::from_secs(15));
         assert_eq!(retry_backoff(2, None), Duration::from_secs(4));
-        assert_eq!(retry_backoff(9, Some(502)), Duration::from_secs(MAX_BACKOFF_SECONDS));
+        assert_eq!(
+            retry_backoff(9, Some(502)),
+            Duration::from_secs(MAX_BACKOFF_SECONDS)
+        );
     }
 
     #[test]
@@ -481,8 +786,14 @@ mod tests {
     #[test]
     fn parses_fenced_and_trailing_json() {
         let fenced = "```json\n{\"ok\": true}\n```";
-        assert_eq!(parse_json_response(fenced).unwrap()["ok"], serde_json::json!(true));
+        assert_eq!(
+            parse_json_response(fenced).unwrap()["ok"],
+            serde_json::json!(true)
+        );
         let noisy = "Sure, here you go:\n{\"a\": 1}\nHope that helps.";
-        assert_eq!(parse_json_response(noisy).unwrap()["a"], serde_json::json!(1));
+        assert_eq!(
+            parse_json_response(noisy).unwrap()["a"],
+            serde_json::json!(1)
+        );
     }
 }

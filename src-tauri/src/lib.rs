@@ -39,6 +39,7 @@ pub fn run() {
             cmd::get_job,
             cmd::list_jobs,
             cmd::cancel_job,
+            cmd::delete_job,
             cmd::delete_templates,
             cmd::save_asset,
             cmd::open_artifact

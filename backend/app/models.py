@@ -123,6 +123,21 @@ class JobEvent(BaseModel):
     timestamp: str
 
 
+class JobError(BaseModel):
+    summary: str
+    code: str = "job_failed"
+    stage: str | None = None
+    role: ModelRole | None = None
+    profile_id: str | None = None
+    profile_name: str | None = None
+    protocol: str | None = None
+    model: str | None = None
+    base_url: str | None = None
+    endpoint: str | None = None
+    http_status: int | None = None
+    suggestion: str | None = None
+
+
 class JobRecord(BaseModel):
     id: str
     mode: JobMode
@@ -133,5 +148,6 @@ class JobRecord(BaseModel):
     updated_at: str
     images: list[JobImage] = Field(default_factory=list)
     events: list[JobEvent] = Field(default_factory=list)
+    error: JobError | None = None
     internal_artifacts: dict[str, Any] = Field(default_factory=dict)
 

@@ -149,6 +149,7 @@ pub fn open_artifact(state: State<'_, AppState>, artifact_id: String) -> AppResu
         .map_err(|error| AppError::new("open_artifact_failed", error.to_string()))
 }
 
+
 #[tauri::command]
 pub fn cancel_job(
     app: AppHandle,
@@ -178,6 +179,11 @@ pub fn cancel_job(
 #[tauri::command]
 pub fn delete_templates(state: State<'_, AppState>, ids: Vec<String>) -> AppResult<usize> {
     state.core().delete_templates(ids)
+}
+
+#[tauri::command]
+pub fn delete_job(state: State<'_, AppState>, id: String) -> AppResult<()> {
+    state.core().delete_job(id)
 }
 
 #[tauri::command]

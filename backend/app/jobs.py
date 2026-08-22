@@ -13,10 +13,20 @@ from pathlib import Path
 from typing import Any
 from xml.etree import ElementTree
 
-from .adapters import DesignClient, ImplementClient, image_to_b64, parse_json_response, public_profile_snapshot, safe_error_message
+from .adapters import (
+    DesignClient,
+    ImplementClient,
+    ModelAdapterError,
+    image_to_b64,
+    normalize_base_url,
+    parse_json_response,
+    public_profile_snapshot,
+    response_error_summary,
+    safe_error_message,
+)
 from .assets import AssetStore
 from .config import ConfigStore, app_home
-from .models import JobCreateRequest, JobEvent, JobImage, JobRecord, PaperFigurePayload, PptSlidePayload
+from .models import JobCreateRequest, JobError, JobEvent, JobImage, JobRecord, PaperFigurePayload, PptSlidePayload
 from .prompts import PromptStore, compose_prompt
 from .search import SearchClient
 from .templates import TemplateStore
@@ -365,11 +375,30 @@ class JobManager:
             else:
                 await self._run_ppt(job_id, PptSlidePayload.model_validate(request.payload))
         except Exception as exc:
-            error_message = safe_error_message(exc)
             record = self.get(job_id)
+            failed_stage = record.stage if record.stage not in {"queued", "started", "failed"} else None
+            if isinstance(exc, ModelAdapterError):
+                diagnostic = exc.diagnostic(failed_stage)
+                error_message = diagnostic["summary"]
+            else:
+                error_message = safe_error_message(exc)
+                diagnostic = {
+                    "summary": error_message,
+                    "code": "job_failed",
+                    "stage": failed_stage,
+                }
+            diagnostic = self._enrich_error_diagnostic(record, diagnostic)
             artifacts = dict(record.internal_artifacts)
-            artifacts["error"] = {"message": error_message, "failed_at": now_iso()}
-            self._mark_stage(job_id, "failed", error_message, status="failed", event_status="failed", internal_artifacts=artifacts)
+            artifacts["error"] = {**diagnostic, "message": error_message, "failed_at": now_iso()}
+            self._mark_stage(
+                job_id,
+                failed_stage or "failed",
+                error_message,
+                status="failed",
+                event_status="failed",
+                error=JobError.model_validate(diagnostic),
+                internal_artifacts=artifacts,
+            )
 
     async def _run_paper(self, job_id: str, payload: PaperFigurePayload) -> None:
         """科研图两阶段 design：①仅 template 结构规划 ②结构+用户内容 → implement_prompt。"""
@@ -505,6 +534,15 @@ class JobManager:
             proxy_url=proxy_url,
         )
         implement_prompt = self._paper_implement_prompt(design_json)
+        self._merge_artifacts(
+            job_id,
+            {
+                "design_model_response": {"raw_text": design_text, "parsed_json": design_json},
+                "design_response": design_json,
+                "implement_model_request": self._implement_request_summary(implement_profile, implement_prompt, {}, 0),
+                "implement_prompts": [implement_prompt],
+            },
+        )
         self._mark_stage(job_id, "paper_implement", "调用 implement model 生成图片")
         image_b64 = await self.implement.generate(implement_profile, implement_prompt, proxy_url=proxy_url)
         self._mark_stage(job_id, "paper_save", "保存生成图片")
@@ -516,11 +554,7 @@ class JobManager:
             job_id,
             internal_artifacts={
                 **self.get(job_id).internal_artifacts,
-                "design_model_response": {"raw_text": design_text, "parsed_json": design_json},
-                "design_response": design_json,
-                "implement_model_request": self._implement_request_summary(implement_profile, implement_prompt, {}, 0),
                 "implement_model_response": self._image_response_summary(image, image_b64),
-                "implement_prompts": [implement_prompt],
                 "retries": prev_retries,
             },
         )
@@ -1257,7 +1291,24 @@ class JobManager:
             fallback = "任务失败，旧记录没有保存具体错误；请重新提交以获取阶段日志。"
             normalized_message = message or error_message or fallback
             events = record.events or [JobEvent(stage="failed", message=normalized_message, status="failed", timestamp=timestamp)]
-            return record.model_copy(update={"message": normalized_message, "stage": record.stage if record.stage != "queued" else "failed", "events": events})
+            failed_stage = record.stage if record.stage not in {"queued", "started", "failed"} else next(
+                (event.stage for event in reversed(events) if event.stage not in {"queued", "started", "failed"}),
+                None,
+            )
+            diagnostic = record.error.model_dump() if record.error else {
+                "summary": normalized_message,
+                "code": "job_failed",
+                "stage": failed_stage,
+            }
+            diagnostic = JobManager._enrich_error_diagnostic(record, diagnostic)
+            return record.model_copy(
+                update={
+                    "message": diagnostic["summary"],
+                    "stage": failed_stage or "failed",
+                    "events": events,
+                    "error": JobError.model_validate(diagnostic),
+                }
+            )
 
         if record.status == "succeeded" and not record.events:
             event = JobEvent(stage="completed", message=message or "任务完成", status="succeeded", timestamp=record.updated_at)
@@ -1271,6 +1322,76 @@ class JobManager:
         if not message:
             return record.model_copy(update={"message": record.events[-1].message})
         return record
+
+    @staticmethod
+    def _enrich_error_diagnostic(record: JobRecord, diagnostic: dict[str, Any]) -> dict[str, Any]:
+        result = {key: value for key, value in diagnostic.items() if value is not None}
+        stage = str(result.get("stage") or "")
+        artifacts = record.internal_artifacts or {}
+        role = result.get("role")
+        if not role:
+            design_markers = ("design", "structure", "analyze", "outline", "page_plan", "parse")
+            role = "implement" if "implement" in stage else "design" if any(marker in stage for marker in design_markers) else None
+            result["role"] = role
+
+        if role == "implement":
+            request_keys = ["implement_model_request"]
+        elif role != "design":
+            request_keys = []
+        elif "outline" in stage:
+            request_keys = ["outline_design_model_request", "design_model_request"]
+        elif "structure" in stage:
+            request_keys = ["structure_model_request", "design_model_request"]
+        else:
+            request_keys = ["design_model_request", "outline_design_model_request", "structure_model_request"]
+        profile: dict[str, Any] = {}
+        for key in request_keys:
+            request = artifacts.get(key)
+            if isinstance(request, list):
+                request = request[-1] if request else None
+            if isinstance(request, dict) and isinstance(request.get("profile"), dict):
+                profile = request["profile"]
+                break
+        for key in ("id", "name", "protocol", "model", "base_url"):
+            target = {"id": "profile_id", "name": "profile_name"}.get(key, key)
+            if profile.get(key) is not None and not result.get(target):
+                result[target] = profile[key]
+
+        status_match = re.search(r"HTTP\s+(\d{3})", str(result.get("summary") or ""), flags=re.I)
+        if status_match and not result.get("http_status"):
+            result["http_status"] = int(status_match.group(1))
+        status = result.get("http_status")
+        summary = str(result.get("summary") or "任务失败")
+        if "<html" in summary.lower() or "<!doctype" in summary.lower():
+            detail = response_error_summary(summary)
+            prefix = f"{str(role).capitalize()} 请求失败"
+            summary = f"{prefix}：HTTP {status or '错误'}。{f' 服务返回：{detail}' if detail else ''}"
+        summary = re.sub(r"^ModelAdapterError:\s*", "", summary).strip()
+        result["summary"] = summary[:500]
+
+        if not result.get("endpoint") and profile.get("base_url") and profile.get("protocol"):
+            base = normalize_base_url(str(profile["base_url"]), str(profile["protocol"]))
+            if role == "design":
+                suffix = {
+                    "openai_chat": "/chat/completions",
+                    "openai_responses": "/responses",
+                    "anthropic_messages": "/messages",
+                }.get(str(profile["protocol"]), "")
+            elif profile.get("protocol") == "image2":
+                suffix = "/images/generations"
+            else:
+                version = profile.get("api_version") or "v1beta"
+                base = str(profile["base_url"]).rstrip("/")
+                suffix = f"/{version}/interactions"
+            result["endpoint"] = f"{base}{suffix}"
+        if not result.get("suggestion"):
+            if status in {502, 503, 504}:
+                result["suggestion"] = f"{str(role).capitalize()} 上游网关异常，请稍后重试；若持续出现，请检查该服务地址或更换中转服务。"
+            elif not role:
+                result["suggestion"] = "请根据失败阶段检查输入文件、运行环境或对应服务配置。"
+            else:
+                result["suggestion"] = f"请检查 {str(role).capitalize()} 配置的地址、协议、模型名和密钥。"
+        return result
 
     def _update(self, job_id: str, **changes) -> None:
         record = self.get(job_id)

@@ -364,6 +364,7 @@ impl PagePlanContext<'_> {
             images: &no_images,
             timeout_seconds: Some(self.timeout_seconds),
             proxy_url: self.proxy_url,
+            response_sink: None,
         };
         let expected = page_number.max(0) as usize;
         let validated = parse_validate_or_fill(&call, &page_text, |value| {
@@ -443,6 +444,7 @@ impl SlideRun<'_> {
             images: &template_images,
             timeout_seconds: Some(design_timeout),
             proxy_url: proxy,
+            response_sink: None,
         };
         let template_analysis =
             parse_validate_or_fill(&analyzer_call, &analysis_text, validate_template_analysis)
@@ -502,6 +504,7 @@ impl SlideRun<'_> {
             images: &no_images,
             timeout_seconds: Some(design_timeout),
             proxy_url: proxy,
+            response_sink: None,
         };
         let deck_outline = parse_validate_or_fill(&outline_call, &outline_text, |value| {
             validate_ppt_outline(value, page_count)
