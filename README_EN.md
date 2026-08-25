@@ -31,6 +31,18 @@
 
 ---
 
+## What's new
+
+- Reworked history manager: browse every past job, rerun any of them in one click
+- Transparent generation log: the design model's analysis for each step streams alongside the job progress
+- Assorted bug fixes and smoothness work
+
+| History | Design log |
+| --- | --- |
+| ![history](examples/desktop/history.jpg) | ![log](examples/desktop/log.jpg) |
+
+---
+
 ## Gallery
 
 ### Web UI

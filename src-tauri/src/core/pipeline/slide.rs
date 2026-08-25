@@ -5,11 +5,11 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use crate::core::config::{AppConfig, ModelProfile};
-use crate::core::model::design::{DesignClient, ImageInput};
+use crate::core::model::design::ImageInput;
 use crate::core::model::implement::ImplementClient;
 use crate::core::pipeline::contract;
 use crate::core::pipeline::figure::StageSink;
-use crate::core::pipeline::runner::{parse_validate_or_fill, DesignCall};
+use crate::core::pipeline::runner::{parse_validate_or_fill, DesignCall, DesignStep};
 use crate::core::pipeline::slide_validate::{
     apply_master_prompt_prefix, validate_ppt_outline, validate_ppt_pages, validate_ppt_single_page,
     validate_template_analysis,
@@ -17,6 +17,7 @@ use crate::core::pipeline::slide_validate::{
 use crate::core::pipeline::visual::{build_visual_asset_context, visual_asset_context_text};
 use crate::core::prompt::{compose_prompt, PromptAsset, PromptStore};
 use crate::error::{AppError, AppResult};
+use crate::event::DesignSink;
 
 const PPT_DESIGN_TIMEOUT_SECONDS: u64 = 300;
 
@@ -301,6 +302,7 @@ struct PagePlanContext<'a> {
     custom_prompt: &'a str,
     timeout_seconds: u64,
     proxy_url: Option<&'a str>,
+    design_log: DesignSink<'a>,
 }
 
 impl PagePlanContext<'_> {
@@ -347,16 +349,8 @@ impl PagePlanContext<'_> {
             &format!("规划第 {page_number} 页内容"),
         );
         let no_images: Vec<ImageInput> = Vec::new();
-        let page_text = DesignClient::generate(
-            self.profile,
-            self.system_prompt,
-            &page_prompt,
-            &no_images,
-            Some(self.timeout_seconds),
-            self.proxy_url,
-        )
-        .await?;
-
+        let step_name = format!("ppt_page_plan_{page_number}");
+        let step_label = format!("规划第 {page_number} 页内容");
         let call = DesignCall {
             profile: self.profile,
             system_prompt: self.system_prompt,
@@ -365,7 +359,14 @@ impl PagePlanContext<'_> {
             timeout_seconds: Some(self.timeout_seconds),
             proxy_url: self.proxy_url,
             response_sink: None,
+            log: Some(DesignStep {
+                sink: self.design_log,
+                step: &step_name,
+                label: &step_label,
+            }),
         };
+        let page_text = call.first().await?;
+
         let expected = page_number.max(0) as usize;
         let validated = parse_validate_or_fill(&call, &page_text, |value| {
             validate_ppt_single_page(value, expected, Some(self.template_analysis))
@@ -383,6 +384,7 @@ pub struct SlideRun<'a> {
     pub search_profile: &'a ModelProfile,
     pub template_image: ImageInput,
     pub material_context: String,
+    pub design_log: DesignSink<'a>,
 }
 
 impl SlideRun<'_> {
@@ -425,18 +427,6 @@ impl SlideRun<'_> {
         );
         let template_images = vec![self.template_image.clone()];
 
-        stage("ppt_analyze", "调用 design model 分析 template");
-        let analysis_text = DesignClient::generate(
-            self.design_profile,
-            &analyzer_assets[0].content,
-            &analyzer_prompt,
-            &template_images,
-            Some(design_timeout),
-            proxy,
-        )
-        .await?;
-
-        stage("ppt_parse_template", "解析 template 分析结果");
         let analyzer_call = DesignCall {
             profile: self.design_profile,
             system_prompt: &analyzer_assets[0].content,
@@ -445,7 +435,17 @@ impl SlideRun<'_> {
             timeout_seconds: Some(design_timeout),
             proxy_url: proxy,
             response_sink: None,
+            log: Some(DesignStep {
+                sink: self.design_log,
+                step: "ppt_analyze",
+                label: "分析 template",
+            }),
         };
+
+        stage("ppt_analyze", "调用 design model 分析 template");
+        let analysis_text = analyzer_call.first().await?;
+
+        stage("ppt_parse_template", "解析 template 分析结果");
         let template_analysis =
             parse_validate_or_fill(&analyzer_call, &analysis_text, validate_template_analysis)
                 .await?
@@ -484,19 +484,7 @@ impl SlideRun<'_> {
             ],
         );
 
-        stage("ppt_outline", "调用 design model 规划整套大纲");
         let no_images: Vec<ImageInput> = Vec::new();
-        let outline_text = DesignClient::generate(
-            self.design_profile,
-            &page_assets[0].content,
-            &outline_prompt,
-            &no_images,
-            Some(design_timeout),
-            proxy,
-        )
-        .await?;
-
-        stage("ppt_parse_outline", "解析并校验整套大纲");
         let outline_call = DesignCall {
             profile: self.design_profile,
             system_prompt: &page_assets[0].content,
@@ -505,7 +493,17 @@ impl SlideRun<'_> {
             timeout_seconds: Some(design_timeout),
             proxy_url: proxy,
             response_sink: None,
+            log: Some(DesignStep {
+                sink: self.design_log,
+                step: "ppt_outline",
+                label: "规划整套大纲",
+            }),
         };
+
+        stage("ppt_outline", "调用 design model 规划整套大纲");
+        let outline_text = outline_call.first().await?;
+
+        stage("ppt_parse_outline", "解析并校验整套大纲");
         let deck_outline = parse_validate_or_fill(&outline_call, &outline_text, |value| {
             validate_ppt_outline(value, page_count)
         })
@@ -532,6 +530,7 @@ impl SlideRun<'_> {
             custom_prompt: &custom_prompt,
             timeout_seconds: design_timeout,
             proxy_url: proxy,
+            design_log: self.design_log,
         };
         let planned = run_ordered(
             page_briefs

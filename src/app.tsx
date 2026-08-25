@@ -1,10 +1,11 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react';
+import { memo, useEffect, useId, useMemo, useRef, useState } from 'react';
 import {
   cancelJob,
   createJob,
   desktopAvailable,
   getConfig,
   getJob,
+  listenDesignLog,
   listTemplates,
   openArtifact,
   saveAsset,
@@ -88,7 +89,7 @@ export const copy = {
     settings: { design: 'Design', implement: 'Implement', search: 'Search', searchHint: '幻灯片视觉素材检索。duckduckgo_html 免密钥；tavily 填 API key；openai_chat 可用 Grok/OpenAI 兼容 search model。', proxyAndConcurrency: '代理与并发', proxy: '代理', proxyHint: '本地代理地址，例如 http://127.0.0.1:7890；留空表示不指定代理。', concurrency: '幻灯片并发', concurrencyHint: '留空表示跟随本次输入的幻灯片页数；实际并发不会超过页数。制图建议先设为 1，降低网关 502。', pagePlanConcurrency: '规划并发', imageConcurrency: '制图并发', defaultByPages: '默认=页数', size: '尺寸', quality: '质量', format: '格式', ratio: '比例', clarity: '清晰度', tendency: '倾向', version: '版本', timeout: '超时(秒)', timeoutHint: '同步出图可能较久，implement 建议 600–900。', retries: '重试次数', maxResults: '结果数', stream: '流式', streamOn: '开启', keySet: '密钥已配置', keyNone: '未配置密钥', notSet: '未设置' },
     paper: { title: '科研图', intro: '选择 template 作为 few-shot 风格参考。', figureTitle: '标题', description: '方法', ratio: '比例', fidelity: '布局', strength: '风格', custom: '约束', customHint: '可选，用于补充禁用元素、强调风格、文字限制或审稿要求。', generate: '生成', generating: '生成中…', search: '搜索', kind: '类型', inherited: '继承', submitted: '科研图任务已提交' },
     ppt: { title: '幻灯片', intro: '上传 template，分析母版，再批量生成页面。', template: '母版', pages: '页数', material: '资料', materialFile: '附件', materialHint: '可输入文字，也可上传 pdf、docx、txt、md、csv 等资料。', custom: '约束', customHint: '可选，用于补充页数结构、禁用元素、术语、颜色或展示重点。', generate: '生成', generating: '生成中…', submitted: '幻灯片任务已提交', uploading: '上传中...', uploaded: '已上传' },
-    result: { title: 'Result', waiting: '等待中', progress: '进度', current: '当前', step: '当前步骤', failed: '失败', completed: '完成', queued: '排队中', running: '运行中', cancelled: '已停止', preview: '预览', download: '下载', of: '/', elapsed: '已用时', stop: '停止任务', stopping: '停止中…', stopped: '任务已停止', stopFailed: '停止失败', saveFailed: '保存失败', previewFailed: '预览失败', activeJobs: '进行中任务', errorTitle: '故障诊断', errorRole: '相关配置', errorProfile: '配置名称', errorModel: '模型', errorEndpoint: '请求地址', errorStatus: 'HTTP 状态', errorStage: '失败阶段', errorSuggestion: '处理建议' }
+    result: { title: 'Result', waiting: '等待中', progress: '进度', current: '当前', step: '当前步骤', failed: '失败', completed: '完成', queued: '排队中', running: '运行中', cancelled: '已停止', preview: '预览', download: '下载', of: '/', elapsed: '已用时', stop: '停止任务', stopping: '停止中…', stopped: '任务已停止', stopFailed: '停止失败', saveFailed: '保存失败', previewFailed: '预览失败', errorTitle: '故障诊断', errorRole: '相关配置', errorProfile: '配置名称', errorModel: '模型', errorEndpoint: '请求地址', errorStatus: 'HTTP 状态', errorStage: '失败阶段', errorSuggestion: '处理建议', designLog: 'Design 分析日志', designLogHint: '每个步骤调用 design model 返回的原文', designLogEmpty: '该步骤没有返回内容', designLogStreaming: '接收中…' }
   },
   en: {
     nav: { paper: 'Figure', ppt: 'Slide', settings: 'Settings' },
@@ -111,7 +112,7 @@ export const copy = {
     settings: { design: 'Design', implement: 'Implement', search: 'Search', searchHint: 'Slide visual grounding search. duckduckgo_html needs no key; tavily needs API key; openai_chat is an OpenAI-compatible search model (e.g. Grok endpoint).', proxyAndConcurrency: 'Proxy & concurrency', proxy: 'Proxy', proxyHint: 'Local proxy URL, e.g. http://127.0.0.1:7890. Leave empty to disable explicit proxy.', concurrency: 'Slide concurrency', concurrencyHint: 'Leave empty to follow the current Slide page count; actual concurrency will not exceed pages. Prefer image concurrency = 1 to reduce 502s.', pagePlanConcurrency: 'Plan workers', imageConcurrency: 'Image workers', defaultByPages: 'default=pages', size: 'Size', quality: 'Quality', format: 'Format', ratio: 'Ratio', clarity: 'Sharpness', tendency: 'Quality', version: 'Version', timeout: 'Timeout (s)', timeoutHint: 'Sync image APIs can be slow; implement often needs 600–900s.', retries: 'Retries', maxResults: 'Results', stream: 'Stream', streamOn: 'On', keySet: 'Key set', keyNone: 'No key', notSet: 'Not set' },
     paper: { title: 'Figure', intro: 'Choose templates as few-shot visual references.', figureTitle: 'Title', description: 'Method', ratio: 'Ratio', fidelity: 'Layout', strength: 'Style', custom: 'Rules', customHint: 'Optional constraints for banned elements, style emphasis, text limits, or review requirements.', generate: 'Generate', generating: 'Generating…', search: 'Search', kind: 'Type', inherited: 'Template', submitted: 'Figure job submitted' },
     ppt: { title: 'Slide', intro: 'Upload a template, analyze the master, then generate pages.', template: 'Master', pages: 'Pages', material: 'Material', materialFile: 'Files', materialHint: 'Enter text or upload pdf, docx, txt, md, csv, and other common materials.', custom: 'Rules', customHint: 'Optional constraints for page structure, banned elements, terms, colors, or focus.', generate: 'Generate', generating: 'Generating…', submitted: 'Slide job submitted', uploading: 'Uploading...', uploaded: 'Uploaded' },
-    result: { title: 'Result', waiting: 'Waiting', progress: 'Progress', current: 'Current', step: 'Current step', failed: 'Failed', completed: 'Completed', queued: 'Queued', running: 'Running', cancelled: 'Stopped', preview: 'Preview', download: 'Download', of: '/', elapsed: 'Elapsed', stop: 'Stop job', stopping: 'Stopping…', stopped: 'Job stopped', stopFailed: 'Stop failed', saveFailed: 'Save failed', previewFailed: 'Preview failed', activeJobs: 'Running jobs', errorTitle: 'Failure diagnosis', errorRole: 'Related configuration', errorProfile: 'Profile', errorModel: 'Model', errorEndpoint: 'Endpoint', errorStatus: 'HTTP status', errorStage: 'Failed stage', errorSuggestion: 'Suggested action' }
+    result: { title: 'Result', waiting: 'Waiting', progress: 'Progress', current: 'Current', step: 'Current step', failed: 'Failed', completed: 'Completed', queued: 'Queued', running: 'Running', cancelled: 'Stopped', preview: 'Preview', download: 'Download', of: '/', elapsed: 'Elapsed', stop: 'Stop job', stopping: 'Stopping…', stopped: 'Job stopped', stopFailed: 'Stop failed', saveFailed: 'Save failed', previewFailed: 'Preview failed', errorTitle: 'Failure diagnosis', errorRole: 'Related configuration', errorProfile: 'Profile', errorModel: 'Model', errorEndpoint: 'Endpoint', errorStatus: 'HTTP status', errorStage: 'Failed stage', errorSuggestion: 'Suggested action', designLog: 'Design analysis log', designLogHint: 'Raw design-model output per step', designLogEmpty: 'This step returned nothing', designLogStreaming: 'Receiving…' }
   }
 } as const;
 
@@ -165,6 +166,106 @@ export function useJobPolling(job: JobRecord | null, setJob: (job: JobRecord) =>
     }, 1800);
     return () => window.clearInterval(timer);
   }, [job, setJob, onError]);
+}
+
+export type DesignCard = {
+  step: string;
+  label: string;
+  text: string;
+  status: 'running' | 'succeeded' | 'failed';
+};
+
+/**
+ * The design-model answer for each step of the current job.
+ *
+ * Seeded from what the job already has on record, so reopening a finished — or
+ * half-finished — job shows the same cards it showed while running, then kept
+ * current from the pushed stream. Order is first-seen order, which for slides
+ * means pages appear as their concurrent workers start rather than sorted by
+ * page number.
+ */
+export function useDesignLogs(job: JobRecord | null): DesignCard[] {
+  const jobId = job?.id ?? null;
+  const [cards, setCards] = useState<DesignCard[]>([]);
+
+  // Read through a ref: polling hands back a fresh job object every 1.8s, so
+  // depending on `job.design_logs` directly would re-seed on every tick and
+  // throw away the text streamed in between.
+  const recorded = useRef(job?.design_logs);
+  recorded.current = job?.design_logs;
+
+  useEffect(() => {
+    setCards(
+      (recorded.current ?? []).map((entry) => ({
+        step: entry.step,
+        label: entry.label,
+        text: entry.content,
+        status: entry.status === 'failed' ? 'failed' : 'succeeded'
+      }))
+    );
+  }, [jobId]);
+
+  useEffect(() => {
+    if (!jobId) return;
+    let stop: (() => void) | null = null;
+    let cancelled = false;
+    listenDesignLog((event) => {
+      if (event.job_id !== jobId) return;
+      setCards((current) => {
+        const index = current.findIndex((card) => card.step === event.step);
+        const previous = current[index];
+        switch (event.kind) {
+          case 'begin':
+            if (previous) return current;
+            return [...current, { step: event.step, label: event.label, text: '', status: 'running' }];
+          case 'reset':
+            if (!previous) return current;
+            return replaceAt(current, index, { ...previous, text: '', status: 'running' });
+          case 'delta': {
+            // A begin can be missed if the panel mounts mid-step (reopening a
+            // running job), so a delta has to be able to open the card itself.
+            if (!previous) {
+              return [
+                ...current,
+                { step: event.step, label: event.label, text: event.text, status: 'running' }
+              ];
+            }
+            return replaceAt(current, index, { ...previous, text: previous.text + event.text });
+          }
+          case 'end': {
+            // The final text is authoritative: it may differ from the sum of the
+            // deltas, and for a non-streaming profile it is the only text there is.
+            const settled: DesignCard = {
+              step: event.step,
+              label: event.label || previous?.label || event.step,
+              text: event.text,
+              status: event.status === 'failed' ? 'failed' : 'succeeded'
+            };
+            return previous ? replaceAt(current, index, settled) : [...current, settled];
+          }
+          default:
+            return current;
+        }
+      });
+    })
+      .then((unlisten) => {
+        if (cancelled) unlisten();
+        else stop = unlisten;
+      })
+      .catch(() => {});
+    return () => {
+      cancelled = true;
+      stop?.();
+    };
+  }, [jobId]);
+
+  return cards;
+}
+
+function replaceAt<T>(items: T[], index: number, value: T): T[] {
+  const next = items.slice();
+  next[index] = value;
+  return next;
 }
 
 export function useElapsedSeconds(job: JobRecord | null): number {
@@ -917,6 +1018,8 @@ export function JobPanel({
   const progress = useMemo(() => computeJobProgress(job), [job]);
   const [stepAnimKey, setStepAnimKey] = useState(0);
   const [stopping, setStopping] = useState(false);
+  const designCards = useDesignLogs(job);
+  const [designOpen, setDesignOpen] = useState(false);
   const elapsed = useElapsedSeconds(job);
   const settled = isJobSettled(job.status);
   const canStop = Boolean(onCancelled) && desktopAvailable() && !settled;
@@ -928,6 +1031,12 @@ export function JobPanel({
   useEffect(() => {
     setStopping(false);
   }, [job.id, settled]);
+
+  // Collapsed is the default for every job, including one switched to mid-run:
+  // the log is for looking into a step, not something to read past.
+  useEffect(() => {
+    setDesignOpen(false);
+  }, [job.id]);
 
   async function stop() {
     if (!onCancelled) return;
@@ -993,6 +1102,34 @@ export function JobPanel({
             )}
           </div>
         </div>
+        {designCards.length > 0 && (
+          <div className={`design-log${designOpen ? ' is-open' : ''}`}>
+            <button
+              type="button"
+              className="design-log-toggle"
+              aria-expanded={designOpen}
+              title={t.result.designLogHint}
+              onClick={() => setDesignOpen((open) => !open)}
+            >
+              <span className="design-log-caret" aria-hidden="true" />
+              <span className="design-log-title">{t.result.designLog}</span>
+              <span className="design-log-count">{designCards.length}</span>
+            </button>
+            {designOpen && (
+              <ol className="design-log-list">
+                {designCards.map((card) => (
+                  <DesignLogCard
+                    key={card.step}
+                    card={card}
+                    active={card.step === displayStage}
+                    settled={settled}
+                    t={t}
+                  />
+                ))}
+              </ol>
+            )}
+          </div>
+        )}
       </div>
       {images.length > 0 && (
         <div className="result-grid">
@@ -1045,6 +1182,50 @@ export function JobPanel({
     </section>
   );
 }
+
+// Only the streaming card changes between batches, and `replaceAt` keeps the
+// others' object identity, so memoizing here means a 12-page deck re-renders one
+// card per update instead of twelve.
+const DesignLogCard = memo(function DesignLogCard({
+  card,
+  active,
+  settled,
+  t
+}: {
+  card: DesignCard;
+  active: boolean;
+  settled: boolean;
+  t: typeof copy[Lang];
+}) {
+  const body = useRef<HTMLPreElement>(null);
+  // Stopping a job aborts the pipeline task, so the step that was mid-stream
+  // never reports an end. Once the job itself has settled nothing can still be
+  // arriving, whatever the last card state said.
+  const streaming = card.status === 'running' && !settled;
+
+  // Follow the text while it is still arriving. Once the step settles the view
+  // stays where the reader left it, so a finished card can be scrolled back
+  // through without being yanked to the bottom.
+  useEffect(() => {
+    if (!streaming) return;
+    const element = body.current;
+    if (element) element.scrollTop = element.scrollHeight;
+  }, [card.text, streaming]);
+
+  return (
+    <li className={`design-log-item ${card.status}${active ? ' active' : ''}`}>
+      <div className="design-log-head">
+        <span className="design-log-dot" aria-hidden="true" />
+        <span className="design-log-label">{card.label || card.step}</span>
+        <span className="design-log-step">{card.step}</span>
+        {streaming && <span className="design-log-badge">{t.result.designLogStreaming}</span>}
+      </div>
+      <pre className="design-log-body" ref={body}>
+        {card.text || (streaming ? '' : t.result.designLogEmpty)}
+      </pre>
+    </li>
+  );
+});
 
 function CircularProgress({ value, status }: { value: number; status: JobRecord['status'] }) {
   const size = 72;

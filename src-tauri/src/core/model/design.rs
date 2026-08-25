@@ -2,8 +2,8 @@ use serde_json::{json, Value};
 
 use crate::core::config::ModelProfile;
 use crate::core::net::{
-    data_url, model_error, model_http_error, normalize_base_url,
-    post_json_with_retries, post_sse_with_retries, require_api_key, PostOptions,
+    data_url, model_error, model_http_error, normalize_base_url, post_json_with_retries,
+    post_sse_with_retries, require_api_key, PostOptions, SseObserver, SseSignal,
 };
 use crate::error::AppResult;
 
@@ -62,6 +62,31 @@ fn response_excerpt(data: &Value) -> String {
         .collect()
 }
 
+/// The text a single stream event contributes, or `None` when the event carries
+/// no visible output (role announcements, tool frames, thinking deltas).
+///
+/// Shared by the collector below and by the live sink, so what the user watches
+/// arrive is assembled by the same rule as what the pipeline ends up parsing.
+fn delta_text<'a>(protocol: &str, event: &'a Value) -> Option<&'a str> {
+    match protocol {
+        "openai_chat" => event["choices"][0]["delta"]["content"].as_str(),
+        "openai_responses" => match event["type"].as_str() {
+            Some("response.output_text.delta") => event["delta"].as_str(),
+            _ => None,
+        },
+        "anthropic_messages" => {
+            if event["type"].as_str() == Some("content_block_delta")
+                && event["delta"]["type"].as_str() == Some("text_delta")
+            {
+                event["delta"]["text"].as_str()
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
 fn collect_stream_text(protocol: &str, events: &[Value]) -> AppResult<String> {
     if let Some(message) = events.iter().find_map(stream_error_message) {
         return Err(model_error(format!("模型流式响应报错：{message}")));
@@ -69,30 +94,17 @@ fn collect_stream_text(protocol: &str, events: &[Value]) -> AppResult<String> {
     let mut text = String::new();
     for event in events {
         match protocol {
-            "openai_chat" => {
-                if let Some(delta) = event["choices"][0]["delta"]["content"].as_str() {
+            "openai_chat" | "anthropic_messages" => {
+                if let Some(delta) = delta_text(protocol, event) {
                     text.push_str(delta);
                 }
             }
-            "openai_responses" => match event["type"].as_str() {
-                Some("response.output_text.delta") => {
-                    if let Some(delta) = event["delta"].as_str() {
-                        text.push_str(delta);
-                    }
-                }
-                Some("response.completed") if text.is_empty() => {
+            "openai_responses" => {
+                if let Some(delta) = delta_text(protocol, event) {
+                    text.push_str(delta);
+                } else if event["type"].as_str() == Some("response.completed") && text.is_empty() {
                     if let Some(full) = event["response"]["output_text"].as_str() {
                         text.push_str(full);
-                    }
-                }
-                _ => {}
-            },
-            "anthropic_messages" => {
-                if event["type"].as_str() == Some("content_block_delta")
-                    && event["delta"]["type"].as_str() == Some("text_delta")
-                {
-                    if let Some(delta) = event["delta"]["text"].as_str() {
-                        text.push_str(delta);
                     }
                 }
             }
@@ -132,9 +144,25 @@ pub struct ImageInput {
     pub b64: String,
 }
 
+/// Text from a design call as it arrives, for a caller that wants to show the
+/// answer being written rather than wait for the whole thing.
+pub enum DesignDelta<'a> {
+    /// Discard everything handed over so far: a retry restarted the call and
+    /// the previous attempt contributed nothing to the final answer.
+    Restart,
+    Text(&'a str),
+}
+
+pub type DeltaSink<'a> = &'a (dyn Fn(DesignDelta<'_>) + Send + Sync);
+
 pub struct DesignClient;
 
 impl DesignClient {
+    /// Runs one design-model call, forwarding the partial answer to `sink`.
+    ///
+    /// The sink only fires when the profile has streaming on: a non-streaming
+    /// profile has nothing to report until the response is whole, so the caller
+    /// shows it in one piece instead.
     pub async fn generate(
         profile: &ModelProfile,
         system_prompt: &str,
@@ -142,6 +170,7 @@ impl DesignClient {
         images: &[ImageInput],
         timeout_seconds: Option<u64>,
         proxy_url: Option<&str>,
+        sink: Option<DeltaSink<'_>>,
     ) -> AppResult<String> {
         let protocol = if profile.protocol == "banna2" {
             "banana2"
@@ -157,6 +186,7 @@ impl DesignClient {
                     images,
                     timeout_seconds,
                     proxy_url,
+                    sink,
                 )
                 .await
             }
@@ -168,6 +198,7 @@ impl DesignClient {
                     images,
                     timeout_seconds,
                     proxy_url,
+                    sink,
                 )
                 .await
             }
@@ -179,6 +210,7 @@ impl DesignClient {
                     images,
                     timeout_seconds,
                     proxy_url,
+                    sink,
                 )
                 .await
             }
@@ -193,6 +225,7 @@ impl DesignClient {
         images: &[ImageInput],
         timeout_seconds: Option<u64>,
         proxy_url: Option<&str>,
+        sink: Option<DeltaSink<'_>>,
     ) -> AppResult<String> {
         let url = format!(
             "{}/chat/completions",
@@ -217,11 +250,13 @@ impl DesignClient {
             payload["stream"] = Value::Bool(true);
             let events = Self::stream(
                 profile,
+                "openai_chat",
                 &url,
                 &payload,
                 Self::bearer(profile)?,
                 timeout_seconds,
                 proxy_url,
+                sink,
             )
             .await?;
             return collect_stream_text("openai_chat", &events);
@@ -248,6 +283,7 @@ impl DesignClient {
         images: &[ImageInput],
         timeout_seconds: Option<u64>,
         proxy_url: Option<&str>,
+        sink: Option<DeltaSink<'_>>,
     ) -> AppResult<String> {
         let url = format!(
             "{}/responses",
@@ -270,11 +306,13 @@ impl DesignClient {
             payload["stream"] = Value::Bool(true);
             let events = Self::stream(
                 profile,
+                "openai_responses",
                 &url,
                 &payload,
                 Self::bearer(profile)?,
                 timeout_seconds,
                 proxy_url,
+                sink,
             )
             .await?;
             return collect_stream_text("openai_responses", &events);
@@ -314,6 +352,7 @@ impl DesignClient {
         images: &[ImageInput],
         timeout_seconds: Option<u64>,
         proxy_url: Option<&str>,
+        sink: Option<DeltaSink<'_>>,
     ) -> AppResult<String> {
         let url = format!(
             "{}/messages",
@@ -347,7 +386,17 @@ impl DesignClient {
         ];
         if stream_enabled(profile) {
             payload["stream"] = Value::Bool(true);
-            let events = Self::stream(profile, &url, &payload, headers, timeout_seconds, proxy_url).await?;
+            let events = Self::stream(
+                profile,
+                "anthropic_messages",
+                &url,
+                &payload,
+                headers,
+                timeout_seconds,
+                proxy_url,
+                sink,
+            )
+            .await?;
             return collect_stream_text("anthropic_messages", &events);
         }
         let mut last_empty_detail = String::new();
@@ -442,14 +491,30 @@ impl DesignClient {
         )])
     }
 
+    #[allow(clippy::too_many_arguments)]
     async fn stream(
         profile: &ModelProfile,
+        protocol: &str,
         url: &str,
         payload: &Value,
         headers: Vec<(String, String)>,
         timeout_seconds: Option<u64>,
         proxy_url: Option<&str>,
+        sink: Option<DeltaSink<'_>>,
     ) -> AppResult<Vec<Value>> {
+        let forward = sink.map(|sink| {
+            move |signal: SseSignal<'_>| match signal {
+                SseSignal::Restart => sink(DesignDelta::Restart),
+                SseSignal::Event(event) => {
+                    if let Some(text) = delta_text(protocol, event) {
+                        sink(DesignDelta::Text(text));
+                    }
+                }
+            }
+        });
+        let observer: Option<SseObserver<'_>> = forward
+            .as_ref()
+            .map(|forward| forward as &(dyn Fn(SseSignal<'_>) + Send + Sync));
         let outcome = post_sse_with_retries(
             profile,
             url,
@@ -460,6 +525,7 @@ impl DesignClient {
                 proxy_url,
                 ..Default::default()
             },
+            observer,
         )
         .await?;
         if outcome.status >= 400 {
@@ -603,6 +669,71 @@ mod tests {
             r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"例"}}"#,
         ]);
         assert_eq!(collect_stream_text("anthropic_messages", &anthropic).unwrap(), "图例");
+    }
+
+    #[test]
+    fn the_live_deltas_add_up_to_the_collected_answer() {
+        // What the user watches arrive and what the pipeline goes on to parse
+        // must be the same string, or a card would contradict the figure built
+        // from it.
+        let cases: [(&str, &[&str]); 3] = [
+            (
+                "openai_chat",
+                &[
+                    r#"{"choices":[{"delta":{"role":"assistant"}}]}"#,
+                    r#"{"choices":[{"delta":{"content":"{\"layout\""}}]}"#,
+                    r#"{"choices":[{"delta":{"content":":1}"}}]}"#,
+                ],
+            ),
+            (
+                "openai_responses",
+                &[
+                    r#"{"type":"response.created"}"#,
+                    r#"{"type":"response.output_text.delta","delta":"前半"}"#,
+                    r#"{"type":"response.output_text.delta","delta":"后半"}"#,
+                ],
+            ),
+            (
+                "anthropic_messages",
+                &[
+                    r#"{"type":"message_start"}"#,
+                    r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"图"}}"#,
+                    r#"{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"忽略"}}"#,
+                    r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"例"}}"#,
+                ],
+            ),
+        ];
+        for (protocol, raw) in cases {
+            let parsed = events(raw);
+            let streamed: String = parsed
+                .iter()
+                .filter_map(|event| delta_text(protocol, event))
+                .collect();
+            assert_eq!(
+                streamed,
+                collect_stream_text(protocol, &parsed).unwrap(),
+                "协议 {protocol} 的流式增量与最终文本不一致"
+            );
+        }
+    }
+
+    #[test]
+    fn a_terminal_only_response_streams_nothing_to_show() {
+        // openai_responses may skip deltas entirely and hand the answer over in
+        // response.completed. Nothing streams, so the card stays empty until the
+        // final text replaces it — which is why End carries the whole answer
+        // rather than trusting the deltas.
+        let only_completed = events(&[
+            r#"{"type":"response.created"}"#,
+            r#"{"type":"response.completed","response":{"output_text":"全文"}}"#,
+        ]);
+        assert!(only_completed
+            .iter()
+            .all(|event| delta_text("openai_responses", event).is_none()));
+        assert_eq!(
+            collect_stream_text("openai_responses", &only_completed).unwrap(),
+            "全文"
+        );
     }
 
     #[test]

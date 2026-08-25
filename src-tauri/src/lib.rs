@@ -12,8 +12,8 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
-        .register_uri_scheme_protocol("dp-asset", protocol::asset_response)
-        .register_uri_scheme_protocol("dp-template", protocol::template_response)
+        .register_asynchronous_uri_scheme_protocol("dp-asset", protocol::asset_response)
+        .register_asynchronous_uri_scheme_protocol("dp-template", protocol::template_response)
         .setup(|app| {
             let state = state::AppState::new(app.handle())
                 .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?;

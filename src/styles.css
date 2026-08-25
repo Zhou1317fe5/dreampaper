@@ -1365,6 +1365,179 @@ textarea:focus {
   font-size: 0.76rem;
 }
 
+.design-log {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.design-log-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  padding: 9px 12px;
+  border: none;
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.66);
+  box-shadow: var(--shadow-control);
+  color: #4b5560;
+  font-family: inherit;
+  font-size: 0.82rem;
+  font-weight: 720;
+  text-align: left;
+  cursor: pointer;
+}
+
+.design-log-toggle:hover {
+  background: rgba(255, 255, 255, 0.88);
+}
+
+/* A triangle rather than a glyph: the caret has to rotate, and a rotated text
+   character shifts its own baseline as it turns. */
+.design-log-caret {
+  width: 0;
+  height: 0;
+  border-top: 4.5px solid transparent;
+  border-bottom: 4.5px solid transparent;
+  border-left: 6px solid #8b949c;
+  transition: transform 180ms ease;
+}
+
+.design-log.is-open .design-log-caret {
+  transform: rotate(90deg);
+}
+
+.design-log-title {
+  flex: 1;
+  min-width: 0;
+}
+
+.design-log-count {
+  min-width: 20px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  background: rgba(214, 240, 229, 0.8);
+  color: #2f5a48;
+  font-size: 0.74rem;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+}
+
+.design-log-list {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  min-width: 0;
+  /* The cards slide in from the right; without this the transform paints over
+     the panel edge for the length of the animation. */
+  overflow: hidden;
+}
+
+.design-log-item {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 11px 13px;
+  border-radius: 14px;
+  border-left: 3px solid rgba(169, 221, 199, 0.5);
+  background: rgba(255, 255, 255, 0.72);
+  box-shadow: var(--shadow-control);
+  animation: design-log-in 340ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+.design-log-item.active {
+  border-left-color: #5fba96;
+  background: rgba(240, 250, 245, 0.94);
+}
+
+.design-log-item.failed {
+  border-left-color: #e98298;
+  background: rgba(255, 244, 246, 0.92);
+}
+
+.design-log-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.design-log-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 999px;
+  background: #a9ddc7;
+  flex: none;
+}
+
+.design-log-item.active .design-log-dot {
+  background: #5fba96;
+  animation: step-pulse 1.2s ease-in-out infinite;
+}
+
+.design-log-item.failed .design-log-dot {
+  background: #e98298;
+  animation: none;
+}
+
+.design-log-label {
+  color: #3b4650;
+  font-size: 0.86rem;
+  font-weight: 720;
+  overflow-wrap: anywhere;
+}
+
+.design-log-step {
+  color: var(--text-muted);
+  font-size: 0.72rem;
+  font-variant-numeric: tabular-nums;
+}
+
+.design-log-badge {
+  margin-left: auto;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(214, 240, 229, 0.8);
+  color: #2f5a48;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
+
+.design-log-body {
+  margin: 0;
+  max-height: 240px;
+  overflow: auto;
+  color: #4d5761;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.76rem;
+  line-height: 1.5;
+  /* Model output is long single lines of JSON; wrapping keeps the card from
+     growing a horizontal scrollbar wider than the panel. */
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.design-log-body:empty::after {
+  content: '';
+  display: block;
+  min-height: 1.2em;
+}
+
+@keyframes design-log-in {
+  from {
+    opacity: 0;
+    transform: translateX(26px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
 .error-diagnostic {
   margin-top: 12px;
   padding: 14px;
@@ -1527,9 +1700,14 @@ textarea:focus {
   }
 
   .step-log-panel,
+  .design-log-item,
   .progress-track.running span,
   .toast {
     animation: none;
+  }
+
+  .design-log-caret {
+    transition-duration: 1ms;
   }
 }
 

@@ -16,6 +16,7 @@ tauri-build = { version = "2", features = [] }
 base64 = "0.22"
 chrono = { version = "0.4", features = ["serde"] }
 futures = "0.3"
+image = { version = "0.25", default-features = false, features = ["png", "jpeg", "webp"] }
 regex = "1"
 reqwest = { version = "0.12", default-features = false, features = ["rustls-tls", "json", "multipart", "charset", "http2", "stream"] }
 rusqlite = { version = "0.40", features = ["bundled"] }
@@ -29,3 +30,16 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+
+# Rescaling a 5504x3072 figure takes ~19s unoptimized against ~0.6s optimized,
+# so an unoptimized image stack makes `tauri dev` look like the thumbnail cache
+# is broken. Only these dependencies are optimized; our own crate stays
+# debuggable and the release profile is untouched.
+[profile.dev.package.image]
+opt-level = 3
+
+[profile.dev.package.png]
+opt-level = 3
+
+[profile.dev.package.zune-jpeg]
+opt-level = 3

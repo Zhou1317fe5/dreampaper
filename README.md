@@ -31,6 +31,16 @@
 
 ---
 
+## 更新日志
+
+- 优化历史数据管理页面，可查看完整历史数据记录，一键重试；
+- 生图流程透明日志，design model分析内容log 伴随任务进度流式输出；
+- 修复了若干bug，流畅度优化。
+
+| 历史数据 | 日志显示 |
+| --- | --- | 
+| ![history](examples/desktop/history.jpg) | ![log](examples/desktop/log.jpg) |
+
 ## 效果展示
 
 ### Desktop

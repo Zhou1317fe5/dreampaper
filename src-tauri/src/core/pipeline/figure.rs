@@ -5,10 +5,11 @@ use std::path::{Path, PathBuf};
 use crate::core::config::{AppConfig, ModelProfile};
 use crate::core::model::design::ImageInput;
 use crate::core::model::implement::ImplementClient;
-use crate::core::pipeline::runner::{parse_validate_or_fill, DesignCall};
+use crate::core::pipeline::runner::{parse_validate_or_fill, DesignCall, DesignStep};
 use crate::core::pipeline::{contract, validate};
 use crate::core::prompt::{compose_prompt, PromptStore};
 use crate::error::{AppError, AppResult};
+use crate::event::DesignSink;
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct PaperFigurePayload {
@@ -59,6 +60,7 @@ pub struct FigureRun<'a> {
     pub template_metadata: Value,
     pub app_data: &'a Path,
     pub job_id: &'a str,
+    pub design_log: DesignSink<'a>,
 }
 
 fn save_design_diagnostic(
@@ -153,24 +155,6 @@ impl FigureRun<'_> {
             ],
         );
 
-        stage("paper_structure", "调用 design model 分析 template 结构");
-        let structure_text = crate::core::model::design::DesignClient::generate(
-            self.design_profile,
-            &system.content,
-            &structure_prompt,
-            &self.template_images,
-            None,
-            proxy,
-        )
-        .await?;
-        save_design_diagnostic(
-            self.app_data,
-            self.job_id,
-            "paper_structure_raw.txt",
-            &structure_text,
-        )?;
-
-        stage("paper_structure_parse", "解析并校验结构规划 JSON");
         let structure_retry_count = std::sync::Mutex::new(0usize);
         let structure_app_data = self.app_data;
         let structure_job_id = self.job_id;
@@ -193,7 +177,23 @@ impl FigureRun<'_> {
             timeout_seconds: None,
             proxy_url: proxy,
             response_sink: Some(&structure_retry_sink),
+            log: Some(DesignStep {
+                sink: self.design_log,
+                step: "paper_structure",
+                label: "分析 template 结构",
+            }),
         };
+
+        stage("paper_structure", "调用 design model 分析 template 结构");
+        let structure_text = structure_call.first().await?;
+        save_design_diagnostic(
+            self.app_data,
+            self.job_id,
+            "paper_structure_raw.txt",
+            &structure_text,
+        )?;
+
+        stage("paper_structure_parse", "解析并校验结构规划 JSON");
         let structure = parse_validate_or_fill(&structure_call, &structure_text, |value| {
             validate::validate_structure_plan(value)
         })
@@ -229,25 +229,7 @@ impl FigureRun<'_> {
             ],
         );
 
-        stage("paper_design", "调用 design model 映射内容并生成制图方案");
         let no_images: Vec<ImageInput> = Vec::new();
-        let design_text = crate::core::model::design::DesignClient::generate(
-            self.design_profile,
-            &system.content,
-            &design_prompt,
-            &no_images,
-            None,
-            proxy,
-        )
-        .await?;
-        let diagnostic_path = save_design_diagnostic(
-            self.app_data,
-            self.job_id,
-            "paper_design_raw.txt",
-            &design_text,
-        )?;
-
-        stage("paper_parse", "解析并校验 design JSON");
         let retry_count = std::sync::Mutex::new(0usize);
         let app_data = self.app_data;
         let job_id = self.job_id;
@@ -270,7 +252,23 @@ impl FigureRun<'_> {
             timeout_seconds: None,
             proxy_url: proxy,
             response_sink: Some(&retry_sink),
+            log: Some(DesignStep {
+                sink: self.design_log,
+                step: "paper_design",
+                label: "映射内容并生成制图方案",
+            }),
         };
+
+        stage("paper_design", "调用 design model 映射内容并生成制图方案");
+        let design_text = design_call.first().await?;
+        let diagnostic_path = save_design_diagnostic(
+            self.app_data,
+            self.job_id,
+            "paper_design_raw.txt",
+            &design_text,
+        )?;
+
+        stage("paper_parse", "解析并校验 design JSON");
         let title = payload.figure_title.trim().to_string();
         let section = payload.section_description.trim().to_string();
         let design_result = parse_validate_or_fill(&design_call, &design_text, move |value| {

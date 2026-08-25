@@ -3,10 +3,11 @@ use std::future::Future;
 use serde_json::Value;
 
 use crate::core::config::ModelProfile;
-use crate::core::model::design::{DesignClient, ImageInput};
+use crate::core::model::design::{DesignClient, DeltaSink, DesignDelta, ImageInput};
 use crate::core::net::parse_json_response;
 use crate::core::pipeline::validate::ValidationError;
 use crate::error::{AppError, AppResult};
+use crate::event::{DesignLog, DesignSink};
 
 const JSON_CONTEXT_RETRY_ATTEMPTS: usize = 1;
 const JSON_RETRY_EXCERPT_LIMIT: usize = 4000;
@@ -21,6 +22,18 @@ pub trait DesignGenerator {
     fn generate(&self, prompt: String) -> impl Future<Output = AppResult<String>> + Send;
 }
 
+/// Which step card a design call reports into.
+///
+/// Retries all belong to the card the step opened: a dropped connection and a
+/// JSON repair round are further attempts at one step, not new steps, so each
+/// clears the card instead of stacking another one beside it.
+#[derive(Clone, Copy)]
+pub struct DesignStep<'a> {
+    pub sink: DesignSink<'a>,
+    pub step: &'a str,
+    pub label: &'a str,
+}
+
 pub struct DesignCall<'a> {
     pub profile: &'a ModelProfile,
     pub system_prompt: &'a str,
@@ -29,6 +42,58 @@ pub struct DesignCall<'a> {
     pub timeout_seconds: Option<u64>,
     pub proxy_url: Option<&'a str>,
     pub response_sink: Option<&'a (dyn Fn(&str) + Send + Sync)>,
+    pub log: Option<DesignStep<'a>>,
+}
+
+impl DesignCall<'_> {
+    /// The step's first attempt, on the prompt the call was built with.
+    pub async fn first(&self) -> AppResult<String> {
+        if let Some(step) = self.log {
+            (step.sink)(DesignLog::Begin {
+                step: step.step,
+                label: step.label,
+            });
+        }
+        self.attempt(self.user_prompt).await
+    }
+
+    async fn attempt(&self, prompt: &str) -> AppResult<String> {
+        let relay = self.log.map(|step| {
+            move |delta: DesignDelta<'_>| match delta {
+                DesignDelta::Restart => (step.sink)(DesignLog::Reset { step: step.step }),
+                DesignDelta::Text(text) => (step.sink)(DesignLog::Delta {
+                    step: step.step,
+                    text,
+                }),
+            }
+        });
+        let sink: Option<DeltaSink<'_>> = relay
+            .as_ref()
+            .map(|relay| relay as &(dyn Fn(DesignDelta<'_>) + Send + Sync));
+        let result = DesignClient::generate(
+            self.profile,
+            self.system_prompt,
+            prompt,
+            self.images,
+            self.timeout_seconds,
+            self.proxy_url,
+            sink,
+        )
+        .await;
+        if let Some(step) = self.log {
+            let (text, ok) = match &result {
+                Ok(text) => (text.as_str(), true),
+                Err(error) => (error.message.as_str(), false),
+            };
+            (step.sink)(DesignLog::End {
+                step: step.step,
+                label: step.label,
+                text,
+                ok,
+            });
+        }
+        result
+    }
 }
 
 impl DesignGenerator for DesignCall<'_> {
@@ -37,15 +102,10 @@ impl DesignGenerator for DesignCall<'_> {
     }
 
     async fn generate(&self, prompt: String) -> AppResult<String> {
-        let text = DesignClient::generate(
-            self.profile,
-            self.system_prompt,
-            &prompt,
-            self.images,
-            self.timeout_seconds,
-            self.proxy_url,
-        )
-        .await?;
+        if let Some(step) = self.log {
+            (step.sink)(DesignLog::Reset { step: step.step });
+        }
+        let text = self.attempt(&prompt).await?;
         if let Some(sink) = self.response_sink {
             sink(&text);
         }

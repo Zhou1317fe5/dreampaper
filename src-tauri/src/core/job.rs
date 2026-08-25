@@ -39,6 +39,15 @@ pub struct JobError {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct JobDesignLog {
+    pub step: String,
+    pub label: String,
+    pub status: String,
+    pub content: String,
+    pub timestamp: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct JobRecord {
     pub id: String,
     pub mode: String,
@@ -53,6 +62,10 @@ pub struct JobRecord {
     pub title: Option<String>,
     pub thumbnail: Option<String>,
     pub payload: Option<serde_json::Value>,
+    /// Design-model output per step. Only `get_job` fills this — a step's answer
+    /// runs to tens of kilobytes, so list rows stay light the same way `payload`
+    /// does.
+    pub design_logs: Vec<JobDesignLog>,
 }
 
 pub struct JobService<'a> {
@@ -109,6 +122,7 @@ impl<'a> JobService<'a> {
                     payload: row
                         .get::<_, Option<String>>(7)?
                         .and_then(|raw| serde_json::from_str(&raw).ok()),
+                    design_logs: Vec::new(),
                 })
             })
             .map_err(|error| match error {
@@ -120,6 +134,7 @@ impl<'a> JobService<'a> {
         record.events = self.events_for_job(&record.id)?;
         record.images = self.images_for_job(&record.id)?;
         record.error = self.error_for_job(&record.id, &record.events)?;
+        record.design_logs = self.design_logs_for_job(&record.id)?;
         Ok(record)
     }
 
@@ -143,6 +158,7 @@ impl<'a> JobService<'a> {
                 title: job_title(&mode, row.get(7)?),
                 thumbnail: job_thumbnail(row.get(8)?),
                 payload: None,
+                design_logs: Vec::new(),
             })
         })?;
         let mut records = rows.collect::<Result<Vec<_>, _>>()?;
@@ -171,6 +187,49 @@ impl<'a> JobService<'a> {
             params![job_status, stage, message, now, job_id],
         )?;
         Ok(())
+    }
+
+    /// Records the design model's answer for one step.
+    ///
+    /// Keyed by (job, step) so the repair rounds that re-ask the same step
+    /// overwrite rather than pile up — the card the user reopens should show the
+    /// answer the pipeline actually went on to use.
+    pub fn record_design_log(
+        &self,
+        job_id: &str,
+        step: &str,
+        label: &str,
+        status: &str,
+        content: &str,
+    ) -> AppResult<()> {
+        let now = Utc::now().to_rfc3339();
+        let conn = self.store.connection()?;
+        conn.execute(
+            "INSERT INTO job_design_logs(job_id, step, label, status, content, created_at) \
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6) \
+             ON CONFLICT(job_id, step) DO UPDATE SET \
+             label = excluded.label, status = excluded.status, content = excluded.content",
+            params![job_id, step, label, status, content, now],
+        )?;
+        Ok(())
+    }
+
+    fn design_logs_for_job(&self, job_id: &str) -> AppResult<Vec<JobDesignLog>> {
+        let conn = self.store.connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT step, label, status, content, created_at FROM job_design_logs \
+             WHERE job_id = ?1 ORDER BY id ASC",
+        )?;
+        let rows = stmt.query_map(params![job_id], |row| {
+            Ok(JobDesignLog {
+                step: row.get(0)?,
+                label: row.get(1)?,
+                status: row.get(2)?,
+                content: row.get(3)?,
+                timestamp: row.get(4)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub fn payload(&self, job_id: &str) -> AppResult<serde_json::Value> {
@@ -259,6 +318,10 @@ impl<'a> JobService<'a> {
             ));
         }
         conn.execute("DELETE FROM job_stages WHERE job_id = ?1", params![job_id])?;
+        conn.execute(
+            "DELETE FROM job_design_logs WHERE job_id = ?1",
+            params![job_id],
+        )?;
         conn.execute("DELETE FROM jobs WHERE id = ?1", params![job_id])?;
         drop(conn);
         for dir in ["outputs", "logs"] {
@@ -369,6 +432,10 @@ fn job_title(mode: &str, payload_json: Option<String>) -> Option<String> {
     Some(first_line.chars().take(limit).collect())
 }
 
+/// Width the history grid asks for. Cards are ~400 CSS px wide, so this still
+/// has headroom on a HiDPI screen while costing ~1/45th of the source decode.
+const THUMBNAIL_WIDTH: u32 = 800;
+
 fn job_thumbnail(result_json: Option<String>) -> Option<String> {
     let raw = result_json?;
     let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
@@ -376,7 +443,12 @@ fn job_thumbnail(result_json: Option<String>) -> Option<String> {
     if url.trim().is_empty() {
         return None;
     }
-    Some(normalize_asset_url(url))
+    let normalized = normalize_asset_url(url);
+    // Only our own protocol can rescale; an external link is served as-is.
+    if normalized.contains("dp-asset") {
+        return Some(format!("{normalized}?w={THUMBNAIL_WIDTH}"));
+    }
+    Some(normalized)
 }
 
 #[cfg(test)]
@@ -451,13 +523,26 @@ mod tests {
             "images": [{ "name": "figure.png", "url": "http://dp-asset.localhost/abc" }]
         })
         .to_string();
+        // The grid gets the downscaled variant; the full image stays one query
+        // strip away for the lightbox.
         assert_eq!(
             job_thumbnail(Some(result)),
-            Some(protocol_url("dp-asset", "abc"))
+            Some(format!("{}?w=800", protocol_url("dp-asset", "abc")))
         );
         assert_eq!(job_thumbnail(None), None);
         let no_images = serde_json::json!({}).to_string();
         assert_eq!(job_thumbnail(Some(no_images)), None);
+
+        // An image hosted elsewhere cannot be rescaled by our protocol, so it
+        // must come back untouched rather than with a query we cannot honour.
+        let external = serde_json::json!({
+            "images": [{ "name": "figure.png", "url": "https://example.com/x.png" }]
+        })
+        .to_string();
+        assert_eq!(
+            job_thumbnail(Some(external)),
+            Some("https://example.com/x.png".to_string())
+        );
     }
 
     #[test]
@@ -485,7 +570,7 @@ mod tests {
         assert_eq!(with_meta.title.as_deref(), Some("带标题的任务"));
         assert_eq!(
             with_meta.thumbnail.as_deref(),
-            Some(protocol_url("dp-asset", "t1").as_str())
+            Some(format!("{}?w=800", protocol_url("dp-asset", "t1")).as_str())
         );
 
         // create_job without a payload body leaves extraction fields null, not errors.
@@ -564,6 +649,70 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("建临时目录");
         dir
+    }
+
+    #[test]
+    fn design_logs_are_kept_per_step_and_reopened_with_the_job() {
+        let dir = service_dir("design-log");
+        let store = Store::initialize(&dir).expect("初始化 store");
+        let jobs = JobService::new(&store);
+        let job = jobs
+            .create_job(serde_json::json!({ "mode": "paper_figure" }))
+            .expect("建任务");
+
+        jobs.record_design_log(
+            &job.id,
+            "paper_structure",
+            "分析 template 结构",
+            "succeeded",
+            "{\"structure_plan\":1}",
+        )
+        .expect("记录第一步");
+        jobs.record_design_log(
+            &job.id,
+            "paper_design",
+            "映射内容并生成制图方案",
+            "succeeded",
+            "第一次的答案",
+        )
+        .expect("记录第二步");
+        // A repair round re-asks the same step; the card must end up showing the
+        // answer the pipeline went on to use, not both attempts.
+        jobs.record_design_log(
+            &job.id,
+            "paper_design",
+            "映射内容并生成制图方案",
+            "succeeded",
+            "修复后的答案",
+        )
+        .expect("重试覆盖同一步");
+
+        let loaded = jobs.get_job(job.id.clone()).expect("读任务");
+        assert_eq!(loaded.design_logs.len(), 2, "同一 step 不该堆两张卡");
+        assert_eq!(loaded.design_logs[0].step, "paper_structure");
+        assert_eq!(loaded.design_logs[0].label, "分析 template 结构");
+        assert_eq!(loaded.design_logs[1].content, "修复后的答案");
+        assert!(loaded.design_logs.iter().all(|log| !log.timestamp.is_empty()));
+
+        // List rows stay light: a step's answer runs to tens of kilobytes.
+        let listed = jobs.list_jobs(20, 0).expect("列表");
+        let row = listed.iter().find(|r| r.id == job.id).expect("找到任务");
+        assert!(row.design_logs.is_empty());
+
+        // Deleting the job must take its logs with it, or the next job reusing
+        // the id would inherit them.
+        jobs.cancel(&job.id, "任务已停止").expect("停止");
+        jobs.delete(&dir, &job.id).expect("删除");
+        let orphans: i64 = store
+            .connection()
+            .expect("连接")
+            .query_row(
+                "SELECT count(*) FROM job_design_logs WHERE job_id = ?1",
+                params![job.id],
+                |row| row.get(0),
+            )
+            .expect("统计");
+        assert_eq!(orphans, 0);
     }
 
     #[test]

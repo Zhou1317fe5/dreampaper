@@ -115,6 +115,19 @@ CREATE TABLE IF NOT EXISTS job_stages(
   created_at TEXT NOT NULL
 );
 
+CREATE TABLE IF NOT EXISTS job_design_logs(
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  job_id TEXT NOT NULL,
+  step TEXT NOT NULL,
+  label TEXT NOT NULL,
+  status TEXT NOT NULL,
+  content TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  UNIQUE(job_id, step)
+);
+
+CREATE INDEX IF NOT EXISTS job_design_logs_job ON job_design_logs(job_id);
+
 CREATE TABLE IF NOT EXISTS artifacts(
   id TEXT PRIMARY KEY,
   job_id TEXT,

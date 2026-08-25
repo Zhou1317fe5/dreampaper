@@ -1,6 +1,7 @@
 import type {
   AppConfig,
   AssetUpload,
+  DesignLogEvent,
   JobRecord,
   TemplatePackSummary,
   TemplateSummary
@@ -98,6 +99,22 @@ export function getJob(id: string) {
 
 export function desktopAvailable() {
   return isDesktop;
+}
+
+/**
+ * Subscribe to design-model output as it is produced.
+ *
+ * Job state is polled every 1.8s, which is enough for a stage name but would
+ * turn a streamed answer into a slideshow, so these arrive pushed instead. The
+ * returned promise resolves to an unsubscribe function; outside the desktop
+ * shell there is no event bus, so it resolves to a no-op and nothing streams.
+ */
+export async function listenDesignLog(
+  handler: (event: DesignLogEvent) => void
+): Promise<() => void> {
+  if (!isDesktop) return () => {};
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen<DesignLogEvent>('job://design', (event) => handler(event.payload));
 }
 
 export function listJobs(limit = 20, offset = 0) {

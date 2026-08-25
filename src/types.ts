@@ -76,6 +76,14 @@ export interface JobError {
   suggestion?: string | null;
 }
 
+export interface JobDesignLog {
+  step: string;
+  label: string;
+  status: string;
+  content: string;
+  timestamp: string;
+}
+
 export interface JobRecord {
   id: string;
   mode: Mode;
@@ -90,4 +98,17 @@ export interface JobRecord {
   title?: string | null;
   thumbnail?: string | null;
   payload?: { mode: string; payload: unknown } | null;
+  /** Only get_job carries these; list rows leave them empty. */
+  design_logs?: JobDesignLog[];
+}
+
+/** Live counterpart of JobDesignLog, pushed on `job://design` as a step runs. */
+export interface DesignLogEvent {
+  job_id: string;
+  kind: 'begin' | 'delta' | 'reset' | 'end';
+  step: string;
+  label: string;
+  text: string;
+  status: string;
+  timestamp: string;
 }

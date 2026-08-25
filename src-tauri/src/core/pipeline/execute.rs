@@ -17,9 +17,55 @@ use crate::core::pipeline::slide::{
 use crate::core::tpl::TemplateService;
 use crate::core::Core;
 use crate::error::{AppError, AppResult};
-use crate::event::JobEventPayload;
+use crate::event::{DesignLog, DesignLogPayload, DesignSink, JobEventPayload};
 
 const MAX_FIGURE_TEMPLATES: usize = 3;
+
+/// How long streamed text is pooled before it is pushed to the webview.
+///
+/// Deltas arrive one SSE chunk at a time, and a long design answer is thousands
+/// of them. One IPC message and one React render each is enough to make the
+/// result panel stutter, so they are batched into ~8 updates a second — fast
+/// enough to read as text being written, cheap enough not to compete with the
+/// job for the UI thread.
+const DELTA_FLUSH_MS: u128 = 120;
+
+/// Text waiting to be pushed, per step.
+///
+/// `Reset` and `End` both discard whatever is pooled rather than flushing it:
+/// a reset voids the attempt it belonged to, and `End` carries the whole answer
+/// and replaces the card's text outright, so a trailing partial adds nothing.
+#[derive(Default)]
+struct DeltaPool {
+    pending: std::sync::Mutex<std::collections::HashMap<String, (String, std::time::Instant)>>,
+}
+
+impl DeltaPool {
+    /// The text to push now, or `None` while it is still worth pooling.
+    fn push(&self, step: &str, text: &str) -> Option<String> {
+        let mut pending = self
+            .pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner());
+        let slot = pending
+            .entry(step.to_string())
+            .or_insert_with(|| (String::new(), std::time::Instant::now()));
+        slot.0.push_str(text);
+        if slot.1.elapsed().as_millis() < DELTA_FLUSH_MS {
+            return None;
+        }
+        let flushed = std::mem::take(&mut slot.0);
+        slot.1 = std::time::Instant::now();
+        Some(flushed)
+    }
+
+    fn discard(&self, step: &str) {
+        self.pending
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .remove(step);
+    }
+}
 
 pub fn spawn(app: AppHandle, core: Arc<Core>, job_id: String) {
     let cancelled = Arc::new(AtomicBool::new(false));
@@ -44,8 +90,56 @@ pub fn spawn(app: AppHandle, core: Arc<Core>, job_id: String) {
                 let _ = JobService::new(&core.store).mark_stage(&job_id, stage, message, "running");
                 emit(stage, message, "running");
             };
+            // Deltas are pushed rather than polled: the result panel refreshes
+            // the job every 1.8s, which is fine for a stage name but would turn
+            // a streamed answer into a slideshow.
+            let pool = DeltaPool::default();
+            let design = |entry: DesignLog<'_>| {
+                let (kind, step, label, text, status) = match entry {
+                    DesignLog::Begin { step, label } => ("begin", step, label, String::new(), "running"),
+                    DesignLog::Delta { step, text } => match pool.push(step, text) {
+                        Some(batched) => ("delta", step, "", batched, "running"),
+                        None => return,
+                    },
+                    DesignLog::Reset { step } => {
+                        pool.discard(step);
+                        ("reset", step, "", String::new(), "running")
+                    }
+                    DesignLog::End {
+                        step,
+                        label,
+                        text,
+                        ok,
+                    } => {
+                        pool.discard(step);
+                        (
+                            "end",
+                            step,
+                            label,
+                            text.to_string(),
+                            if ok { "succeeded" } else { "failed" },
+                        )
+                    }
+                };
+                if kind == "end" {
+                    let _ = JobService::new(&core.store)
+                        .record_design_log(&job_id, step, label, status, &text);
+                }
+                let _ = app.emit(
+                    "job://design",
+                    DesignLogPayload {
+                        job_id: job_id.clone(),
+                        kind: kind.to_string(),
+                        step: step.to_string(),
+                        label: label.to_string(),
+                        text,
+                        status: status.to_string(),
+                        timestamp: Utc::now(),
+                    },
+                );
+            };
 
-            let outcome = run(&core, &job_id, &sink).await;
+            let outcome = run(&core, &job_id, &sink, &design).await;
             if cancelled.load(Ordering::SeqCst) {
                 return;
             }
@@ -79,6 +173,7 @@ async fn run(
     core: &Core,
     job_id: &str,
     stage: &(dyn Fn(&str, &str) + Send + Sync),
+    design_log: DesignSink<'_>,
 ) -> AppResult<Vec<JobImage>> {
     let envelope = JobService::new(&core.store).payload(job_id)?;
     let mode = envelope
@@ -120,6 +215,7 @@ async fn run(
                 template_metadata: serde_json::Value::Array(metadata),
                 app_data: &core.app_data,
                 job_id,
+                design_log,
             };
             let image_b64 = run.run(&payload, stage).await?;
             Ok(vec![save_image(core, job_id, "figure.png", &image_b64)?])
@@ -157,6 +253,7 @@ async fn run(
                 search_profile: &search_profile,
                 template_image,
                 material_context,
+                design_log,
             };
             let pages = run.run(&payload, stage).await?;
             stage("ppt_save", "保存生成图片");
@@ -216,4 +313,60 @@ fn save_image(core: &Core, job_id: &str, name: &str, image_b64: &str) -> AppResu
         name: name.to_string(),
         url: saved.url,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn pooled_deltas_are_batched_and_lose_nothing_in_order() {
+        let pool = DeltaPool::default();
+        // Chunks arriving inside one window are held back rather than sent one
+        // IPC message at a time.
+        assert_eq!(pool.push("paper_design", "{\"fig"), None);
+        assert_eq!(pool.push("paper_design", "ure\":"), None);
+
+        std::thread::sleep(std::time::Duration::from_millis(DELTA_FLUSH_MS as u64 + 20));
+        assert_eq!(
+            pool.push("paper_design", "1}").as_deref(),
+            Some("{\"figure\":1}"),
+            "一个窗口内的分片必须按序合并后一次发出"
+        );
+
+        // Steps are pooled independently: slide pages plan concurrently, and one
+        // page's chunks must not land in another page's card.
+        assert_eq!(pool.push("ppt_page_plan_1", "第一页"), None);
+        assert_eq!(pool.push("ppt_page_plan_2", "第二页"), None);
+        std::thread::sleep(std::time::Duration::from_millis(DELTA_FLUSH_MS as u64 + 20));
+        assert_eq!(
+            pool.push("ppt_page_plan_1", "内容").as_deref(),
+            Some("第一页内容")
+        );
+        assert_eq!(
+            pool.push("ppt_page_plan_2", "内容").as_deref(),
+            Some("第二页内容")
+        );
+
+        // A retry voids what it already streamed, so the pooled tail must go
+        // with it instead of being prepended to the new attempt. (This first
+        // chunk flushes straight through: the step's window expired while the
+        // two pages above were being pooled, and text that has been waiting
+        // should not wait another window.)
+        pool.push("paper_design", "作废的开头");
+        pool.push("paper_design", "作废的结尾");
+        pool.discard("paper_design");
+        std::thread::sleep(std::time::Duration::from_millis(DELTA_FLUSH_MS as u64 + 20));
+        assert_eq!(
+            pool.push("paper_design", "新的一段"),
+            None,
+            "丢弃后应重新开一个窗口"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(DELTA_FLUSH_MS as u64 + 20));
+        assert_eq!(
+            pool.push("paper_design", "的后半").as_deref(),
+            Some("新的一段的后半"),
+            "重试后发出的内容不能带上被丢弃的那一次"
+        );
+    }
 }

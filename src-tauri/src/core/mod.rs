@@ -9,6 +9,7 @@ pub mod pipeline;
 pub mod prompt;
 pub mod search;
 pub mod store;
+pub mod thumb;
 pub mod tpl;
 
 use std::path::PathBuf;

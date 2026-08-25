@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type JSX } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react';
 import { createJob, deleteJob, getConfig, getJob, listJobs, listTemplates, saveConfig } from '../api';
 import { copy, emptyConfig, isJobSettled, Settings, useJobPolling, type Lang } from '../app';
 import type { AppConfig, JobRecord } from '../types';
@@ -49,11 +49,16 @@ export function DesktopApp() {
         return;
       }
       const created = await createJob(full.payload);
+      // The rerun reuses the stored payload, so the form has to show the same
+      // inputs it was built from; otherwise the panel contradicts the job.
+      const inputs = full.payload.payload;
       if (created.mode === 'ppt_slide') {
         setPptJob(created);
+        fillSlideForm(inputs);
         transitionToPage('ppt');
       } else {
         setPaperJob(created);
+        fillFigureForm(inputs);
         transitionToPage('paper');
       }
     } catch (error) {
@@ -254,7 +259,6 @@ export function DesktopApp() {
               onJob={setPaperJob}
               onMessage={showMessage}
               onGoTemplates={() => transitionToPage('templates')}
-              onOpenTask={openJob}
               t={t}
               d={d}
             />
@@ -267,7 +271,6 @@ export function DesktopApp() {
               onJob={setPptJob}
               onMessage={showMessage}
               onGoTemplates={() => transitionToPage('templates')}
-              onOpenTask={openJob}
               t={t}
               d={d}
             />
@@ -301,10 +304,18 @@ export function DesktopApp() {
   );
 }
 
-function HistoryCard({
+// Cards are served a downscaled variant (`?w=`); the lightbox drops the query
+// to show the untouched image, one at a time and only when asked for.
+function fullSize(url: string): string {
+  const cut = url.indexOf('?');
+  return cut === -1 ? url : url.slice(0, cut);
+}
+
+const HistoryCard = memo(function HistoryCard({
   job,
   d,
-  confirmDeleteId,
+  filteredOut,
+  confirming,
   onOpen,
   onPreview,
   onDelete,
@@ -312,11 +323,12 @@ function HistoryCard({
 }: {
   job: JobRecord;
   d: DesktopCopy;
-  confirmDeleteId: string | null;
-  onOpen: () => void;
+  filteredOut: boolean;
+  confirming: boolean;
+  onOpen: (job: JobRecord) => void;
   onPreview: (url: string) => void;
-  onDelete: () => void;
-  onRerun: () => void;
+  onDelete: (job: JobRecord) => void;
+  onRerun: (job: JobRecord) => void;
 }) {
   const pill = (() => {
     switch (job.status) {
@@ -332,15 +344,15 @@ function HistoryCard({
     }
   })();
   return (
-    <li className="history-card">
+    <li className={`history-card${filteredOut ? ' is-hidden' : ''}`}>
       <button
         type="button"
         className="hc-image"
-        onClick={() => (job.thumbnail ? onPreview(job.thumbnail) : onOpen())}
+        onClick={() => (job.thumbnail ? onPreview(fullSize(job.thumbnail)) : onOpen(job))}
         title={job.thumbnail ? d.history.zoom : job.title ?? job.message ?? job.id}
       >
         {job.thumbnail ? (
-          <img src={job.thumbnail} alt="" loading="lazy" />
+          <img src={job.thumbnail} alt="" loading="lazy" decoding="async" />
         ) : (
           <span className="hc-image-empty">
             {job.mode === 'ppt_slide' ? <IconSlide /> : <IconFigure />}
@@ -351,7 +363,7 @@ function HistoryCard({
         <button
           type="button"
           className="hc-open"
-          onClick={onOpen}
+          onClick={() => onOpen(job)}
           title={job.title ?? job.message ?? job.id}
         >
           <span className="hc-title-row">
@@ -366,25 +378,25 @@ function HistoryCard({
         </button>
         <div className="hc-footer">
           <span className="desktop-recent-time">{shortTime(job.created_at)}</span>
-          {isJobSettled(job.status) && onDelete && onRerun && (
+          {isJobSettled(job.status) && (
             <span className="hc-actions">
               <button
                 type="button"
                 className="recent-rerun"
                 aria-label={d.recent.rerun}
                 title={d.recent.rerun}
-                onClick={onRerun}
+                onClick={() => onRerun(job)}
               >
                 ⟳
               </button>
               <button
                 type="button"
-                className={`recent-delete${confirmDeleteId === job.id ? ' confirming' : ''}`}
+                className={`recent-delete${confirming ? ' confirming' : ''}`}
                 aria-label={d.recent.delete}
                 title={d.recent.delete}
-                onClick={onDelete}
+                onClick={() => onDelete(job)}
               >
-                {confirmDeleteId === job.id ? d.recent.confirmDelete : '×'}
+                {confirming ? d.recent.confirmDelete : '×'}
               </button>
             </span>
           )}
@@ -392,9 +404,28 @@ function HistoryCard({
       </div>
     </li>
   );
-}
+});
 
 const HISTORY_PAGE_SIZE = 50;
+
+// Rows survive page switches so re-entering history paints the previous grid
+// immediately instead of flashing empty while the query round-trips.
+const historyCache = new Map<number, JobRecord[]>();
+
+// listJobs hands back fresh objects every poll. Reusing the previous object for
+// rows that did not change keeps HistoryCard's memo effective, so a 3s refresh
+// no longer re-renders every card — and never re-decodes their images.
+function reconcile(previous: JobRecord[], next: JobRecord[]): JobRecord[] {
+  const byId = new Map(previous.map((job) => [job.id, job]));
+  let changed = previous.length !== next.length;
+  const merged = next.map((job, index) => {
+    const old = byId.get(job.id);
+    const reusable = old && old.updated_at === job.updated_at && old.status === job.status;
+    if (!reusable || previous[index]?.id !== job.id) changed = true;
+    return reusable ? old : job;
+  });
+  return changed ? merged : previous;
+}
 
 function HistoryPage({
   d,
@@ -407,8 +438,8 @@ function HistoryPage({
   onDelete: (job: JobRecord, refresh: () => void) => void;
   onRerun: (job: JobRecord) => void;
 }) {
-  const [rows, setRows] = useState<JobRecord[]>([]);
   const [pageIndex, setPageIndex] = useState(0);
+  const [rows, setRows] = useState<JobRecord[]>(() => historyCache.get(0) ?? []);
   const [modeFilter, setModeFilter] = useState<'all' | 'paper_figure' | 'ppt_slide'>('all');
   const [statusFilter, setStatusFilter] = useState<'all' | 'live' | 'succeeded' | 'failed'>('all');
   const [query, setQuery] = useState('');
@@ -430,23 +461,29 @@ function HistoryPage({
     return () => window.clearTimeout(timer);
   }, [confirmDeleteId]);
 
+  const refresh = useCallback(() => {
+    return listJobs(HISTORY_PAGE_SIZE, pageIndex * HISTORY_PAGE_SIZE)
+      .then((jobs) => {
+        historyCache.set(pageIndex, jobs);
+        setRows((current) => reconcile(current, jobs));
+      })
+      .catch(() => {});
+  }, [pageIndex]);
+
   useEffect(() => {
+    // Show whatever this page last held, then reconcile against the server.
+    setRows(historyCache.get(pageIndex) ?? []);
     let cancelled = false;
     listJobs(HISTORY_PAGE_SIZE, pageIndex * HISTORY_PAGE_SIZE)
       .then((jobs) => {
-        if (!cancelled) setRows(jobs);
+        historyCache.set(pageIndex, jobs);
+        if (!cancelled) setRows((current) => reconcile(current, jobs));
       })
       .catch(() => {});
     return () => {
       cancelled = true;
     };
   }, [pageIndex]);
-
-  const refresh = () => {
-    listJobs(HISTORY_PAGE_SIZE, pageIndex * HISTORY_PAGE_SIZE)
-      .then(setRows)
-      .catch(() => {});
-  };
 
   // The rail popup used to poll live jobs; without it, the history page
   // keeps that duty while anything is queued or running.
@@ -457,9 +494,28 @@ function HistoryPage({
     if (!currentLive) return;
     const timer = window.setInterval(refresh, 3000);
     return () => window.clearInterval(timer);
-  }, [currentLive, pageIndex]);
+  }, [currentLive, refresh]);
 
-  const visible = rows.filter((job) => {
+  // Cards take the job as an argument so these stay referentially stable and
+  // the memo above actually holds across polls and filter changes.
+  const confirmRef = useRef<string | null>(null);
+  useEffect(() => {
+    confirmRef.current = confirmDeleteId;
+  }, [confirmDeleteId]);
+
+  const handleDelete = useCallback(
+    (job: JobRecord) => {
+      if (confirmRef.current !== job.id) {
+        setConfirmDeleteId(job.id);
+        return;
+      }
+      setConfirmDeleteId(null);
+      onDelete(job, refresh);
+    },
+    [onDelete, refresh]
+  );
+
+  const matches = (job: JobRecord) => {
     if (modeFilter !== 'all' && job.mode !== modeFilter) return false;
     if (statusFilter === 'live' && isJobSettled(job.status)) return false;
     if (statusFilter === 'succeeded' && job.status !== 'succeeded') return false;
@@ -469,7 +525,8 @@ function HistoryPage({
       if (!haystack.includes(query.trim().toLowerCase())) return false;
     }
     return true;
-  });
+  };
+  const visibleCount = rows.reduce((total, job) => total + (matches(job) ? 1 : 0), 0);
 
   const groupOf = (iso: string) => {
     const date = new Date(iso);
@@ -481,8 +538,12 @@ function HistoryPage({
     return d.history.earlier;
   };
 
+  // Every row is grouped and rendered, matching or not, and a filter only
+  // toggles visibility. Dropping non-matching cards from the tree instead would
+  // destroy their <img>, and remounting one re-requests and re-decodes the
+  // image — a burst of that on each filter click is what made the bar stutter.
   const grouped: Array<[string, JobRecord[]]> = [];
-  for (const job of visible) {
+  for (const job of rows) {
     const label = groupOf(job.created_at);
     const bucket = grouped.find(([key]) => key === label);
     if (bucket) {
@@ -542,17 +603,19 @@ function HistoryPage({
           value={query}
           onChange={(event) => setQuery(event.target.value)}
         />
-        <span className="history-count">{d.history.count(visible.length)}</span>
+        <span className="history-count">{d.history.count(visibleCount)}</span>
       </div>
-      {visible.length === 0 ? (
+      {visibleCount === 0 && (
         <p className="rail-pop-empty history-empty">{d.history.emptyFiltered}</p>
-      ) : (
-        <div className="history-groups">
-          {grouped.map(([label, jobs]) => (
-            <section key={label} className="history-group">
+      )}
+      <div className="history-groups">
+        {grouped.map(([label, jobs]) => {
+          const shown = jobs.reduce((total, job) => total + (matches(job) ? 1 : 0), 0);
+          return (
+            <section key={label} className={`history-group${shown === 0 ? ' is-hidden' : ''}`}>
               <h3 className="history-group-title">
                 {label}
-                <span>{jobs.length}</span>
+                <span>{shown}</span>
               </h3>
               <ul className="history-list">
                 {jobs.map((job) => (
@@ -560,25 +623,19 @@ function HistoryPage({
                     key={job.id}
                     job={job}
                     d={d}
-                    confirmDeleteId={confirmDeleteId}
-                    onOpen={() => onOpen(job)}
+                    filteredOut={!matches(job)}
+                    confirming={confirmDeleteId === job.id}
+                    onOpen={onOpen}
                     onPreview={setPreviewUrl}
-                    onDelete={() => {
-                      if (confirmDeleteId !== job.id) {
-                        setConfirmDeleteId(job.id);
-                        return;
-                      }
-                      setConfirmDeleteId(null);
-                      onDelete(job, refresh);
-                    }}
-                    onRerun={() => onRerun(job)}
+                    onDelete={handleDelete}
+                    onRerun={onRerun}
                   />
                 ))}
               </ul>
             </section>
-          ))}
-        </div>
-      )}
+          );
+        })}
+      </div>
       <div className="history-pager">
         <button
           type="button"

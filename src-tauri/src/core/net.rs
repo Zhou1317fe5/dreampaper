@@ -395,6 +395,20 @@ pub struct SseOutcome {
     pub events: Vec<Value>,
 }
 
+/// What a caller watching an SSE request sees as it happens.
+///
+/// The outcome above is only handed back once the stream closes, which is too
+/// late to show a model's answer arriving. An observer gets each event as it
+/// lands instead.
+pub enum SseSignal<'a> {
+    /// A retry is about to start. Everything forwarded so far belongs to an
+    /// attempt that produced nothing usable and must be discarded.
+    Restart,
+    Event(&'a Value),
+}
+
+pub type SseObserver<'a> = &'a (dyn Fn(SseSignal<'_>) + Send + Sync);
+
 pub fn drain_sse_events(buffer: &mut Vec<u8>) -> Vec<String> {
     let mut events = Vec::new();
     while let Some(index) = buffer.iter().position(|byte| *byte == b'\n') {
@@ -437,6 +451,7 @@ pub async fn post_sse_with_retries(
     payload: &Value,
     headers: Vec<(String, String)>,
     options: PostOptions<'_>,
+    observer: Option<SseObserver<'_>>,
 ) -> AppResult<SseOutcome> {
     let idle_timeout = effective_timeout(profile, options.timeout_seconds, options.minimum_timeout);
     let client = build_stream_client(idle_timeout, options.proxy_url)?;
@@ -446,6 +461,11 @@ pub async fn post_sse_with_retries(
     let mut last_error: Option<String> = None;
 
     for attempt in 0..attempts {
+        if attempt > 0 {
+            if let Some(observe) = observer {
+                observe(SseSignal::Restart);
+            }
+        }
         let started = std::time::Instant::now();
         let mut request = client.post(url).json(payload);
         for (key, value) in &all_headers {
@@ -471,7 +491,7 @@ pub async fn post_sse_with_retries(
                     .await;
                     continue;
                 }
-                match read_sse_events(response).await {
+                match read_sse_events(response, observer).await {
                     Ok(events) => {
                         return Ok(SseOutcome {
                             status,
@@ -539,7 +559,10 @@ pub async fn post_sse_with_retries(
     ))
 }
 
-async fn read_sse_events(response: reqwest::Response) -> AppResult<Vec<Value>> {
+async fn read_sse_events(
+    response: reqwest::Response,
+    observer: Option<SseObserver<'_>>,
+) -> AppResult<Vec<Value>> {
     use futures::StreamExt;
 
     let mut stream = response.bytes_stream();
@@ -547,6 +570,9 @@ async fn read_sse_events(response: reqwest::Response) -> AppResult<Vec<Value>> {
     let mut events: Vec<Value> = Vec::new();
     let push = |payload: &str, events: &mut Vec<Value>| {
         if let Ok(value) = serde_json::from_str::<Value>(payload) {
+            if let Some(observe) = observer {
+                observe(SseSignal::Event(&value));
+            }
             events.push(value);
         }
     };

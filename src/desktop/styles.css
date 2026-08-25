@@ -77,6 +77,11 @@
 .desktop-rail {
   display: flex;
   height: 100vh;
+  /* The page container becomes its own stacking context while it animates in,
+     which would otherwise paint over the whole rail — including the hover tips,
+     whose z-index only applies inside the rail's own context. */
+  position: relative;
+  z-index: 70;
   flex-direction: column;
   align-items: center;
   gap: 5px;
@@ -339,31 +344,6 @@
   font-variant-numeric: tabular-nums;
 }
 
-.job-dot {
-  width: 7px;
-  height: 7px;
-  flex: none;
-  border-radius: 50%;
-  background: var(--text-3);
-}
-
-.job-dot-running,
-.job-dot-queued {
-  background: var(--amber);
-}
-
-.job-dot-succeeded {
-  background: var(--accent);
-}
-
-.job-dot-failed {
-  background: var(--rose);
-}
-
-.job-dot-cancelled {
-  background: var(--text-3);
-}
-
 .desktop-main {
   display: grid;
   min-width: 0;
@@ -455,7 +435,7 @@
 @keyframes dp-page-in {
   from {
     opacity: 0;
-    transform: translateY(10px) scale(0.994);
+    transform: translateY(10px);
   }
 }
 
@@ -1666,6 +1646,83 @@
   font-size: 11px;
 }
 
+.desktop-shell .design-log-toggle {
+  padding: 8px 11px;
+  border-radius: var(--r-inner);
+  background: var(--card);
+  box-shadow: none;
+  color: var(--text-2);
+  font-size: 11.5px;
+  font-weight: 640;
+  letter-spacing: 0.04em;
+}
+
+.desktop-shell .design-log-toggle:hover {
+  background: var(--chip-strong);
+}
+
+.desktop-shell .design-log-caret {
+  border-left-color: var(--text-3);
+}
+
+.desktop-shell .design-log-count {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 11px;
+}
+
+.desktop-shell .design-log-item {
+  padding: 10px 12px;
+  border-radius: var(--r-inner);
+  border-left: 3px solid var(--hairline);
+  background: var(--card);
+  box-shadow: none;
+}
+
+.desktop-shell .design-log-item.active {
+  border-left-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.desktop-shell .design-log-item.failed {
+  border-left-color: var(--rose);
+  background: rgba(229, 72, 77, 0.08);
+}
+
+.desktop-shell .design-log-dot {
+  background: var(--text-3);
+}
+
+.desktop-shell .design-log-item.active .design-log-dot {
+  background: var(--accent);
+}
+
+.desktop-shell .design-log-item.failed .design-log-dot {
+  background: var(--rose);
+}
+
+.desktop-shell .design-log-label {
+  color: var(--text-1);
+  font-size: 12px;
+}
+
+.desktop-shell .design-log-step {
+  color: var(--text-3);
+  font-size: 10.5px;
+}
+
+.desktop-shell .design-log-badge {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+  font-size: 10px;
+}
+
+.desktop-shell .design-log-body {
+  max-height: 220px;
+  color: var(--text-2);
+  font-size: 11.5px;
+}
+
 .desktop-shell .error-diagnostic {
   border-color: rgba(229, 72, 77, 0.16);
   border-radius: var(--r-inner);
@@ -1745,6 +1802,11 @@
 
 .history-panel {
   display: grid;
+  /* The panel is stretched to the viewport by .desktop-page, so the default
+     align-content: stretch hands the slack to every auto row — the toolbar
+     grew or shrank with the number of matching cards. Pack to the top and the
+     toolbar keeps one height whatever the filter selects. */
+  align-content: start;
   gap: 14px;
   padding: 16px 18px;
 }
@@ -1753,6 +1815,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
+  min-height: 36px;
   gap: 8px;
 }
 
@@ -1866,6 +1929,12 @@
   gap: 0;
   min-width: 0;
   overflow: hidden;
+  /* Result images are full-resolution (5504x3072 is typical), so every card
+     the browser renders costs a ~68MB decode. Skipping offscreen cards keeps
+     that bounded to the rows actually on screen; `auto` lets the browser reuse
+     each card's real measured size once it has rendered one. */
+  content-visibility: auto;
+  contain-intrinsic-size: auto 300px;
   border: 1px solid color-mix(in srgb, var(--text-3) 14%, transparent);
   border-radius: 16px;
   background: var(--card);
@@ -1879,10 +1948,24 @@
   transform: translateY(-2px);
 }
 
+/* Filtering hides cards rather than unmounting them, so their images survive
+   the switch instead of being fetched and decoded again. Two classes beat the
+   `display: grid` above without needing !important. */
+.history-card.is-hidden,
+.history-group.is-hidden {
+  display: none;
+}
+
 .hc-image {
   display: block;
   width: 100%;
-  aspect-ratio: 16 / 10;
+  /* A fixed height, like the template library's cards, instead of
+     `aspect-ratio: 16 / 10`. Under aspect-ratio the height derived from a `1fr`
+     grid track, so WebKit re-resolved intrinsic sizes over every card each time
+     the grid mutated — which is why filtering stuttered here and never did in
+     the template library. Viewport units keep it adaptive without reintroducing
+     a dependency on the resolved track width. */
+  height: clamp(150px, 13vw, 240px);
   padding: 0;
   border: 0;
   overflow: hidden;
@@ -1965,21 +2048,45 @@
   display: flex;
   flex: none;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
 }
 
+/* Cards are large enough to carry a real button: a bordered box with a legible
+   glyph, always visible, instead of the 14px hover-only affordance the compact
+   recent-jobs rows use. */
 .hc-actions .recent-rerun,
 .hc-actions .recent-delete {
-  width: 28px;
-  height: 28px;
-  border-radius: 8px;
+  width: 32px;
+  min-width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid color-mix(in srgb, var(--text-3) 22%, transparent);
+  border-radius: 10px;
+  background: var(--card);
+  font-size: 18px;
   opacity: 1;
+}
+
+.hc-actions .recent-rerun:hover {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.hc-actions .recent-delete:hover {
+  border-color: color-mix(in srgb, var(--rose) 45%, transparent);
+  background: color-mix(in srgb, var(--rose) 12%, transparent);
+  color: var(--rose);
 }
 
 .hc-actions .recent-delete.confirming {
   width: auto;
-  min-width: 28px;
-  padding: 0 10px;
+  min-width: 32px;
+  padding: 0 12px;
+  border-color: var(--rose);
+  background: var(--rose);
+  color: #fff;
+  font-size: 11px;
   white-space: nowrap;
 }
 
@@ -2118,95 +2225,4 @@
   display: grid;
   gap: 12px;
   min-width: 0;
-}
-
-.active-jobs {
-  display: grid;
-  gap: 6px;
-  min-width: 0;
-}
-
-.active-jobs h3 {
-  margin: 0;
-  padding: 0 2px;
-  color: var(--text-3);
-  font-size: 12px;
-  font-weight: 600;
-}
-
-.active-jobs ul {
-  display: grid;
-  gap: 4px;
-  margin: 0;
-  padding: 0;
-  list-style: none;
-}
-
-.active-job {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 3px 3px 10px;
-  border: 1px solid transparent;
-  border-radius: 11px;
-  background: var(--chip);
-  transition: border-color 150ms ease;
-}
-
-.active-job.current {
-  border-color: color-mix(in srgb, var(--accent) 40%, transparent);
-}
-
-.active-job-main {
-  flex: 1;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
-  padding: 0;
-  border: 0;
-  background: transparent;
-  color: var(--text-2);
-  font: inherit;
-  font-size: 12.5px;
-  text-align: left;
-  cursor: pointer;
-}
-
-.active-job-title {
-  flex: none;
-  max-width: 40%;
-  overflow: hidden;
-  color: var(--text-1);
-  font-weight: 600;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.active-job-meta {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  color: var(--text-3);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.active-job-stop {
-  flex: none;
-  height: 24px;
-  padding: 0 10px;
-  border: 0;
-  border-radius: 7px;
-  background: transparent;
-  color: var(--text-3);
-  font: inherit;
-  font-size: 11.5px;
-  cursor: pointer;
-  transition: background 150ms ease, color 150ms ease;
-}
-
-.active-job-stop:hover {
-  background: color-mix(in srgb, var(--rose) 14%, transparent);
-  color: var(--rose);
 }
