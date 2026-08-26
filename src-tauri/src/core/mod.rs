@@ -11,6 +11,7 @@ pub mod search;
 pub mod store;
 pub mod thumb;
 pub mod tpl;
+pub mod update;
 
 use std::path::PathBuf;
 

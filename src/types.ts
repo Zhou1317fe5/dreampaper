@@ -54,6 +54,13 @@ export interface AssetUpload {
   url: string;
 }
 
+export interface ReleaseInfo {
+  current_version: string;
+  latest_version: string;
+  release_url: string;
+  update_available: boolean;
+}
+
 export interface JobEvent {
   stage: string;
   message: string;

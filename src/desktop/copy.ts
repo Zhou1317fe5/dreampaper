@@ -2,8 +2,29 @@ import type { Lang } from '../app';
 
 export const desktopCopy = {
   zh: {
-    nav: { paper: '科研图', ppt: '幻灯片', templates: '模板库', history: '历史', settings: '设置' },
+    nav: { paper: '科研图', ppt: '幻灯片', templates: '模板库', history: '历史', settings: '设置', about: '项目介绍' },
     settingsIntro: '配置 Design / Implement / Search 模型，以及代理与并发。',
+    theme: { light: '切换到浅色模式', dark: '切换到深色模式' },
+    about: {
+      title: '项目介绍',
+      intro: '了解 DreamPaper、项目地址与版本更新。',
+      description: '本地科研配图与学术幻灯片，从模板到成图一步到位。',
+      version: '当前版本',
+      repository: '项目地址',
+      openRepository: '打开 GitHub 项目',
+      update: '版本更新',
+      autoCheck: '启动时自动检查更新',
+      autoCheckHint: '默认开启。关闭后启动时不联网，仍可随时手动检查。',
+      check: '检查更新',
+      checking: '检查中…',
+      idle: '点击检查 GitHub 上的最新 Release。',
+      latest: '已是最新版本',
+      available: (version: string) => `发现新版本 v${version}`,
+      failed: '检查更新失败',
+      download: '下载更新',
+      releases: '查看 Releases',
+      openFailed: '无法打开外部链接'
+    },
     recent: { title: '近期任务', empty: '还没有任务', failed: '失败', running: '进行中', done: '完成', untitled: '未命名任务', finishedAt: '完成于', delete: '删除', confirmDelete: '确认删除', deleteFailed: '删除任务失败', rerun: '重跑', rerunFailed: '重跑失败', rerunUnavailable: '该任务缺少原始输入，无法重跑' },
     history: {
       title: '历史记录',
@@ -91,8 +112,29 @@ export const desktopCopy = {
     }
   },
   en: {
-    nav: { paper: 'Figure', ppt: 'Slide', templates: 'Templates', history: 'History', settings: 'Settings' },
+    nav: { paper: 'Figure', ppt: 'Slide', templates: 'Templates', history: 'History', settings: 'Settings', about: 'About' },
     settingsIntro: 'Configure Design / Implement / Search models, proxy and concurrency.',
+    theme: { light: 'Switch to light mode', dark: 'Switch to dark mode' },
+    about: {
+      title: 'About',
+      intro: 'Learn about DreamPaper, its repository, and available updates.',
+      description: 'Local paper figures and academic slides — template in, publication-ready image out.',
+      version: 'Current version',
+      repository: 'Repository',
+      openRepository: 'Open GitHub repository',
+      update: 'Updates',
+      autoCheck: 'Check for updates on startup',
+      autoCheckHint: 'Enabled by default. Turn it off to skip network access at startup; manual checks remain available.',
+      check: 'Check for updates',
+      checking: 'Checking…',
+      idle: 'Check the latest GitHub Release when you are ready.',
+      latest: 'You are up to date',
+      available: (version: string) => `Version v${version} is available`,
+      failed: 'Update check failed',
+      download: 'Download update',
+      releases: 'View Releases',
+      openFailed: 'Failed to open external link'
+    },
     recent: { title: 'Recent jobs', empty: 'No jobs yet', failed: 'failed', running: 'running', done: 'done', untitled: 'Untitled task', finishedAt: 'finished at', delete: 'Delete', confirmDelete: 'Confirm', deleteFailed: 'Failed to delete job', rerun: 'Rerun', rerunFailed: 'Rerun failed', rerunUnavailable: 'Original input missing, cannot rerun' },
     history: {
       title: 'History',

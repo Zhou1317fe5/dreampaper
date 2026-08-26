@@ -6,11 +6,16 @@
   "permissions": [
     "core:default",
     "core:window:allow-start-dragging",
+    "core:window:allow-set-theme",
     "dialog:allow-open",
     "dialog:allow-save",
     {
       "identifier": "opener:allow-open-url",
-      "allow": [{ "url": "https://huggingface.co/*" }]
+      "allow": [
+        { "url": "https://huggingface.co/*" },
+        { "url": "https://github.com/dream-rec/dreampaper" },
+        { "url": "https://github.com/dream-rec/dreampaper/*" }
+      ]
     }
   ]
 }

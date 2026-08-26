@@ -1,7 +1,20 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type JSX } from 'react';
-import { createJob, deleteJob, getConfig, getJob, listJobs, listTemplates, saveConfig } from '../api';
+import packageMetadata from '../../package.json';
+import {
+  checkUpdate,
+  createJob,
+  deleteJob,
+  desktopAvailable,
+  getConfig,
+  getJob,
+  listJobs,
+  listTemplates,
+  openExternal,
+  saveConfig
+} from '../api';
 import { copy, emptyConfig, isJobSettled, Settings, useJobPolling, type Lang } from '../app';
 import type { AppConfig, JobRecord } from '../types';
+import { AboutPage, IconGitHub, type UpdateState } from './about';
 import { desktopCopy, type DesktopCopy } from './copy';
 import {
   defaultFigureForm,
@@ -13,15 +26,29 @@ import {
   type SlideFormState
 } from './forms';
 import { TemplateLibrary } from './templates';
+import {
+  applyTheme,
+  autoUpdateEnabled,
+  initialTheme,
+  saveAutoUpdate,
+  saveTheme,
+  themePreference,
+  type Theme
+} from './prefs';
 
-type Page = 'paper' | 'ppt' | 'templates' | 'history' | 'settings';
+type Page = 'paper' | 'ppt' | 'templates' | 'history' | 'settings' | 'about';
 type Copy = (typeof copy)[Lang];
 
 const supportsViewTransitions = typeof document !== 'undefined' && 'startViewTransition' in document;
+let startupUpdateStarted = false;
 
 export function DesktopApp() {
   const [page, setPage] = useState<Page>('paper');
   const [lang, setLang] = useState<Lang>('zh');
+  const [theme, setTheme] = useState<Theme>(initialTheme);
+  const [followsSystem, setFollowsSystem] = useState(() => themePreference() === null);
+  const [autoUpdate, setAutoUpdate] = useState(autoUpdateEnabled);
+  const [update, setUpdate] = useState<UpdateState>({ status: 'idle', info: null, error: null });
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
   const [toast, setToast] = useState<{ id: number; text: string; tone: 'info' | 'error' } | null>(null);
   const [paperJob, setPaperJob] = useState<JobRecord | null>(null);
@@ -87,11 +114,48 @@ export function DesktopApp() {
     []
   );
 
+  const runUpdateCheck = useCallback(async () => {
+    setUpdate((current) => ({ status: 'checking', info: current.info, error: null }));
+    try {
+      const info = await checkUpdate();
+      setUpdate({ status: info.update_available ? 'available' : 'current', info, error: null });
+    } catch (error) {
+      setUpdate((current) => ({
+        status: 'failed',
+        info: current.info,
+        error: error instanceof Error ? error.message : null
+      }));
+    }
+  }, []);
+
+  useEffect(() => {
+    applyTheme(theme);
+    if (desktopAvailable()) {
+      import('@tauri-apps/api/window')
+        .then(({ getCurrentWindow }) => getCurrentWindow().setTheme(theme))
+        .catch(() => {});
+    }
+  }, [theme]);
+
+  useEffect(() => {
+    if (!followsSystem) return;
+    const query = window.matchMedia('(prefers-color-scheme: dark)');
+    const sync = (event: MediaQueryListEvent) => setTheme(event.matches ? 'dark' : 'light');
+    query.addEventListener('change', sync);
+    return () => query.removeEventListener('change', sync);
+  }, [followsSystem]);
+
   useEffect(() => {
     getConfig()
-      .then(setConfig)
+      .then((saved) => {
+        setConfig(saved);
+        if (autoUpdate && !startupUpdateStarted) {
+          startupUpdateStarted = true;
+          void runUpdateCheck();
+        }
+      })
       .catch((error) => showMessage(error.message, 'error'));
-  }, [showMessage]);
+  }, [autoUpdate, runUpdateCheck, showMessage]);
 
   useJobPolling(paperJob, setPaperJob, (message) => showMessage(message, 'error'));
   useJobPolling(pptJob, setPptJob, (message) => showMessage(message, 'error'));
@@ -103,6 +167,26 @@ export function DesktopApp() {
   }, [toast]);
 
 
+
+  function toggleTheme() {
+    const next = theme === 'dark' ? 'light' : 'dark';
+    setFollowsSystem(false);
+    saveTheme(next);
+    setTheme(next);
+  }
+
+  function changeAutoUpdate(enabled: boolean) {
+    saveAutoUpdate(enabled);
+    setAutoUpdate(enabled);
+  }
+
+  async function openUrl(url: string) {
+    try {
+      await openExternal(url);
+    } catch (error) {
+      showMessage(error instanceof Error ? error.message : d.about.openFailed, 'error');
+    }
+  }
 
   async function persistConfig(next: AppConfig) {
     try {
@@ -220,6 +304,16 @@ export function DesktopApp() {
 
         <button
           type="button"
+          className="rail-btn"
+          data-tip={theme === 'dark' ? d.theme.light : d.theme.dark}
+          aria-label={theme === 'dark' ? d.theme.light : d.theme.dark}
+          onClick={toggleTheme}
+        >
+          <IconTheme theme={theme} />
+        </button>
+
+        <button
+          type="button"
           className={`rail-btn${page === 'settings' ? ' active' : ''}`}
           data-tip={d.nav.settings}
           aria-label={d.nav.settings}
@@ -237,6 +331,17 @@ export function DesktopApp() {
           onClick={() => setLang(lang === 'zh' ? 'en' : 'zh')}
         >
           <span className="rail-lang">{lang === 'zh' ? 'EN' : '中'}</span>
+        </button>
+
+        <button
+          type="button"
+          className={`rail-btn${page === 'about' ? ' active' : ''}`}
+          data-tip={d.nav.about}
+          aria-label={d.nav.about}
+          aria-current={page === 'about' ? 'page' : undefined}
+          onClick={() => transitionToPage('about')}
+        >
+          <IconGitHub />
         </button>
       </aside>
 
@@ -288,6 +393,17 @@ export function DesktopApp() {
             <SettingsPane>
               <Settings config={config} onChange={setConfig} onSave={persistConfig} t={t} />
             </SettingsPane>
+          )}
+          {page === 'about' && (
+            <AboutPage
+              d={d}
+              version={packageMetadata.version}
+              autoCheck={autoUpdate}
+              update={update}
+              onAutoCheck={changeAutoUpdate}
+              onCheck={() => void runUpdateCheck()}
+              onOpen={(url) => void openUrl(url)}
+            />
           )}
         </div>
       </main>
@@ -685,7 +801,8 @@ const pageHead: Record<
   ppt: { title: (t) => t.ppt.title, intro: (t) => t.ppt.intro },
   templates: { title: (_t, d) => d.templates.title, intro: (_t, d) => d.templates.intro },
   history: { title: (_t, d) => d.history.title, intro: (_t, d) => d.history.intro },
-  settings: { title: (_t, d) => d.nav.settings, intro: (_t, d) => d.settingsIntro }
+  settings: { title: (_t, d) => d.nav.settings, intro: (_t, d) => d.settingsIntro },
+  about: { title: (_t, d) => d.about.title, intro: (_t, d) => d.about.intro }
 };
 
 function IconFigure() {
@@ -714,6 +831,19 @@ function IconTemplates() {
       <rect x="11.25" y="2.75" width="6" height="6" rx="1.8" />
       <rect x="2.75" y="11.25" width="6" height="6" rx="1.8" />
       <rect x="11.25" y="11.25" width="6" height="6" rx="1.8" />
+    </svg>
+  );
+}
+
+function IconTheme({ theme }: { theme: Theme }) {
+  return theme === 'dark' ? (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+      <circle cx="10" cy="10" r="3.2" />
+      <path d="M10 2.2v1.5M10 16.3v1.5M2.2 10h1.5M16.3 10h1.5M4.5 4.5l1.1 1.1M14.4 14.4l1.1 1.1M15.5 4.5l-1.1 1.1M5.6 14.4l-1.1 1.1" strokeLinecap="round" />
+    </svg>
+  ) : (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+      <path d="M16.5 12.3A6.7 6.7 0 0 1 7.7 3.5a6.7 6.7 0 1 0 8.8 8.8Z" strokeLinecap="round" strokeLinejoin="round" />
     </svg>
   );
 }

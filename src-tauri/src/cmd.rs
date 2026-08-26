@@ -6,6 +6,7 @@ use crate::core::config::AppConfig;
 use crate::core::doc::{DocumentChunkHit, DocumentSummary};
 use crate::core::job::JobRecord;
 use crate::core::tpl::{TemplatePackSummary, TemplateSummary};
+use crate::core::update::ReleaseInfo;
 use crate::error::{AppError, AppResult};
 use crate::event::JobEventPayload;
 use crate::state::AppState;
@@ -18,6 +19,13 @@ pub fn get_config(state: State<'_, AppState>) -> AppResult<AppConfig> {
 #[tauri::command]
 pub fn save_config(state: State<'_, AppState>, config: AppConfig) -> AppResult<AppConfig> {
     state.core().save_config(config)
+}
+
+#[tauri::command]
+pub async fn check_update(app: AppHandle, state: State<'_, AppState>) -> AppResult<ReleaseInfo> {
+    let current_version = app.package_info().version.to_string();
+    let config = state.core().get_config()?;
+    crate::core::update::check(&current_version, config.proxy_url.as_deref()).await
 }
 
 #[tauri::command]

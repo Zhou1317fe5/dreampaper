@@ -28,6 +28,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             cmd::get_config,
             cmd::save_config,
+            cmd::check_update,
             cmd::list_templates,
             cmd::import_asset,
             cmd::import_template_image,

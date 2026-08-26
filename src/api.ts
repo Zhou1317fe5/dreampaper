@@ -3,6 +3,7 @@ import type {
   AssetUpload,
   DesignLogEvent,
   JobRecord,
+  ReleaseInfo,
   TemplatePackSummary,
   TemplateSummary
 } from './types';
@@ -57,6 +58,10 @@ export function saveConfig(config: AppConfig) {
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(config)
   });
+}
+
+export function checkUpdate() {
+  return ipc<ReleaseInfo>('check_update');
 }
 
 export function listTemplates(kind: string, q: string) {
@@ -173,9 +178,8 @@ export async function pickDirectory(title: string): Promise<string | null> {
  *
  * Inside the Tauri webview a plain `<a target="_blank">` is a silent no-op:
  * there is no window.open handler, so the click produces no navigation and no
- * error. The URL has to be handed to the OS instead. Scoped in
- * capabilities/default.json to https://huggingface.co/* — a URL outside that
- * scope is rejected by the ACL.
+ * error. The URL has to be handed to the OS instead. The capability file keeps
+ * this limited to the external resources the UI actually links to.
  */
 export async function openExternal(url: string): Promise<void> {
   if (!isDesktop) {

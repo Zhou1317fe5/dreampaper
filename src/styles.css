@@ -23,6 +23,8 @@
   --stack-gap: 16px;
   --col-gap: 20px;
 
+  --accent: #b45df2;
+  --accent-deep: #9d3fe0;
   --panel-bg: rgba(255, 248, 252, 0.82);
   --soft-bg: rgba(247, 240, 247, 0.88);
   --text-muted: #68707a;
@@ -328,7 +330,7 @@ button {
 }
 
 .settings-section-title {
-  color: #34413c;
+  color: var(--accent-deep);
   font-size: 1.02rem;
   font-weight: 760;
   white-space: nowrap;
@@ -380,7 +382,7 @@ button {
 }
 
 .settings-section.open .settings-section-title {
-  color: #2f3a35;
+  color: var(--accent-deep);
 }
 
 .settings-section-panel {

@@ -33,8 +33,10 @@
 
 ## What's new
 
+**v0.1.3**
 - Reworked history manager: browse every past job, rerun any of them in one click
 - Transparent generation log: the design model's analysis for each step streams alongside the job progress
+- Automatic update checks and light/dark theme switching
 - Assorted bug fixes and smoothness work
 
 | History | Design log |
