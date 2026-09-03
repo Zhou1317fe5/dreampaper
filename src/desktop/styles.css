@@ -676,7 +676,7 @@
   font-size: 12.5px;
   appearance: none;
   -webkit-appearance: none;
-  transition: background 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
+  transition: background-color 160ms ease, border-color 160ms ease, box-shadow 160ms ease;
 }
 
 .desktop-shell select {
@@ -743,14 +743,14 @@
 .desktop-shell select:hover,
 .desktop-shell textarea:hover,
 .desktop-shell .switch-field:hover {
-  background: var(--chip-strong);
+  background-color: var(--chip-strong);
 }
 
 .desktop-shell input:focus,
 .desktop-shell select:focus,
 .desktop-shell textarea:focus {
   border-color: var(--accent);
-  background: var(--card);
+  background-color: var(--card);
   box-shadow: 0 0 0 3px var(--accent-soft);
   outline: none;
 }
