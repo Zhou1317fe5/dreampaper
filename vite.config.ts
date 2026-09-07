@@ -1,10 +1,14 @@
 import { resolve } from 'node:path';
-import { defineConfig } from 'vite';
+import { defineConfig } from 'vitest/config';
 import react from '@vitejs/plugin-react';
 
 export default defineConfig({
   plugins: [react()],
   publicDir: 'static',
+  test: {
+    environment: 'node',
+    include: ['src/**/*.test.ts']
+  },
   build: {
     rollupOptions: {
       // 双入口：index.html 是网页版，index.desktop.html 是桌面外壳。
@@ -23,4 +27,3 @@ export default defineConfig({
     }
   }
 });
-

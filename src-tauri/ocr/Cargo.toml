@@ -1,0 +1,53 @@
+[package]
+name = "dreampaper-ocr"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+# The library is consumed by the Tauri app with `default-features = false`:
+# only the IPC protocol, the padding geometry and the process supervisor are
+# compiled there. The inference engine (ONNX Runtime binding and the PP-OCR
+# port) lives behind `engine` and is only built into the sidecar binaries.
+[features]
+default = ["engine"]
+engine = ["dep:ort", "dep:imageproc", "dep:geo-clipper", "dep:geo-types", "dep:ndarray", "dep:sha2"]
+
+[dependencies]
+geo-clipper = { version = "0.9", optional = true }
+geo-types = { version = "0.7", optional = true }
+image = { version = "0.25", default-features = false, features = ["jpeg", "png"] }
+imageproc = { version = "0.25", default-features = false, optional = true }
+ndarray = { version = "0.16", optional = true }
+ort = { version = "=2.0.0-rc.9", default-features = false, features = ["load-dynamic", "ndarray"], optional = true }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = { version = "0.10", optional = true }
+thiserror = "2"
+
+[dev-dependencies]
+pretty_assertions = "1"
+
+[[bin]]
+name = "dreampaper-ocr"
+path = "src/main.rs"
+required-features = ["engine"]
+
+[[bin]]
+name = "gate"
+path = "src/bin/gate.rs"
+required-features = ["engine"]
+
+[[bin]]
+name = "lifecycle"
+path = "src/bin/lifecycle.rs"
+required-features = ["engine"]
+
+[[bin]]
+name = "bench"
+path = "src/bin/bench.rs"
+required-features = ["engine"]
+
+[profile.release]
+codegen-units = 1
+lto = "thin"
+strip = true

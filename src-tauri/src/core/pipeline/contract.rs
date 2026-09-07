@@ -67,7 +67,10 @@ Contract:
       "statistical_annotations": "none or supported annotations only",
       "data_integrity_rules": "No value distortion, misleading scales, label fabrication, wrong chart type, or unsupported statistics."
     },
-    "implement_prompt": "Long bilingual-capable drawing brief WITH required sections: (1) canvas/layout (2) stage list (3) MODULE DETAIL / 模块细节 per stage listing every leaf module and edges (4) arrows (5) style (6) faithfulness/forbidden/template boundary. Must restate key user terms (OCR/BM25/双塔/重排/Top-K/… when present)."
+    "information_units": [{"unit": "one information unit from the material", "carrier": "table|chart|diagram|text|icon|object", "reason": "why this single carrier"}],
+    "redundancy_check": {"removed": ["duplicate expressions merged or dropped"], "statement": "confirm no graphic-graphic, text-text, or graphic-text semantic duplication"},
+    "hierarchy_plan": {"levels": [{"level": "title|section|body|caption", "font_size": "...", "weight": "...", "color": "..."}], "alignment": "edge/baseline/grid alignment rules", "focus_region": "where the core content sits in the main body area"},
+    "implement_prompt": "Long bilingual-capable drawing brief WITH required sections: (1) canvas/layout (2) stage list (3) MODULE DETAIL / 模块细节 per stage listing every leaf module and edges (4) arrows (5) style (6) faithfulness/forbidden/template boundary. Must restate key user terms (OCR/BM25/双塔/重排/Top-K/… when present). Must restate the expression constraints: one carrier per information unit, uniform font size for same-level text, aligned edges/baselines, core content in the main region."
   },
   "quality_checklist": ["detail-preserving", "multi-stage", "faithful", "readable"]
 }
@@ -176,7 +179,10 @@ pub fn ppt_single_page(page_number: usize) -> String {
       "style_rules": "Highlight only 2-5 short key phrases per page; never mark whole sentences or drift from template palette."
     }},
     "visible_text": ["Simplified Chinese visible text only, short strings"],
-    "implement_prompt": "Page-specific body instructions only. Start with: Create one 16:9 academic PowerPoint-style slide. Describe this page's variable body content, layout skeleton, visual/icon/object/product elements, diagrams/charts, keyword emphasis, and visible Chinese text. Do not repeat API output settings. Do not rely on the uploaded image or network images being available to the implement model."
+    "information_units": [{{"unit": "one information unit from the material", "carrier": "table|chart|diagram|text|icon|object", "reason": "why this single carrier"}}],
+    "redundancy_check": {{"removed": ["duplicate expressions merged or dropped"], "statement": "confirm no graphic-graphic, text-text, or graphic-text semantic duplication"}},
+    "hierarchy_plan": {{"levels": [{{"level": "title|section|body|caption", "font_size": "...", "weight": "...", "color": "..."}}], "alignment": "edge/baseline/grid alignment rules", "focus_region": "where the core content sits in the main body area"}},
+    "implement_prompt": "Page-specific body instructions only. Start with: Create one 16:9 academic PowerPoint-style slide. Describe this page's variable body content, layout skeleton, visual/icon/object/product elements, diagrams/charts, keyword emphasis, and visible Chinese text. Restate the expression constraints: one carrier per information unit, uniform font size for same-level text, aligned edges/baselines, core content in the main region. Do not repeat API output settings. Do not rely on the uploaded image or network images being available to the implement model."
   }}
 }}"#
     )
@@ -188,11 +194,26 @@ mod tests {
 
     #[test]
     fn contracts_expose_strengthened_fields() {
-        for token in ["diagram_spec", "plot_spec", "quality_rubric", "data_integrity_rules"] {
+        for token in [
+            "diagram_spec",
+            "plot_spec",
+            "quality_rubric",
+            "data_integrity_rules",
+            "information_units",
+            "redundancy_check",
+            "hierarchy_plan",
+        ] {
             assert!(paper().contains(token), "paper contract missing {token}");
         }
-        for token in ["master_style_spec", "immutable_elements", "forbidden_deviations"] {
-            assert!(template_analysis().contains(token), "template contract missing {token}");
+        for token in [
+            "master_style_spec",
+            "immutable_elements",
+            "forbidden_deviations",
+        ] {
+            assert!(
+                template_analysis().contains(token),
+                "template contract missing {token}"
+            );
         }
         let single = ppt_single_page(1);
         for token in [
@@ -201,12 +222,29 @@ mod tests {
             "module_style",
             "visual_element_plan",
             "emphasis_plan",
+            "information_units",
+            "redundancy_check",
+            "hierarchy_plan",
         ] {
-            assert!(single.contains(token), "single page contract missing {token}");
+            assert!(
+                single.contains(token),
+                "single page contract missing {token}"
+            );
         }
         let outline = ppt_outline(2);
         for token in ["deck_outline", "shared_prompt", "page_briefs"] {
             assert!(outline.contains(token), "outline missing {token}");
+        }
+        for token in ["information_units", "redundancy_check", "hierarchy_plan"] {
+            assert!(!outline.contains(token), "outline must not require {token}");
+            assert!(
+                !template_analysis().contains(token),
+                "template contract must not require {token}"
+            );
+            assert!(
+                !structure_plan().contains(token),
+                "structure plan must not require {token}"
+            );
         }
         assert!(outline.contains("Do not write page-level implement_prompt"));
         assert!(!outline.contains("\"implement_prompt\":"));
@@ -222,6 +260,8 @@ mod tests {
     #[test]
     fn structure_plan_states_minimums() {
         let contract = structure_plan();
-        assert!(contract.contains("at least 2 lanes_or_stages, 6 module_slots, and 5 connection_slots"));
+        assert!(
+            contract.contains("at least 2 lanes_or_stages, 6 module_slots, and 5 connection_slots")
+        );
     }
 }

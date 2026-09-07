@@ -3,6 +3,7 @@ import { createJob, listTemplates, uploadAsset } from '../api';
 import { JobPanel, copy, type Lang } from '../app';
 import type { AssetUpload, JobRecord, TemplateSummary } from '../types';
 import type { DesktopCopy } from './copy';
+import { composeRules, defaultStyleChoice, StyleConstraints, type StyleChoice } from './style_picker';
 
 type Copy = (typeof copy)[Lang];
 
@@ -115,24 +116,34 @@ function GrowField({
   hint,
   value,
   onChange,
-  grow = 1
+  grow = 1,
+  aside
 }: {
   label: string;
   hint?: string;
   value: string;
   onChange: (value: string) => void;
   grow?: number;
+  /** Controls shown at the right end of the label row (not inside the label). */
+  aside?: ReactNode;
 }) {
+  const id = useId();
   return (
-    <label className="dp-field span dp-field-grow" style={{ flexGrow: grow }}>
-      <span className="dp-field-label">{label}</span>
+    <div className="dp-field span dp-field-grow" style={{ flexGrow: grow }}>
+      <div className="dp-field-head">
+        <label className="dp-field-label" htmlFor={id}>
+          {label}
+        </label>
+        {aside}
+      </div>
       <textarea
+        id={id}
         className="dp-ta-fill"
         placeholder={hint}
         value={value}
         onChange={(event) => onChange(event.target.value)}
       />
-    </label>
+    </div>
   );
 }
 
@@ -210,13 +221,15 @@ function ResultPane({
   t,
   emptyText,
   onJob,
-  onMessage
+  onMessage,
+  onOpenWorkbench
 }: {
   job: JobRecord | null;
   t: Copy;
   emptyText: string;
   onJob: (job: JobRecord) => void;
   onMessage: (text: string, tone?: 'info' | 'error') => void;
+  onOpenWorkbench?: (assetId: string) => void;
 }) {
   return (
     <div className="result-stack">
@@ -229,6 +242,7 @@ function ResultPane({
             onMessage(t.result.stopped);
           }}
           onError={(message) => onMessage(message, 'error')}
+          onOpenWorkbench={onOpenWorkbench}
         />
       ) : (
         <div className="dp-empty">{emptyText}</div>
@@ -247,6 +261,7 @@ export type FigureFormState = {
   layoutFidelity: 'strict' | 'balanced' | 'loose';
   styleStrength: 'high' | 'medium' | 'low';
   custom: string;
+  style: StyleChoice;
 };
 
 export const defaultFigureForm: FigureFormState = {
@@ -258,7 +273,8 @@ export const defaultFigureForm: FigureFormState = {
   aspectRatio: 'inherit',
   layoutFidelity: 'balanced',
   styleStrength: 'high',
-  custom: ''
+  custom: '',
+  style: defaultStyleChoice
 };
 
 export function FigureForm({
@@ -268,6 +284,7 @@ export function FigureForm({
   onJob,
   onMessage,
   onGoTemplates,
+  onOpenWorkbench,
   t,
   d
 }: {
@@ -277,12 +294,13 @@ export function FigureForm({
   onJob: (job: JobRecord) => void;
   onMessage: (text: string, tone?: 'info' | 'error') => void;
   onGoTemplates: () => void;
+  onOpenWorkbench?: (assetId: string) => void;
   t: Copy;
   d: DesktopCopy;
 }) {
   const [templates, setTemplates] = useState<TemplateSummary[]>([]);
   const [pane, setPane] = useState<'templates' | 'result'>('templates');
-  const { kind, query, selected, title, description, aspectRatio, layoutFidelity, styleStrength, custom } = state;
+  const { kind, query, selected, title, description, aspectRatio, layoutFidelity, styleStrength, custom, style } = state;
 
   function patch(values: Partial<FigureFormState>) {
     onState((current) => ({ ...current, ...values }));
@@ -326,7 +344,7 @@ export function FigureForm({
           layout_fidelity: layoutFidelity,
           style_strength: styleStrength,
           candidate_count: 1,
-          custom_prompt: custom || null
+          custom_prompt: composeRules(custom, style, d.style)
         }
       });
       onJob(created);
@@ -395,6 +413,7 @@ export function FigureForm({
           hint={t.paper.customHint}
           value={custom}
           onChange={(next) => patch({ custom: next })}
+          aside={<StyleConstraints t={d.style} value={style} onChange={(next) => patch({ style: next })} />}
         />
       </Card>
 
@@ -455,6 +474,7 @@ export function FigureForm({
             emptyText={d.pane.resultEmpty}
             onJob={onJob}
             onMessage={onMessage}
+            onOpenWorkbench={onOpenWorkbench}
           />
         )}
       </Card>
@@ -468,6 +488,7 @@ export type SlideFormState = {
   material: string;
   pages: number;
   custom: string;
+  style: StyleChoice;
 };
 
 export const defaultSlideForm: SlideFormState = {
@@ -475,7 +496,8 @@ export const defaultSlideForm: SlideFormState = {
   materials: [],
   material: '',
   pages: 1,
-  custom: ''
+  custom: '',
+  style: defaultStyleChoice
 };
 
 export function SlideForm({
@@ -485,6 +507,7 @@ export function SlideForm({
   onJob,
   onMessage,
   onGoTemplates,
+  onOpenWorkbench,
   t,
   d
 }: {
@@ -494,13 +517,14 @@ export function SlideForm({
   onJob: (job: JobRecord) => void;
   onMessage: (text: string, tone?: 'info' | 'error') => void;
   onGoTemplates: () => void;
+  onOpenWorkbench?: (assetId: string) => void;
   t: Copy;
   d: DesktopCopy;
 }) {
   const [masters, setMasters] = useState<TemplateSummary[]>([]);
   const [query, setQuery] = useState('');
   const [pane, setPane] = useState<'master' | 'result'>('master');
-  const { master, materials, material, pages, custom } = state;
+  const { master, materials, material, pages, custom, style } = state;
 
   function patch(values: Partial<SlideFormState>) {
     onState((current) => ({ ...current, ...values }));
@@ -545,7 +569,7 @@ export function SlideForm({
           material_text: material,
           material_asset_ids: materials.map((item) => item.id),
           page_count: pages,
-          custom_prompt: custom || null
+          custom_prompt: composeRules(custom, style, d.style)
         }
       });
       onJob(created);
@@ -623,6 +647,7 @@ export function SlideForm({
           hint={t.ppt.customHint}
           value={custom}
           onChange={(next) => patch({ custom: next })}
+          aside={<StyleConstraints t={d.style} value={style} onChange={(next) => patch({ style: next })} />}
         />
       </Card>
 
@@ -677,6 +702,7 @@ export function SlideForm({
             emptyText={d.pane.resultEmpty}
             onJob={onJob}
             onMessage={onMessage}
+            onOpenWorkbench={onOpenWorkbench}
           />
         )}
       </Card>

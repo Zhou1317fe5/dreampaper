@@ -133,11 +133,12 @@ impl<'a> TemplateService<'a> {
         std::fs::create_dir_all(&dir)?;
         let image_path = dir.join(format!("image{suffix}"));
         std::fs::write(&image_path, bytes)?;
-        let detected_mime = if mime_type.trim().is_empty() || mime_type == "application/octet-stream" {
-            guess_mime(&image_path)
-        } else {
-            mime_type
-        };
+        let detected_mime =
+            if mime_type.trim().is_empty() || mime_type == "application/octet-stream" {
+                guess_mime(&image_path)
+            } else {
+                mime_type
+            };
         if !detected_mime.starts_with("image/") {
             return Err(AppError::new(
                 "template_mime_unsupported",
@@ -329,7 +330,9 @@ impl<'a> TemplateService<'a> {
         let conn = self.store.connection()?;
         for item in items {
             let raw_id = string_field(item, "id").unwrap_or_else(|| Uuid::new_v4().to_string());
-            let kind = normalize_kind(&string_field(item, "kind").unwrap_or_else(|| fallback_kind.to_string()));
+            let kind = normalize_kind(
+                &string_field(item, "kind").unwrap_or_else(|| fallback_kind.to_string()),
+            );
             let Some(relative_image) = string_field(item, "path_to_gt_image")
                 .or_else(|| string_field(item, "image_path"))
                 .or_else(|| string_field(item, "image"))
@@ -384,7 +387,10 @@ impl<'a> TemplateService<'a> {
 
 fn manifests(source: &Path) -> Vec<(String, PathBuf)> {
     [
-        ("diagram".to_string(), source.join("diagram").join("ref.json")),
+        (
+            "diagram".to_string(),
+            source.join("diagram").join("ref.json"),
+        ),
         ("plot".to_string(), source.join("plot").join("ref.json")),
         ("diagram".to_string(), source.join("ref.json")),
     ]
@@ -532,9 +538,6 @@ mod tests {
         assert_eq!(listed.len(), 1);
         assert_eq!(listed[0].id, kept);
 
-        assert_eq!(
-            service.delete_templates(&[doomed]).expect("删除应成功"),
-            0
-        );
+        assert_eq!(service.delete_templates(&[doomed]).expect("删除应成功"), 0);
     }
 }

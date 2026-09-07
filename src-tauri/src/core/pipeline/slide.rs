@@ -14,7 +14,9 @@ use crate::core::pipeline::slide_validate::{
     apply_master_prompt_prefix, validate_ppt_outline, validate_ppt_pages, validate_ppt_single_page,
     validate_template_analysis,
 };
-use crate::core::pipeline::visual::{build_visual_asset_context, visual_asset_context_text};
+use crate::core::pipeline::visual::{
+    build_visual_asset_context, visual_asset_context_text, VisualTerms,
+};
 use crate::core::prompt::{compose_prompt, PromptAsset, PromptStore};
 use crate::error::{AppError, AppResult};
 use crate::event::DesignSink;
@@ -176,9 +178,7 @@ pub fn truncate_text(text: &str, limit: usize) -> String {
         return text.to_string();
     }
     let head: String = text.chars().take(limit).collect();
-    format!(
-        "{head}\n\n[Truncated from {length} chars to {limit} chars for page planning latency.]"
-    )
+    format!("{head}\n\n[Truncated from {length} chars to {limit} chars for page planning latency.]")
 }
 
 fn pick(value: &Value, key: &str) -> Value {
@@ -186,7 +186,10 @@ fn pick(value: &Value, key: &str) -> Value {
 }
 
 pub fn compact_template_analysis(analysis: &Value) -> String {
-    let wrapper = if analysis.get("template_analysis").is_some_and(Value::is_object) {
+    let wrapper = if analysis
+        .get("template_analysis")
+        .is_some_and(Value::is_object)
+    {
         &analysis["template_analysis"]
     } else {
         analysis
@@ -321,9 +324,15 @@ impl PagePlanContext<'_> {
                      Do not plan or output other pages."
                         .to_string(),
                 ),
-                ("Template Analysis", self.compact_template_analysis.to_string()),
+                (
+                    "Template Analysis",
+                    self.compact_template_analysis.to_string(),
+                ),
                 ("Deck Outline", serde_json::to_string(self.deck_outline)?),
-                ("Current Page Brief", serde_json::to_string_pretty(page_brief)?),
+                (
+                    "Current Page Brief",
+                    serde_json::to_string_pretty(page_brief)?,
+                ),
                 (
                     "Adjacent Page Context",
                     serde_json::to_string_pretty(&adjacent_page_context(
@@ -411,8 +420,14 @@ impl SlideRun<'_> {
         }
 
         stage("ppt_visual_assets", "检索产品/工具视觉素材线索");
-        let visual_asset_context =
-            build_visual_asset_context(&self.material_context, self.search_profile, proxy).await;
+        let visual_terms = VisualTerms::from_store(self.prompts);
+        let visual_asset_context = build_visual_asset_context(
+            &self.material_context,
+            &visual_terms,
+            self.search_profile,
+            proxy,
+        )
+        .await;
         let visual_asset_prompt = visual_asset_context_text(&visual_asset_context);
         let ppt_output = ppt_output_defaults(self.implement_profile);
 
@@ -454,6 +469,7 @@ impl SlideRun<'_> {
         let page_assets = self.prompts.load_all(&[
             "global/system.md",
             "modes/ppt_slide/design.md",
+            "global/expression.md",
             "styles/academic_ppt.md",
         ])?;
         let compact_template_analysis = compact_template_analysis(&template_analysis);
@@ -645,7 +661,10 @@ mod tests {
 
     #[test]
     fn empty_output_values_are_dropped() {
-        let defaults = ppt_output_defaults(&profile("openai_chat", &[("size", ""), ("quality", "auto")]));
+        let defaults = ppt_output_defaults(&profile(
+            "openai_chat",
+            &[("size", ""), ("quality", "auto")],
+        ));
         assert!(!defaults.contains_key("size"));
         assert_eq!(defaults["quality"], json!("auto"));
     }
@@ -667,7 +686,10 @@ mod tests {
         assert!(context.starts_with("User text material:\n用户输入"));
         assert!(context.contains("\n\n---\n\n"));
         assert!(context.contains("parser=markdown"));
-        assert!(context.contains(&format!("excerpt={MATERIAL_TEXT_LIMIT}/{} chars", MATERIAL_TEXT_LIMIT + 40)));
+        assert!(context.contains(&format!(
+            "excerpt={MATERIAL_TEXT_LIMIT}/{} chars",
+            MATERIAL_TEXT_LIMIT + 40
+        )));
     }
 
     #[test]
@@ -719,7 +741,13 @@ mod tests {
             "page_layout_rules": "Body varies inside safe margins."
         }});
         let compact = compact_template_analysis(&analysis);
-        for token in ["canvas", "palette", "typography", "forbidden_deviations", "红灰学术母版"] {
+        for token in [
+            "canvas",
+            "palette",
+            "typography",
+            "forbidden_deviations",
+            "红灰学术母版",
+        ] {
             assert!(compact.contains(token), "compact analysis missing {token}");
         }
         assert!(!compact.contains("worker 用不上的长文"));

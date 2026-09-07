@@ -263,7 +263,9 @@ impl DesignClient {
         }
         let data = Self::post(profile, &url, &payload, timeout_seconds, proxy_url).await?;
         if let Some(error) = upstream_error_message(&data) {
-            return Err(model_error(format!("模型在 HTTP 200 中返回错误对象: {error}")));
+            return Err(model_error(format!(
+                "模型在 HTTP 200 中返回错误对象: {error}"
+            )));
         }
         data["choices"][0]["message"]["content"]
             .as_str()
@@ -319,7 +321,9 @@ impl DesignClient {
         }
         let data = Self::post(profile, &url, &payload, timeout_seconds, proxy_url).await?;
         if let Some(error) = upstream_error_message(&data) {
-            return Err(model_error(format!("模型在 HTTP 200 中返回错误对象: {error}")));
+            return Err(model_error(format!(
+                "模型在 HTTP 200 中返回错误对象: {error}"
+            )));
         }
         if let Some(text) = data["output_text"].as_str() {
             if !text.is_empty() {
@@ -425,7 +429,9 @@ impl DesignClient {
             let data: Value = serde_json::from_str(&outcome.body)
                 .map_err(|error| model_error(format!("Anthropic 响应不是 JSON: {error}")))?;
             if let Some(error) = upstream_error_message(&data) {
-                return Err(model_error(format!("模型在 HTTP 200 中返回错误对象: {error}")));
+                return Err(model_error(format!(
+                    "模型在 HTTP 200 中返回错误对象: {error}"
+                )));
             }
             let text = data["content"]
                 .as_array()
@@ -668,7 +674,10 @@ mod tests {
             r#"{"type":"content_block_delta","delta":{"type":"thinking_delta","thinking":"忽略"}}"#,
             r#"{"type":"content_block_delta","delta":{"type":"text_delta","text":"例"}}"#,
         ]);
-        assert_eq!(collect_stream_text("anthropic_messages", &anthropic).unwrap(), "图例");
+        assert_eq!(
+            collect_stream_text("anthropic_messages", &anthropic).unwrap(),
+            "图例"
+        );
     }
 
     #[test]

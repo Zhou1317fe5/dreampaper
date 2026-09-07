@@ -203,6 +203,7 @@ impl FigureRun<'_> {
         let design_assets = self.prompts.load_all(&[
             "global/system.md",
             "global/figure_style.md",
+            "global/expression.md",
             "modes/paper_figure/design.md",
             "modes/paper_figure/diagram_rules.md",
             "modes/paper_figure/plot_rules.md",

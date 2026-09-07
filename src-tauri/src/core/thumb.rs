@@ -48,6 +48,20 @@ pub fn scaled(app_data: &Path, id: &str, source: &Path, width: u32) -> (PathBuf,
     }
 }
 
+/// Drop every cached downscale of `id`. Used when the source itself goes
+/// away; a miss is not an error.
+pub fn forget(app_data: &Path, id: &str) -> std::io::Result<()> {
+    let dir = app_data.join("thumbs");
+    for width in ALLOWED_WIDTHS {
+        match std::fs::remove_file(dir.join(format!("{id}_{width}.jpg"))) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(error),
+        }
+    }
+    Ok(())
+}
+
 /// `Ok(None)` means the source needs no downscale and should be served as-is.
 fn build(app_data: &Path, id: &str, source: &Path, width: u32) -> AppResult<Option<PathBuf>> {
     let dir = app_data.join("thumbs");
@@ -79,10 +93,17 @@ fn build(app_data: &Path, id: &str, source: &Path, width: u32) -> AppResult<Opti
     let height = ((u64::from(source_height) * u64::from(width)) / u64::from(source_width)).max(1);
     let height = u32::try_from(height).unwrap_or(1);
 
-    let rgb = decoded.resize_exact(width, height, FilterType::Lanczos3).into_rgb8();
+    let rgb = decoded
+        .resize_exact(width, height, FilterType::Lanczos3)
+        .into_rgb8();
     let mut encoded = Vec::new();
     image::codecs::jpeg::JpegEncoder::new_with_quality(&mut encoded, JPEG_QUALITY)
-        .write_image(rgb.as_raw(), rgb.width(), rgb.height(), ExtendedColorType::Rgb8)
+        .write_image(
+            rgb.as_raw(),
+            rgb.width(),
+            rgb.height(),
+            ExtendedColorType::Rgb8,
+        )
         .map_err(|error| AppError::new("thumbnail_encode_failed", error.to_string()))?;
 
     std::fs::create_dir_all(&dir)?;

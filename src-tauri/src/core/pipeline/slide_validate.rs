@@ -2,7 +2,7 @@ use regex::Regex;
 use serde_json::Value;
 
 use crate::core::pipeline::validate::{
-    is_filled, require_fields, validate_no_copy_request, ValidationError,
+    is_filled, require_fields, validate_expression_plan, validate_no_copy_request, ValidationError,
 };
 
 type Checked<T> = Result<T, ValidationError>;
@@ -16,29 +16,60 @@ fn value_err<T>(message: impl Into<String>) -> Checked<T> {
 }
 
 pub const MASTER_STYLE_FIELDS: [&str; 12] = [
-    "canvas", "title_region", "safe_margins", "header_footer", "divider_lines", "palette",
-    "typography", "module_style", "decorative_elements", "immutable_elements",
-    "page_layout_rules", "forbidden_deviations",
+    "canvas",
+    "title_region",
+    "safe_margins",
+    "header_footer",
+    "divider_lines",
+    "palette",
+    "typography",
+    "module_style",
+    "decorative_elements",
+    "immutable_elements",
+    "page_layout_rules",
+    "forbidden_deviations",
 ];
 
 pub const PAGE_MASTER_BINDING_FIELDS: [&str; 8] = [
-    "title_region", "safe_margins", "header_footer", "divider_lines", "palette", "typography",
-    "module_style", "background",
+    "title_region",
+    "safe_margins",
+    "header_footer",
+    "divider_lines",
+    "palette",
+    "typography",
+    "module_style",
+    "background",
 ];
 
 pub const PAGE_VISUAL_PLAN_FIELDS: [&str; 3] =
     ["usage_decision", "elements", "text_visual_balance"];
 
 pub const PAGE_VISUAL_ELEMENT_FIELDS: [&str; 7] = [
-    "type", "subject", "appearance", "source_reference", "placement", "style", "size_ratio",
+    "type",
+    "subject",
+    "appearance",
+    "source_reference",
+    "placement",
+    "style",
+    "size_ratio",
 ];
 
 pub const PAGE_EMPHASIS_PLAN_FIELDS: [&str; 2] = ["keywords", "style_rules"];
 pub const PAGE_EMPHASIS_KEYWORD_FIELDS: [&str; 3] = ["text", "style", "reason"];
 
-const PAGE_FIELDS: [&str; 10] = [
-    "page", "selected_template", "title", "slide_type", "body_layout_plan",
-    "master_style_binding", "visual_element_plan", "emphasis_plan", "visible_text",
+const PAGE_FIELDS: [&str; 13] = [
+    "page",
+    "selected_template",
+    "title",
+    "slide_type",
+    "body_layout_plan",
+    "master_style_binding",
+    "visual_element_plan",
+    "emphasis_plan",
+    "information_units",
+    "redundancy_check",
+    "hierarchy_plan",
+    "visible_text",
     "implement_prompt",
 ];
 
@@ -54,7 +85,10 @@ fn output_settings_sentence_pattern() -> Regex {
 }
 
 pub fn master_style_spec(analysis: &Value) -> Checked<Value> {
-    let wrapper = if analysis.get("template_analysis").is_some_and(Value::is_object) {
+    let wrapper = if analysis
+        .get("template_analysis")
+        .is_some_and(Value::is_object)
+    {
         &analysis["template_analysis"]
     } else {
         analysis
@@ -70,7 +104,10 @@ pub fn master_style_spec(analysis: &Value) -> Checked<Value> {
 }
 
 pub fn validate_template_analysis(analysis: &Value) -> Checked<()> {
-    let wrapper = if analysis.get("template_analysis").is_some_and(Value::is_object) {
+    let wrapper = if analysis
+        .get("template_analysis")
+        .is_some_and(Value::is_object)
+    {
         &analysis["template_analysis"]
     } else {
         analysis
@@ -82,10 +119,17 @@ pub fn validate_template_analysis(analysis: &Value) -> Checked<()> {
     require_fields(&master, &MASTER_STYLE_FIELDS, "PPT master_style_spec")?;
     require_fields(
         wrapper,
-        &["global_constraints", "immutable_elements", "page_layout_rules"],
+        &[
+            "global_constraints",
+            "immutable_elements",
+            "page_layout_rules",
+        ],
         "PPT template_analysis",
     )?;
-    let immutable = wrapper["immutable_elements"].as_array().map(Vec::len).unwrap_or(0);
+    let immutable = wrapper["immutable_elements"]
+        .as_array()
+        .map(Vec::len)
+        .unwrap_or(0);
     if immutable < 3 {
         return schema(
             "PPT immutable_elements must list at least title/page marker/divider or equivalent master elements",
@@ -95,7 +139,10 @@ pub fn validate_template_analysis(analysis: &Value) -> Checked<()> {
 }
 
 pub fn validate_ppt_outline(outline_json: &Value, page_count: usize) -> Checked<Value> {
-    let outline = if outline_json.get("deck_outline").is_some_and(Value::is_object) {
+    let outline = if outline_json
+        .get("deck_outline")
+        .is_some_and(Value::is_object)
+    {
         &outline_json["deck_outline"]
     } else {
         outline_json
@@ -105,7 +152,13 @@ pub fn validate_ppt_outline(outline_json: &Value, page_count: usize) -> Checked<
     }
     require_fields(
         outline,
-        &["deck_title", "deck_goal", "narrative_arc", "shared_prompt", "page_briefs"],
+        &[
+            "deck_title",
+            "deck_goal",
+            "narrative_arc",
+            "shared_prompt",
+            "page_briefs",
+        ],
         "PPT deck_outline",
     )?;
     let Some(briefs) = outline["page_briefs"].as_array() else {
@@ -119,7 +172,10 @@ pub fn validate_ppt_outline(outline_json: &Value, page_count: usize) -> Checked<
     }
     let mut sorted = briefs.clone();
     sorted.sort_by_key(|item| item["page"].as_i64().unwrap_or(0));
-    let actual: Vec<i64> = sorted.iter().map(|item| item["page"].as_i64().unwrap_or(0)).collect();
+    let actual: Vec<i64> = sorted
+        .iter()
+        .map(|item| item["page"].as_i64().unwrap_or(0))
+        .collect();
     let expected: Vec<i64> = (1..=page_count as i64).collect();
     if actual != expected {
         return value_err(format!(
@@ -134,12 +190,23 @@ pub fn validate_ppt_outline(outline_json: &Value, page_count: usize) -> Checked<
         require_fields(
             brief,
             &[
-                "page", "title", "role", "main_message", "content_points", "suggested_template",
-                "visual_direction", "transition_from_previous", "transition_to_next",
+                "page",
+                "title",
+                "role",
+                "main_message",
+                "content_points",
+                "suggested_template",
+                "visual_direction",
+                "transition_from_previous",
+                "transition_to_next",
             ],
             &label,
         )?;
-        if brief["content_points"].as_array().map(Vec::is_empty).unwrap_or(true) {
+        if brief["content_points"]
+            .as_array()
+            .map(Vec::is_empty)
+            .unwrap_or(true)
+        {
             return schema(format!("{label} content_points must be a non-empty list"));
         }
     }
@@ -159,15 +226,25 @@ pub fn validate_ppt_page_fields(page: &Value) -> Checked<()> {
     if !binding.is_object() {
         return schema(format!("{label} missing master_style_binding object"));
     }
-    require_fields(binding, &PAGE_MASTER_BINDING_FIELDS, &format!("{label} master_style_binding"))?;
+    require_fields(
+        binding,
+        &PAGE_MASTER_BINDING_FIELDS,
+        &format!("{label} master_style_binding"),
+    )?;
 
     let visual_plan = &page["visual_element_plan"];
     if !visual_plan.is_object() {
         return schema(format!("{label} missing visual_element_plan object"));
     }
-    require_fields(visual_plan, &PAGE_VISUAL_PLAN_FIELDS, &format!("{label} visual_element_plan"))?;
+    require_fields(
+        visual_plan,
+        &PAGE_VISUAL_PLAN_FIELDS,
+        &format!("{label} visual_element_plan"),
+    )?;
     let Some(elements) = visual_plan["elements"].as_array() else {
-        return schema(format!("{label} visual_element_plan.elements must be a list"));
+        return schema(format!(
+            "{label} visual_element_plan.elements must be a list"
+        ));
     };
     let decision = visual_plan["usage_decision"].as_str().unwrap_or_default();
     if elements.is_empty()
@@ -180,7 +257,10 @@ pub fn validate_ppt_page_fields(page: &Value) -> Checked<()> {
     }
     for (index, element) in elements.iter().enumerate() {
         if !element.is_object() {
-            return schema(format!("{label} visual element {} must be an object", index + 1));
+            return schema(format!(
+                "{label} visual element {} must be an object",
+                index + 1
+            ));
         }
         require_fields(
             element,
@@ -193,16 +273,25 @@ pub fn validate_ppt_page_fields(page: &Value) -> Checked<()> {
     if !emphasis.is_object() {
         return schema(format!("{label} missing emphasis_plan object"));
     }
-    require_fields(emphasis, &PAGE_EMPHASIS_PLAN_FIELDS, &format!("{label} emphasis_plan"))?;
+    require_fields(
+        emphasis,
+        &PAGE_EMPHASIS_PLAN_FIELDS,
+        &format!("{label} emphasis_plan"),
+    )?;
     let Some(keywords) = emphasis["keywords"].as_array() else {
         return schema(format!("{label} emphasis_plan.keywords must be a list"));
     };
     if keywords.len() > 5 {
-        return schema(format!("{label} emphasis_plan may highlight at most 5 key phrases"));
+        return schema(format!(
+            "{label} emphasis_plan may highlight at most 5 key phrases"
+        ));
     }
     for (index, keyword) in keywords.iter().enumerate() {
         if !keyword.is_object() {
-            return schema(format!("{label} emphasis keyword {} must be an object", index + 1));
+            return schema(format!(
+                "{label} emphasis keyword {} must be an object",
+                index + 1
+            ));
         }
         require_fields(
             keyword,
@@ -218,20 +307,28 @@ pub fn validate_ppt_page_fields(page: &Value) -> Checked<()> {
         }
     }
 
+    validate_expression_plan(page, &label)?;
+
     match page["visible_text"].as_array() {
         Some(items)
             if items.iter().all(|item| {
-                item.as_str().is_some_and(|text| text.trim().chars().count() <= 120)
+                item.as_str()
+                    .is_some_and(|text| text.trim().chars().count() <= 120)
             }) => {}
         _ => return schema(format!("{label} visible_text must be short strings")),
     }
 
     let prompt = page["implement_prompt"].as_str().unwrap_or_default();
     if prompt.trim().chars().count() < 80 {
-        return schema(format!("{label} missing usable page-specific implement_prompt"));
+        return schema(format!(
+            "{label} missing usable page-specific implement_prompt"
+        ));
     }
-    if api_output_pattern().is_match(prompt) || output_settings_sentence_pattern().is_match(prompt) {
-        return schema(format!("{label} implement_prompt must not include API output settings"));
+    if api_output_pattern().is_match(prompt) || output_settings_sentence_pattern().is_match(prompt)
+    {
+        return schema(format!(
+            "{label} implement_prompt must not include API output settings"
+        ));
     }
     validate_no_copy_request(prompt)
 }
@@ -281,10 +378,15 @@ pub fn validate_ppt_pages(
     }
     let mut sorted = pages.clone();
     sorted.sort_by_key(|item| item["page"].as_i64().unwrap_or(0));
-    let actual: Vec<i64> = sorted.iter().map(|item| item["page"].as_i64().unwrap_or(0)).collect();
+    let actual: Vec<i64> = sorted
+        .iter()
+        .map(|item| item["page"].as_i64().unwrap_or(0))
+        .collect();
     let expected: Vec<i64> = (1..=page_count as i64).collect();
     if actual != expected {
-        return value_err(format!("PPT pages must be ordered 1..{page_count}; got {actual:?}"));
+        return value_err(format!(
+            "PPT pages must be ordered 1..{page_count}; got {actual:?}"
+        ));
     }
     if let Some(analysis) = template_analysis {
         validate_template_analysis(analysis)?;
@@ -306,7 +408,9 @@ fn stringify(value: &Value) -> String {
 fn sanitize_page_prompt(prompt: &str) -> String {
     let cleaned = output_settings_sentence_pattern().replace_all(prompt, "");
     let cleaned = api_output_pattern().replace_all(&cleaned, "");
-    let collapsed = Regex::new(r"\s{2,}").expect("valid regex").replace_all(&cleaned, " ");
+    let collapsed = Regex::new(r"\s{2,}")
+        .expect("valid regex")
+        .replace_all(&cleaned, " ");
     Regex::new(r"\s+([,.;:])")
         .expect("valid regex")
         .replace_all(&collapsed, "$1")
@@ -341,6 +445,9 @@ fn master_prefix(analysis: &Value, page: &Value) -> Checked<String> {
             stringify(&master["immutable_elements"])
         ),
         format!("Forbidden deviations: {}", stringify(&master["forbidden_deviations"])),
+        "Same-level text uses one uniform font size and weight across the whole slide; adjacent levels differ visibly.".to_string(),
+        "Module and card edges align to a shared grid with uniform gutters and equal heights per row; nothing crosses the safe margins.".to_string(),
+        "Never express one information unit with two carriers (for example a table plus a chart of the same data, or a diagram plus a text list of the same steps); keep exactly one.".to_string(),
         "Do not add API output settings to the prompt text. Do not add extra page numbers, random logos, new corner marks, unrelated footer citations, gradients, editing grids, or decorative noise.".to_string(),
     ];
     Ok(parts
@@ -350,15 +457,17 @@ fn master_prefix(analysis: &Value, page: &Value) -> Checked<String> {
         .join("\n"))
 }
 
-pub fn apply_master_prompt_prefix(
-    pages: &[Value],
-    analysis: &Value,
-) -> Checked<Vec<Value>> {
+pub fn apply_master_prompt_prefix(pages: &[Value], analysis: &Value) -> Checked<Vec<Value>> {
     let mut updated = Vec::with_capacity(pages.len());
     for page in pages {
-        let page_prompt = sanitize_page_prompt(page["implement_prompt"].as_str().unwrap_or_default());
+        let page_prompt =
+            sanitize_page_prompt(page["implement_prompt"].as_str().unwrap_or_default());
         let prefix = master_prefix(analysis, page)?;
-        let title = page["title"].as_str().unwrap_or_default().trim().to_string();
+        let title = page["title"]
+            .as_str()
+            .unwrap_or_default()
+            .trim()
+            .to_string();
         let page_number = page["page"].as_i64().unwrap_or(0);
 
         let context = vec![
@@ -462,6 +571,22 @@ mod tests {
                 "keywords": [{"text": "数据处理", "style": "bold", "reason": "first step"}],
                 "style_rules": "Only two short phrases."
             },
+            "information_units": [
+                {"unit": "三步研究路线", "carrier": "diagram", "reason": "ordered steps read best as a flow"},
+                {"unit": "数据采集设备", "carrier": "object", "reason": "physical device is drawn once"}
+            ],
+            "redundancy_check": {
+                "removed": ["dropped bullet list repeating the three steps"],
+                "statement": "no graphic-graphic, text-text, or graphic-text duplication remains"
+            },
+            "hierarchy_plan": {
+                "levels": [
+                    {"level": "title", "font_size": "32px", "weight": "bold", "color": "#B40000"},
+                    {"level": "body", "font_size": "18px", "weight": "regular", "color": "#222222"}
+                ],
+                "alignment": "three cards share top edge and height; baselines aligned per row",
+                "focus_region": "central card row carries the main message"
+            },
             "visible_text": ["研究路线", "数据处理"],
             "implement_prompt": "Create one 16:9 academic PowerPoint-style slide. Use Template B with three academic cards in the body safe area showing 数据处理, 模型训练, 结果验证."
         })
@@ -476,12 +601,19 @@ mod tests {
         assert_eq!(page["page"], json!(1));
 
         let wrong = json!({"page": {"page": 2}});
-        assert!(!validate_ppt_single_page(&wrong, 1, Some(&analysis)).unwrap_err().is_schema());
+        assert!(!validate_ppt_single_page(&wrong, 1, Some(&analysis))
+            .unwrap_err()
+            .is_schema());
 
         let mut broken = valid_page();
-        broken["master_style_binding"].as_object_mut().unwrap().remove("divider_lines");
+        broken["master_style_binding"]
+            .as_object_mut()
+            .unwrap()
+            .remove("divider_lines");
         let pages = json!({"pages": [broken]});
-        assert!(validate_ppt_pages(&pages, 1, Some(&analysis)).unwrap_err().is_schema());
+        assert!(validate_ppt_pages(&pages, 1, Some(&analysis))
+            .unwrap_err()
+            .is_schema());
 
         let mut too_much = valid_page();
         too_much["emphasis_plan"]["keywords"] = json!([
@@ -492,16 +624,44 @@ mod tests {
             {"text": "e", "style": "bold", "reason": "r"},
             {"text": "f", "style": "bold", "reason": "r"}
         ]);
-        assert!(validate_ppt_pages(&json!({"pages": [too_much]}), 1, Some(&analysis))
-            .unwrap_err()
-            .is_schema());
+        assert!(
+            validate_ppt_pages(&json!({"pages": [too_much]}), 1, Some(&analysis))
+                .unwrap_err()
+                .is_schema()
+        );
 
         let mut api_fields = valid_page();
         api_fields["implement_prompt"] = json!(format!(
             "{} size=2048x1152, quality=auto.",
             valid_page()["implement_prompt"].as_str().unwrap()
         ));
-        assert!(validate_ppt_pages(&json!({"pages": [api_fields]}), 1, Some(&analysis))
+        assert!(
+            validate_ppt_pages(&json!({"pages": [api_fields]}), 1, Some(&analysis))
+                .unwrap_err()
+                .is_schema()
+        );
+    }
+
+    #[test]
+    fn missing_expression_plan_is_a_schema_error() {
+        let mut page = valid_page();
+        page.as_object_mut().unwrap().remove("information_units");
+        let error = validate_ppt_page_fields(&page).unwrap_err();
+        assert!(error.is_schema());
+        assert!(error.message().contains("information_units"));
+
+        let mut no_levels = valid_page();
+        no_levels["hierarchy_plan"]["levels"] = json!([]);
+        assert!(validate_ppt_page_fields(&no_levels)
+            .unwrap_err()
+            .is_schema());
+
+        let mut no_statement = valid_page();
+        no_statement["redundancy_check"]
+            .as_object_mut()
+            .unwrap()
+            .remove("statement");
+        assert!(validate_ppt_page_fields(&no_statement)
             .unwrap_err()
             .is_schema());
     }
@@ -527,13 +687,24 @@ mod tests {
         let merged = apply_master_prompt_prefix(&[valid_page(), second], &analysis).unwrap();
 
         let split = "\n\nPage-specific body layout and content:\n";
-        let first_prefix = merged[0]["implement_prompt"].as_str().unwrap().split(split).next().unwrap();
-        let second_prefix = merged[1]["implement_prompt"].as_str().unwrap().split(split).next().unwrap();
+        let first_prefix = merged[0]["implement_prompt"]
+            .as_str()
+            .unwrap()
+            .split(split)
+            .next()
+            .unwrap();
+        let second_prefix = merged[1]["implement_prompt"]
+            .as_str()
+            .unwrap()
+            .split(split)
+            .next()
+            .unwrap();
         assert_eq!(first_prefix, second_prefix, "各页 prefix 必须逐字相同");
 
         for item in &merged {
             let prompt = item["implement_prompt"].as_str().unwrap();
-            assert!(prompt.contains("Use the extracted template master specification below as immutable"));
+            assert!(prompt
+                .contains("Use the extracted template master specification below as immutable"));
             assert!(!prompt.contains("size="));
             assert!(!prompt.contains("image_size="));
             assert!(prompt.contains("Create one 16:9 academic PowerPoint-style slide"));
@@ -542,7 +713,14 @@ mod tests {
             assert!(prompt.contains("Highlight only the planned key phrases"));
             assert!(prompt.contains("actual depictions of their subject"));
             assert!(prompt.contains("Do not substitute a labeled rectangle"));
+            assert!(prompt.contains("Same-level text uses one uniform font size"));
+            assert!(prompt.contains("edges align to a shared grid"));
+            assert!(prompt.contains("Never express one information unit with two carriers"));
         }
-        assert!(merged[0]["implement_prompt"].as_str().unwrap().contains("散热格栅"));
+        assert!(first_prefix.contains("Never express one information unit with two carriers"));
+        assert!(merged[0]["implement_prompt"]
+            .as_str()
+            .unwrap()
+            .contains("散热格栅"));
     }
 }

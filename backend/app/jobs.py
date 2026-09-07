@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import json
+import logging
 import mimetypes
 import re
 import uuid
@@ -106,111 +107,18 @@ PAGE_VISUAL_PLAN_FIELDS = ("usage_decision", "elements", "text_visual_balance")
 PAGE_VISUAL_ELEMENT_FIELDS = ("type", "subject", "appearance", "source_reference", "placement", "style", "size_ratio")
 PAGE_EMPHASIS_PLAN_FIELDS = ("keywords", "style_rules")
 PAGE_EMPHASIS_KEYWORD_FIELDS = ("text", "style", "reason")
+# 表达分析字段（图与 PPT 单页共用）：只校验形状，语义去重由 design model 负责。
+EXPRESSION_INFORMATION_UNIT_FIELDS = ("unit", "carrier")
+EXPRESSION_HIERARCHY_PLAN_FIELDS = ("levels", "alignment", "focus_region")
 VISUAL_ASSET_SEARCH_TERM_LIMIT = 8
 VISUAL_ASSET_SEARCH_RESULT_LIMIT = 3
-# 已知专有名词：命中即视为高价值视觉主体。列表不求穷尽，
-# 真正的覆盖面靠下面的中文后缀规则和大写启发式兜底。
-VISUAL_ASSET_KNOWN_TERMS = (
-    # AI / 框架
-    "PyTorch",
-    "TensorFlow",
-    "JAX",
-    "Keras",
-    "scikit-learn",
-    "OpenCV",
-    "Hugging Face",
-    "LangChain",
-    "Stable Diffusion",
-    "OpenAI",
-    "Claude",
-    "Gemini",
-    "Llama",
-    "Qwen",
-    "DeepSeek",
-    "Nano Banana",
-    "WisArt",
-    # 基础设施 / 云
-    "Docker",
-    "Kubernetes",
-    "GitHub",
-    "GitLab",
-    "Jenkins",
-    "Nginx",
-    "Kafka",
-    "Spark",
-    "Hadoop",
-    "Elasticsearch",
-    "AWS",
-    "Azure",
-    "GCP",
-    "阿里云",
-    "腾讯云",
-    "华为云",
-    # 数据库
-    "PostgreSQL",
-    "MongoDB",
-    "Redis",
-    "MySQL",
-    "SQLite",
-    "ClickHouse",
-    "Neo4j",
-    # 硬件 / 芯片 / 设备
-    "NVIDIA",
-    "CUDA",
-    "Jetson",
-    "Raspberry Pi",
-    "Arduino",
-    "STM32",
-    "FPGA",
-    "Intel",
-    "AMD",
-    "ARM",
-    "树莓派",
-    # 科研仪器 / 实验设备
-    "SEM",
-    "TEM",
-    "AFM",
-    "XRD",
-    "XPS",
-    "NMR",
-    "MRI",
-    "CT",
-    "PCR",
-    "HPLC",
-    "扫描电镜",
-    "透射电镜",
-    "原子力显微镜",
-    "质谱仪",
-    "光谱仪",
-    "色谱仪",
-    "离心机",
-    "培养箱",
-    "示波器",
-    "激光器",
-    "光刻机",
-    "反应釜",
-    # 载具 / 机器人
-    "无人机",
-    "机械臂",
-    "机器人",
-    "自动驾驶",
-    "激光雷达",
-    "卫星",
-    # 工具软件
-    "MATLAB",
-    "Simulink",
-    "SolidWorks",
-    "AutoCAD",
-    "Blender",
-    "Figma",
-    "Notion",
-    "Slack",
-    "Jira",
-    "Confluence",
-    "LaTeX",
-    "Origin",
-    "ImageJ",
-)
+# Structured vocabulary shared with the Rust backend (prompts/global/visual_terms.json).
+VISUAL_TERMS_KEY = "global/visual_terms.json"
+# Categories whose search should target a brand mark rather than a physical object.
+VISUAL_LOGO_CATEGORIES = frozenset({"vendor", "model", "tool", "cloud", "infra", "database", "software", "robot_vendor"})
+VISUAL_OBJECT_CATEGORIES = frozenset({"robot", "sensor", "chip", "instrument"})
+_CJK_PATTERN = re.compile(r"[\u4e00-\u9fff]")
+_ALLCAPS_PATTERN = re.compile(r"^[A-Z0-9]+$")
 # 中文实物名词后缀：中文资料里的可视化主体几乎都以这些字收尾。
 # 英文大写启发式对中文完全失效，必须靠后缀反向抽取，否则中文资料抽词数为 0。
 VISUAL_ASSET_CN_SUFFIXES = (
@@ -316,6 +224,86 @@ API_OUTPUT_PROMPT_PATTERN = re.compile(
 OUTPUT_SETTINGS_SENTENCE_PATTERN = re.compile(r"output settings preserved exactly:\s*[^.\n]*(?:\.|\n)?", re.IGNORECASE)
 
 
+def load_visual_terms(prompt_store: PromptStore) -> list[dict[str, Any]]:
+    """Read and validate `global/visual_terms.json`; mirrors Rust `VisualTerms::parse`."""
+    data = json.loads(prompt_store.load(VISUAL_TERMS_KEY)["content"])
+    if not isinstance(data, dict) or data.get("version") != 1:
+        raise ValueError("visual_terms.json version is not supported")
+    entries = data.get("entries")
+    if not isinstance(entries, list) or not entries:
+        raise ValueError("visual_terms.json has no entries")
+    normalized: list[dict[str, Any]] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            raise ValueError(f"visual_terms.json entry {index} is not an object")
+        term = str(entry.get("term") or "")
+        brand = str(entry.get("brand") or "")
+        aliases = entry.get("aliases") or []
+        if not term.strip() or not brand.strip():
+            raise ValueError(f"visual_terms.json entry {index} needs a non-empty term and brand")
+        if not isinstance(aliases, list) or any(not isinstance(alias, str) or not alias.strip() for alias in aliases):
+            raise ValueError(f"visual_terms.json entry {term} has an empty alias")
+        normalized.append(
+            {"term": term, "brand": brand, "category": str(entry.get("category") or ""), "aliases": list(aliases)}
+        )
+    return normalized
+
+
+class VisualTermMatcher:
+    """Precompiled vocabulary matcher; one-to-one with Rust `VisualTerms::find`."""
+
+    def __init__(self, entries: list[dict[str, Any]]) -> None:
+        self.entries = entries
+        self._matchers: list[tuple[int, re.Pattern[str] | None, str]] = [
+            (index, self._compile(alias), alias)
+            for index, entry in enumerate(entries)
+            for alias in (entry["term"], *entry["aliases"])
+        ]
+
+    @staticmethod
+    def _compile(alias: str) -> re.Pattern[str] | None:
+        # CJK strings match as plain substrings (None). Latin strings match on ASCII alphanumeric
+        # boundaries because `\b` treats CJK as `\w` and would miss `PyTorch框架`; all-caps acronyms
+        # stay case-sensitive so `robot arm` never hits `ARM`.
+        if _CJK_PATTERN.search(alias):
+            return None
+        body = r"\s+".join(re.escape(word) for word in alias.split())
+        flags = 0 if _ALLCAPS_PATTERN.match(alias.replace(" ", "")) else re.IGNORECASE
+        return re.compile(rf"(?:^|[^A-Za-z0-9])({body})(?:[^A-Za-z0-9]|$)", flags)
+
+    def find(self, text: str) -> list[dict[str, Any]]:
+        # Per entry keep the longest matched string; then drop hits whose matched string is a
+        # proper substring of another hit's (`Unitree` loses to `Unitree G1`); order by position.
+        best: list[tuple[str, int] | None] = [None] * len(self.entries)
+        for index, pattern, alias in self._matchers:
+            if pattern is None:
+                position = text.find(alias)
+                found = (alias, position) if position >= 0 else None
+            else:
+                match = pattern.search(text)
+                found = (match.group(1), match.start(1)) if match else None
+            if found is not None and (best[index] is None or len(found[0]) > len(best[index][0])):
+                best[index] = found
+        candidates = [(index, *slot) for index, slot in enumerate(best) if slot is not None]
+        lowered = [matched.lower() for _, matched, _ in candidates]
+        hits: list[dict[str, Any]] = []
+        for i, (index, matched, position) in enumerate(candidates):
+            if any(j != i and other != lowered[i] and lowered[i] in other for j, other in enumerate(lowered)):
+                continue
+            entry = self.entries[index]
+            hits.append(
+                {
+                    "term": entry["term"],
+                    "brand": entry["brand"],
+                    "category": entry["category"],
+                    "matched": matched,
+                    "position": position,
+                }
+            )
+        hits.sort(key=lambda hit: hit["position"])
+        return hits
+
+
 class DesignSchemaError(ValueError):
     """设计 JSON 已可解析但缺少必需结构化字段时抛出。"""
 
@@ -335,6 +323,18 @@ class JobManager:
         self.design = DesignClient()
         self.implement = ImplementClient()
         self.search = SearchClient()
+        self.visual_terms = self._load_visual_term_matcher(prompts)
+
+    @staticmethod
+    def _load_visual_term_matcher(prompts: PromptStore | None) -> VisualTermMatcher:
+        """A broken or missing vocabulary must never block startup; heuristics still work on an empty one."""
+        if prompts is None:
+            return VisualTermMatcher([])
+        try:
+            return VisualTermMatcher(load_visual_terms(prompts))
+        except Exception as exc:  # noqa: BLE001
+            logging.getLogger(__name__).warning("visual_terms.json unavailable, using empty vocabulary: %s", exc)
+            return VisualTermMatcher([])
 
     def create(self, request: JobCreateRequest) -> JobRecord:
         job_id = uuid.uuid4().hex
@@ -484,6 +484,7 @@ class JobManager:
         design_assets = [
             self.prompts.load("global/system.md"),
             self.prompts.load("global/figure_style.md"),
+            self.prompts.load("global/expression.md"),
             self.prompts.load("modes/paper_figure/design.md"),
             self.prompts.load("modes/paper_figure/diagram_rules.md"),
             self.prompts.load("modes/paper_figure/plot_rules.md"),
@@ -651,6 +652,7 @@ class JobManager:
         page_assets = [
             self.prompts.load("global/system.md"),
             self.prompts.load("modes/ppt_slide/design.md"),
+            self.prompts.load("global/expression.md"),
             self.prompts.load("styles/academic_ppt.md"),
         ]
         compact_template_analysis = self._compact_template_analysis(template_analysis)
@@ -989,7 +991,8 @@ class JobManager:
         return "\n\n---\n\n".join(sections)
 
     async def _build_visual_asset_context(self, material_context: str, proxy_url: str | None = None) -> dict[str, Any]:
-        terms = self._extract_visual_asset_terms(material_context)
+        hits = self._extract_visual_asset_hits(material_context)
+        terms = [hit["term"] for hit in hits]
         search_profile = self.config.active_profile("search")
         search_meta = {
             "profile_id": search_profile.id,
@@ -1009,17 +1012,16 @@ class JobManager:
             }
         max_results = int((search_profile.output_defaults or {}).get("max_results") or VISUAL_ASSET_SEARCH_RESULT_LIMIT)
         max_results = max(1, min(8, max_results))
-        tasks = [self._search_visual_asset_term(term, search_profile, proxy_url, max_results=max_results) for term in terms]
+        tasks = [self._search_visual_asset_term(hit, search_profile, proxy_url, max_results=max_results) for hit in hits]
         results = await asyncio.gather(*tasks, return_exceptions=True)
         items: list[dict[str, Any]] = []
         errors: list[str] = []
-        for term, result in zip(terms, results, strict=False):
+        for hit, result in zip(hits, results, strict=False):
             if isinstance(result, Exception):
-                errors.append(f"{term}: {safe_error_message(result)}")
+                errors.append(f"{hit['term']}: {safe_error_message(result)}")
                 items.append(
                     {
-                        "term": term,
-                        "query": self._visual_asset_search_query(term),
+                        **self._visual_asset_item_fields(hit),
                         "results": [],
                         "error": safe_error_message(result),
                         "provider": search_profile.protocol,
@@ -1038,18 +1040,65 @@ class JobManager:
             "message": "Use only text summaries and source URLs; no network image is downloaded, cached, or passed to the implement model.",
         }
 
-    @classmethod
-    def _extract_visual_asset_terms(cls, material_context: str) -> list[str]:
-        """抽取值得用真实视觉呈现的主体。
+    def _extract_visual_asset_terms(self, material_context: str) -> list[str]:
+        return [hit["term"] for hit in self._extract_visual_asset_hits(material_context)]
 
-        三路来源按优先级合并：已知专有名词 → 中文实物名词 → 英文大写启发式。
-        中文一路是必需的：英文大写规则在纯中文资料上命中数为 0。
-        """
+    def _extract_visual_asset_hits(self, material_context: str) -> list[dict[str, Any]]:
+        """Vocabulary hits (by first occurrence) followed by heuristic candidates the vocabulary
+        does not already cover, capped at VISUAL_ASSET_SEARCH_TERM_LIMIT. Mirrors Rust
+        `extract_visual_asset_hits`."""
         text = material_context[:MATERIAL_TEXT_LIMIT]
-        lowered = text.lower()
+        vocabulary_hits = self.visual_terms.find(text)
+        candidates = [
+            candidate
+            for candidate in self._heuristic_visual_candidates(text)
+            if not self._covered_by_vocabulary(candidate, vocabulary_hits)
+        ]
+        # Normalization inside dedupe can fold a candidate onto a vocabulary term
+        # (`PyTorch框架` -> `PyTorch`), so the coverage check runs again afterwards.
+        heuristic = [
+            {
+                "term": term,
+                "brand": None,
+                "category": None,
+                "matched": None,
+                "position": text.find(term) if term in text else len(text),
+            }
+            for term in self._dedupe_visual_asset_terms(candidates)
+            if not self._covered_by_vocabulary(term, vocabulary_hits)
+        ]
+        return [*vocabulary_hits, *heuristic][:VISUAL_ASSET_SEARCH_TERM_LIMIT]
 
-        known: list[str] = [term for term in VISUAL_ASSET_KNOWN_TERMS if term.lower() in lowered]
+    @classmethod
+    def _covered_by_vocabulary(cls, candidate: str, hits: list[dict[str, Any]]) -> bool:
+        """A heuristic candidate is redundant when it equals or is a fragment of a vocabulary hit's
+        matched string / canonical term (`GLM-4.5` vs `Zhipu`), or when it contains that string as a
+        whole word (`ARM Cortex-A78` vs `ARM`; but `Spectrum` is not covered by `CT`)."""
+        normalized = " ".join(candidate.split()).lower()
+        for hit in hits:
+            for known in (hit.get("matched"), hit["term"]):
+                if not known:
+                    continue
+                known = " ".join(str(known).split()).lower()
+                if normalized in known or cls._contains_word(normalized, known):
+                    return True
+        return False
 
+    @staticmethod
+    def _contains_word(haystack: str, needle: str) -> bool:
+        start = haystack.find(needle)
+        while start >= 0:
+            end = start + len(needle)
+            before_ok = start == 0 or not (haystack[start - 1].isascii() and haystack[start - 1].isalnum())
+            after_ok = end == len(haystack) or not (haystack[end].isascii() and haystack[end].isalnum())
+            if before_ok and after_ok:
+                return True
+            start = haystack.find(needle, end)
+        return False
+
+    @classmethod
+    def _heuristic_visual_candidates(cls, text: str) -> list[str]:
+        """中文实物名词 → 英文大写启发式。中文一路是必需的：英文大写规则在纯中文资料上命中数为 0。"""
         # 中文实物名词：后缀前再吃 0-4 个汉字作为修饰语（如「高分辨质谱仪」）。
         # 前缀不得跨越虚词/方位词，否则「扫描电镜对样品」会被抽成「描电镜对样品」。
         suffix_group = "|".join(re.escape(suffix) for suffix in VISUAL_ASSET_CN_SUFFIXES)
@@ -1071,7 +1120,7 @@ class JobManager:
 
         # 按出现频次给中文名词排序，让反复提到的主体优先占用检索名额
         chinese.sort(key=lambda term: text.count(term), reverse=True)
-        return cls._dedupe_visual_asset_terms([*known, *chinese, *english])
+        return [*chinese, *english]
 
     @staticmethod
     def _dedupe_visual_asset_terms(candidates: list[str]) -> list[str]:
@@ -1111,38 +1160,55 @@ class JobManager:
         return terms
 
     @staticmethod
-    def _visual_asset_search_query(term: str) -> str:
-        """中英文分流：中文主体查实物外观，英文主体多为软件/品牌，查官方标识与产品外观。"""
-        if re.search(r"[一-鿿]", term):
-            return f"{term} 实物外观 外形结构 产品图片 特征描述"
+    def _visual_asset_search_query(term: str, brand: str | None = None, category: str | None = None) -> str:
+        """Logo-type categories search for the brand mark, object-type categories for the product
+        appearance; unknown/absent categories keep the legacy sentences. Same templates as Rust."""
+        brand = (brand or "").strip()
+        if brand.lower() == term.lower():
+            brand = ""
+        is_logo = category in VISUAL_LOGO_CATEGORIES
+        is_object = category in VISUAL_OBJECT_CATEGORIES
+        if _CJK_PATTERN.search(term):
+            subject = f"{term} {brand}" if brand else term
+            if is_logo:
+                return f"{subject} 官方logo 品牌标识 视觉描述"
+            return f"{subject} 实物外观 外形结构 产品图片 特征描述"
+        subject = f"{brand} {term}" if brand else term
+        if is_logo:
+            return f"{subject} official logo brand mark visual description"
+        if is_object:
+            return f"{subject} product appearance what it looks like visual description"
         return f"{term} official logo product appearance what it looks like visual description"
+
+    @staticmethod
+    def _visual_asset_item_fields(hit: dict[str, Any]) -> dict[str, Any]:
+        fields = {"term": hit["term"]}
+        for key in ("brand", "category", "matched"):
+            if hit.get(key):
+                fields[key] = hit[key]
+        fields["query"] = JobManager._visual_asset_search_query(hit["term"], hit.get("brand"), hit.get("category"))
+        return fields
 
     async def _search_visual_asset_term(
         self,
-        term: str,
+        hit: dict[str, Any],
         search_profile,
         proxy_url: str | None = None,
         *,
         max_results: int = VISUAL_ASSET_SEARCH_RESULT_LIMIT,
     ) -> dict[str, Any]:
-        query = self._visual_asset_search_query(term)
+        fields = self._visual_asset_item_fields(hit)
         try:
             results = await self.search.search(
                 search_profile,
-                query,
+                fields["query"],
                 max_results=max_results,
                 proxy_url=proxy_url,
             )
-            return {
-                "term": term,
-                "query": query,
-                "results": results,
-                "provider": search_profile.protocol,
-            }
+            return {**fields, "results": results, "provider": search_profile.protocol}
         except Exception as exc:
             return {
-                "term": term,
-                "query": query,
+                **fields,
                 "results": [],
                 "error": safe_error_message(exc),
                 "provider": getattr(search_profile, "protocol", "unknown"),
@@ -1176,9 +1242,11 @@ class JobManager:
             "when no reliable source describes it.",
         ]
         for item in context.get("items", []):
-            term = item.get("term")
-            query = item.get("query")
-            lines.append(f"- Term: {term}; query: {query}")
+            line = f"- Term: {item.get('term')}"
+            for key, label in (("brand", "brand"), ("category", "category"), ("matched", "matched in material")):
+                if item.get(key):
+                    line += f"; {label}: {item[key]}"
+            lines.append(f"{line}; query: {item.get('query')}")
             results = item.get("results") if isinstance(item.get("results"), list) else []
             if not results:
                 reason = item.get("error") or "no reliable result"
@@ -1430,6 +1498,38 @@ class JobManager:
         if missing:
             raise DesignSchemaError(f"{label} missing required fields: {', '.join(missing)}")
 
+    @classmethod
+    def _validate_expression_plan(cls, data: dict[str, Any], label: str) -> None:
+        units = data.get("information_units")
+        if not isinstance(units, list):
+            raise DesignSchemaError(f"{label} missing information_units array")
+        if not units:
+            raise DesignSchemaError(f"{label} information_units must list at least one information unit with its carrier")
+        for index, unit in enumerate(units, start=1):
+            if not isinstance(unit, dict):
+                raise DesignSchemaError(f"{label} information unit {index} must be an object")
+            for field in EXPRESSION_INFORMATION_UNIT_FIELDS:
+                value = unit.get(field)
+                if not isinstance(value, str) or not value.strip():
+                    raise DesignSchemaError(f"{label} information unit {index} missing string {field}")
+        redundancy = data.get("redundancy_check")
+        if not isinstance(redundancy, dict):
+            raise DesignSchemaError(f"{label} missing redundancy_check object")
+        statement = redundancy.get("statement")
+        if not isinstance(statement, str) or not statement.strip():
+            raise DesignSchemaError(
+                f"{label} redundancy_check.statement must confirm no graphic-graphic, text-text, or graphic-text duplication"
+            )
+        plan = data.get("hierarchy_plan")
+        if not isinstance(plan, dict):
+            raise DesignSchemaError(f"{label} missing hierarchy_plan object")
+        cls._require_fields(plan, EXPRESSION_HIERARCHY_PLAN_FIELDS, f"{label} hierarchy_plan")
+        if not isinstance(plan.get("levels"), list):
+            raise DesignSchemaError(f"{label} hierarchy_plan.levels must be a non-empty list of typography levels")
+        for field in ("alignment", "focus_region"):
+            if not isinstance(plan.get(field), str):
+                raise DesignSchemaError(f"{label} hierarchy_plan.{field} must be a string")
+
     @staticmethod
     def _keyword_groups_present(text: str, groups: dict[str, tuple[str, ...]]) -> set[str]:
         lowered = text.lower()
@@ -1628,6 +1728,7 @@ class JobManager:
         if not isinstance(figure, dict):
             raise DesignSchemaError("Design model response must contain a figure object")
         cls._require_fields(figure, FIGURE_COMMON_FIELDS, "Paper figure")
+        cls._validate_expression_plan(figure, "Paper figure")
         implement_prompt = cls._paper_implement_prompt(design_json)
         if len(implement_prompt.strip()) < 360:
             raise DesignSchemaError(
@@ -1820,6 +1921,9 @@ class JobManager:
                 "master_style_binding",
                 "visual_element_plan",
                 "emphasis_plan",
+                "information_units",
+                "redundancy_check",
+                "hierarchy_plan",
                 "visible_text",
                 "implement_prompt",
             ),
@@ -1858,6 +1962,7 @@ class JobManager:
             text = str(keyword.get("text") or "").strip()
             if len(text) > 24:
                 raise DesignSchemaError(f"Page {page.get('page')} emphasis keyword {index} must be a short phrase")
+        cls._validate_expression_plan(page, f"Page {page.get('page')}")
         visible_text = page.get("visible_text")
         if not isinstance(visible_text, list) or any(not isinstance(item, str) or len(item.strip()) > 120 for item in visible_text):
             raise DesignSchemaError(f"Page {page.get('page')} visible_text must be short strings")
@@ -1927,6 +2032,9 @@ class JobManager:
                 f"Module/card/border style: {cls._stringify_master_value(binding.get('module_style') or master.get('module_style'))}",
                 f"Decorative/immutable elements: {cls._stringify_master_value(master.get('decorative_elements'))}; {cls._stringify_master_value(master.get('immutable_elements'))}",
                 f"Forbidden deviations: {cls._stringify_master_value(master.get('forbidden_deviations'))}",
+                "Same-level text uses one uniform font size and weight across the whole slide; adjacent levels differ visibly.",
+                "Module and card edges align to a shared grid with uniform gutters and equal heights per row; nothing crosses the safe margins.",
+                "Never express one information unit with two carriers (for example a table plus a chart of the same data, or a diagram plus a text list of the same steps); keep exactly one.",
                 "Do not add API output settings to the prompt text. Do not add extra page numbers, random logos, new corner marks, unrelated footer citations, gradients, editing grids, or decorative noise.",
             ]
         )
@@ -2120,7 +2228,10 @@ Contract:
       "statistical_annotations": "none or supported annotations only",
       "data_integrity_rules": "No value distortion, misleading scales, label fabrication, wrong chart type, or unsupported statistics."
     },
-    "implement_prompt": "Long bilingual-capable drawing brief WITH required sections: (1) canvas/layout (2) stage list (3) MODULE DETAIL / 模块细节 per stage listing every leaf module and edges (4) arrows (5) style (6) faithfulness/forbidden/template boundary. Must restate key user terms (OCR/BM25/双塔/重排/Top-K/… when present)."
+    "information_units": [{"unit": "one information unit from the material", "carrier": "table|chart|diagram|text|icon|object", "reason": "why this single carrier"}],
+    "redundancy_check": {"removed": ["duplicate expressions merged or dropped"], "statement": "confirm no graphic-graphic, text-text, or graphic-text semantic duplication"},
+    "hierarchy_plan": {"levels": [{"level": "title|section|body|caption", "font_size": "...", "weight": "...", "color": "..."}], "alignment": "edge/baseline/grid alignment rules", "focus_region": "where the core content sits in the main body area"},
+    "implement_prompt": "Long bilingual-capable drawing brief WITH required sections: (1) canvas/layout (2) stage list (3) MODULE DETAIL / 模块细节 per stage listing every leaf module and edges (4) arrows (5) style (6) faithfulness/forbidden/template boundary. Must restate key user terms (OCR/BM25/双塔/重排/Top-K/… when present). Must restate the expression constraints: one carrier per information unit, uniform font size for same-level text, aligned edges/baselines, core content in the main region."
   },
   "quality_checklist": ["detail-preserving", "multi-stage", "faithful", "readable"]
 }
@@ -2224,6 +2335,9 @@ Omit `diagram_spec` only for plot/chart. Omit `plot_spec` only for diagram/workf
       "style_rules": "Highlight only 2-5 short key phrases per page; never mark whole sentences or drift from template palette."
     }},
     "visible_text": ["Simplified Chinese visible text only, short strings"],
-    "implement_prompt": "Page-specific body instructions only. Start with: Create one 16:9 academic PowerPoint-style slide. Describe this page's variable body content, layout skeleton, visual/icon/object/product elements, diagrams/charts, keyword emphasis, and visible Chinese text. Do not repeat API output settings. Do not rely on the uploaded image or network images being available to the implement model."
+    "information_units": [{{"unit": "one information unit from the material", "carrier": "table|chart|diagram|text|icon|object", "reason": "why this single carrier"}}],
+    "redundancy_check": {{"removed": ["duplicate expressions merged or dropped"], "statement": "confirm no graphic-graphic, text-text, or graphic-text semantic duplication"}},
+    "hierarchy_plan": {{"levels": [{{"level": "title|section|body|caption", "font_size": "...", "weight": "...", "color": "..."}}], "alignment": "edge/baseline/grid alignment rules", "focus_region": "where the core content sits in the main body area"}},
+    "implement_prompt": "Page-specific body instructions only. Start with: Create one 16:9 academic PowerPoint-style slide. Describe this page's variable body content, layout skeleton, visual/icon/object/product elements, diagrams/charts, keyword emphasis, and visible Chinese text. Restate the expression constraints: one carrier per information unit, uniform font size for same-level text, aligned edges/baselines, core content in the main region. Do not repeat API output settings. Do not rely on the uploaded image or network images being available to the implement model."
   }}
 }}"""

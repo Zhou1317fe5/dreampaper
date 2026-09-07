@@ -96,7 +96,9 @@ pub fn spawn(app: AppHandle, core: Arc<Core>, job_id: String) {
             let pool = DeltaPool::default();
             let design = |entry: DesignLog<'_>| {
                 let (kind, step, label, text, status) = match entry {
-                    DesignLog::Begin { step, label } => ("begin", step, label, String::new(), "running"),
+                    DesignLog::Begin { step, label } => {
+                        ("begin", step, label, String::new(), "running")
+                    }
                     DesignLog::Delta { step, text } => match pool.push(step, text) {
                         Some(batched) => ("delta", step, "", batched, "running"),
                         None => return,
@@ -312,6 +314,7 @@ fn save_image(core: &Core, job_id: &str, name: &str, image_b64: &str) -> AppResu
     Ok(JobImage {
         name: name.to_string(),
         url: saved.url,
+        asset_id: Some(saved.id),
     })
 }
 

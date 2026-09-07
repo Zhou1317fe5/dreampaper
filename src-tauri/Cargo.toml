@@ -31,6 +31,19 @@ thiserror = "2"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 zip = { version = "8.6.0", default-features = false, features = ["deflate"] }
+# Workbench: authoritative compositing of repair fills and text, plus PNG
+# output with an explicit metadata whitelist. `png` is already pulled in by
+# `image`; depending on it directly lets export write ICC/sRGB/pHYs chunks.
+tiny-skia = "0.11"
+cosmic-text = { version = "0.19", default-features = false, features = ["std", "swash"] }
+png = "0.18"
+sys-locale = "0.3"
+# Native OCR: only the IPC protocol, padding geometry and process supervisor
+# of the sidecar crate are compiled into the app; the inference engine stays
+# in the separately built `dreampaper-ocr` binary.
+dreampaper-ocr = { path = "ocr", default-features = false }
+# The official model archives are plain (uncompressed) tar files.
+tar = "0.4"
 
 # Rescaling a 5504x3072 figure takes ~19s unoptimized against ~0.6s optimized,
 # so an unoptimized image stack makes `tauri dev` look like the thumbnail cache

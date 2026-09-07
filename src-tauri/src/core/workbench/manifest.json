@@ -1,0 +1,65 @@
+{
+  "version": "native-pp-ocrv6-medium-1",
+  "license": "Apache-2.0",
+  "det_model": "PP-OCRv6_medium_det",
+  "cls_model": "ch_ppocr_mobile_v2.0_cls",
+  "rec_model": "PP-OCRv6_medium_rec",
+  "downloads": [
+    {
+      "name": "det.tar",
+      "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_medium_det_onnx_infer.tar",
+      "bytes": 62044160,
+      "sha256": "c5adb0b15de1b1838934eba1dd72e7529e7d80132216c6ee6d26eba6fa054fcf"
+    },
+    {
+      "name": "rec.tar",
+      "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_medium_rec_onnx_infer.tar",
+      "bytes": 76718080,
+      "sha256": "d8cc46c7163c83a151aef8fce5856b965860df90a875029216d605b0f607eaec"
+    },
+    {
+      "name": "cls.onnx",
+      "url": "https://www.modelscope.cn/models/RapidAI/RapidOCR/resolve/v3.9.2/onnx/PP-OCRv4/cls/ch_ppocr_mobile_v2.0_cls_mobile.onnx",
+      "bytes": 585532,
+      "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c"
+    }
+  ],
+  "files": [
+    {
+      "name": "det.onnx",
+      "source": { "kind": "tar_member", "download": "det.tar", "member": "PP-OCRv6_medium_det_onnx_infer/inference.onnx" },
+      "bytes": 62032837,
+      "sha256": "eb13b44b25bb36f89528b68720af8a61d9cf381176107f465db1757b65d086e1"
+    },
+    {
+      "name": "det.yml",
+      "source": { "kind": "tar_member", "download": "det.tar", "member": "PP-OCRv6_medium_det_onnx_infer/inference.yml" },
+      "bytes": 886,
+      "sha256": "7298d5ead546584af2504d03355f881ac7a7bc0eb1e282d3e159277c1d0af871"
+    },
+    {
+      "name": "rec.onnx",
+      "source": { "kind": "tar_member", "download": "rec.tar", "member": "PP-OCRv6_medium_rec_onnx_infer/inference.onnx" },
+      "bytes": 76554979,
+      "sha256": "9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba"
+    },
+    {
+      "name": "rec.yml",
+      "source": { "kind": "tar_member", "download": "rec.tar", "member": "PP-OCRv6_medium_rec_onnx_infer/inference.yml" },
+      "bytes": 150580,
+      "sha256": "991b700facf5b50a7de193468207d5f4255b538dde0d312ae3b7c7a9b6873129"
+    },
+    {
+      "name": "cls.onnx",
+      "source": { "kind": "download", "download": "cls.onnx" },
+      "bytes": 585532,
+      "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c"
+    },
+    {
+      "name": "dict.txt",
+      "source": { "kind": "character_dict", "file": "rec.yml" },
+      "bytes": 74947,
+      "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d"
+    }
+  ]
+}

@@ -16,6 +16,51 @@ pub fn asset_response<R: Runtime>(
     file_response(ctx, request, FileKind::Asset, responder);
 }
 
+/// `dp-workbench://localhost/asset/<id>[?w=]` serves a source snapshot,
+/// resolved through the workbench service by id only. Model files are never
+/// served to the webview: OCR runs in the native sidecar.
+pub fn workbench_response<R: Runtime>(
+    ctx: UriSchemeContext<'_, R>,
+    request: Request<Vec<u8>>,
+    responder: UriSchemeResponder,
+) {
+    let mut parts = request.uri().path().trim_start_matches('/').splitn(2, '/');
+    let kind = parts.next().unwrap_or_default().to_string();
+    let name = parts.next().unwrap_or_default().to_string();
+    if name.is_empty() || name.contains("..") {
+        responder.respond(error_response(
+            StatusCode::BAD_REQUEST,
+            "missing resource id",
+        ));
+        return;
+    }
+    let width = thumb::requested_width(request.uri().query());
+    let core = ctx.app_handle().state::<AppState>().core_arc();
+    std::thread::spawn(move || {
+        let resolved = match kind.as_str() {
+            "asset" => core.workbench().asset_file(&name).map(|(path, mime)| {
+                let id = crate::core::workbench::asset::thumb_id(&name);
+                match width {
+                    Some(width) => match thumb::scaled(&core.app_data, &id, &path, width) {
+                        (scaled, true) => (scaled, "image/jpeg".to_string()),
+                        (original, false) => (original, mime),
+                    },
+                    None => (path, mime),
+                }
+            }),
+            _ => Err(crate::error::AppError::new(
+                "not_found",
+                "unknown resource kind",
+            )),
+        };
+        let Ok((path, mime_type)) = resolved else {
+            responder.respond(error_response(StatusCode::NOT_FOUND, "resource not found"));
+            return;
+        };
+        responder.respond(file_bytes_response(&path, &mime_type));
+    });
+}
+
 pub fn template_response<R: Runtime>(
     ctx: UriSchemeContext<'_, R>,
     request: Request<Vec<u8>>,
@@ -45,7 +90,10 @@ fn file_response<R: Runtime>(
         .unwrap_or_default()
         .to_string();
     if id.is_empty() {
-        responder.respond(error_response(StatusCode::BAD_REQUEST, "missing resource id"));
+        responder.respond(error_response(
+            StatusCode::BAD_REQUEST,
+            "missing resource id",
+        ));
         return;
     }
     let width = thumb::requested_width(request.uri().query());
@@ -63,7 +111,9 @@ fn file_response<R: Runtime>(
 fn serve(core: &Core, id: &str, kind: FileKind, width: Option<u32>) -> ProtocolResponse {
     let resolved = match kind {
         FileKind::Asset => core.asset_file(id).map(|file| (file.path, file.mime_type)),
-        FileKind::Template => core.template_file(id).map(|file| (file.path, file.mime_type)),
+        FileKind::Template => core
+            .template_file(id)
+            .map(|file| (file.path, file.mime_type)),
     };
     let Ok((path, mime_type)) = resolved else {
         return error_response(StatusCode::NOT_FOUND, "resource not found");
@@ -75,6 +125,10 @@ fn serve(core: &Core, id: &str, kind: FileKind, width: Option<u32>) -> ProtocolR
         },
         None => (path, mime_type),
     };
+    file_bytes_response(&path, &mime_type)
+}
+
+fn file_bytes_response(path: &std::path::Path, mime_type: &str) -> ProtocolResponse {
     if !path.exists() {
         return error_response(StatusCode::NOT_FOUND, "resource file not found");
     }

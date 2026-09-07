@@ -7,6 +7,16 @@ use crate::core::doc::{DocumentChunkHit, DocumentSummary};
 use crate::core::job::JobRecord;
 use crate::core::tpl::{TemplatePackSummary, TemplateSummary};
 use crate::core::update::ReleaseInfo;
+use crate::core::workbench::asset::CleanupResult;
+use crate::core::workbench::color::RegionAnalysis;
+use crate::core::workbench::doc::{ProjectDoc, Shape};
+use crate::core::workbench::geom::PixelRect;
+use crate::core::workbench::ocr::OcrPackageStatus;
+use crate::core::workbench::project::{DeleteResult, ExportRecord, ProjectDetail, ProjectSummary};
+use crate::core::workbench::render::ExportPreview;
+use crate::core::workbench::sidecar::{OcrEngineStatus, RecognizeResult};
+use crate::core::workbench::text::{FontInfo, TextLayout, TextSpec};
+use crate::core::workbench::{OpenResult, ProjectSource, StorageStats};
 use crate::error::{AppError, AppResult};
 use crate::event::JobEventPayload;
 use crate::state::AppState;
@@ -157,13 +167,8 @@ pub fn open_artifact(state: State<'_, AppState>, artifact_id: String) -> AppResu
         .map_err(|error| AppError::new("open_artifact_failed", error.to_string()))
 }
 
-
 #[tauri::command]
-pub fn cancel_job(
-    app: AppHandle,
-    state: State<'_, AppState>,
-    id: String,
-) -> AppResult<JobRecord> {
+pub fn cancel_job(app: AppHandle, state: State<'_, AppState>, id: String) -> AppResult<JobRecord> {
     let record = state.core().cancel_job(id)?;
     let _ = app.emit(
         "job://stage",
@@ -196,5 +201,220 @@ pub fn delete_job(state: State<'_, AppState>, id: String) -> AppResult<()> {
 
 #[tauri::command]
 pub fn save_asset(state: State<'_, AppState>, asset_id: String, path: String) -> AppResult<()> {
-    state.core().export_asset(&asset_id, std::path::Path::new(&path))
+    state
+        .core()
+        .export_asset(&asset_id, std::path::Path::new(&path))
+}
+
+// ---- Workbench -------------------------------------------------------------
+//
+// Commands stay thin: deserialize, pick the service, convert errors. Anything
+// that decodes or composites an image runs on a blocking thread so a
+// 5504×3072 export never freezes the window.
+
+async fn blocking<T: Send + 'static>(
+    state: &State<'_, AppState>,
+    work: impl FnOnce(std::sync::Arc<crate::core::Core>) -> AppResult<T> + Send + 'static,
+) -> AppResult<T> {
+    let core = state.core_arc();
+    tauri::async_runtime::spawn_blocking(move || work(core))
+        .await
+        .map_err(|error| AppError::new("task_join_failed", error.to_string()))?
+}
+
+#[tauri::command]
+pub fn list_workbench_projects(state: State<'_, AppState>) -> AppResult<Vec<ProjectSummary>> {
+    state.core().workbench().list_projects()
+}
+
+#[tauri::command]
+pub async fn open_workbench_project(
+    state: State<'_, AppState>,
+    source: ProjectSource,
+    force_new: Option<bool>,
+) -> AppResult<OpenResult> {
+    blocking(&state, move |core| {
+        core.workbench().open(source, force_new.unwrap_or(false))
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn copy_workbench_project(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> AppResult<ProjectDetail> {
+    state.core().workbench().copy_project(&project_id)
+}
+
+#[tauri::command]
+pub fn get_workbench_project(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> AppResult<ProjectDetail> {
+    state.core().workbench().get_project(&project_id)
+}
+
+#[tauri::command]
+pub fn save_workbench_project(
+    state: State<'_, AppState>,
+    project_id: String,
+    base_revision: u64,
+    document: ProjectDoc,
+) -> AppResult<ProjectDetail> {
+    state
+        .core()
+        .workbench()
+        .save_project(&project_id, base_revision, document)
+}
+
+#[tauri::command]
+pub fn rename_workbench_project(
+    state: State<'_, AppState>,
+    project_id: String,
+    name: String,
+) -> AppResult<ProjectSummary> {
+    state.core().workbench().rename_project(&project_id, &name)
+}
+
+#[tauri::command]
+pub fn delete_workbench_project(
+    state: State<'_, AppState>,
+    project_id: String,
+) -> AppResult<DeleteResult> {
+    state.core().workbench().delete_project(&project_id)
+}
+
+#[tauri::command]
+pub async fn analyze_workbench_region(
+    state: State<'_, AppState>,
+    project_id: String,
+    rect: PixelRect,
+    shape: Shape,
+) -> AppResult<RegionAnalysis> {
+    blocking(&state, move |core| {
+        core.workbench().analyze_region(&project_id, rect, shape)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn measure_workbench_text(
+    state: State<'_, AppState>,
+    spec: TextSpec,
+) -> AppResult<TextLayout> {
+    blocking(&state, move |core| core.workbench().measure_text(spec)).await
+}
+
+#[tauri::command]
+pub async fn list_workbench_fonts(
+    state: State<'_, AppState>,
+    sample: Option<String>,
+) -> AppResult<Vec<FontInfo>> {
+    blocking(&state, move |core| {
+        Ok(core.workbench().list_fonts(sample.as_deref()))
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn preview_workbench_export(
+    state: State<'_, AppState>,
+    project_id: String,
+    document: ProjectDoc,
+) -> AppResult<ExportPreview> {
+    blocking(&state, move |core| {
+        core.workbench().export_preview(&project_id, &document)
+    })
+    .await
+}
+
+#[tauri::command]
+pub async fn export_workbench_project(
+    state: State<'_, AppState>,
+    project_id: String,
+    document: ProjectDoc,
+    path: String,
+) -> AppResult<ExportRecord> {
+    blocking(&state, move |core| {
+        core.workbench()
+            .export(&project_id, &document, std::path::Path::new(&path))
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn workbench_storage(state: State<'_, AppState>) -> AppResult<StorageStats> {
+    state.core().workbench().storage()
+}
+
+#[tauri::command]
+pub fn cleanup_workbench_assets(state: State<'_, AppState>) -> AppResult<CleanupResult> {
+    state.core().workbench().cleanup()
+}
+
+/// Package (downloadable models) and engine (bundled sidecar + runtime)
+/// status in one payload for the settings page and the workbench.
+#[derive(serde::Serialize)]
+pub struct OcrStatus {
+    #[serde(flatten)]
+    pub package: OcrPackageStatus,
+    pub engine: OcrEngineStatus,
+}
+
+#[tauri::command]
+pub fn get_ocr_package_status(state: State<'_, AppState>) -> OcrStatus {
+    let core = state.core();
+    OcrStatus {
+        package: core.ocr.status(&core.app_data),
+        engine: core.sidecar.status(),
+    }
+}
+
+/// D1: OCR on a project region. The webview sends coordinates only; the
+/// crop, padding and sidecar round trip happen in Rust off the UI thread.
+#[tauri::command]
+pub async fn recognize_workbench_region(
+    state: State<'_, AppState>,
+    project_id: String,
+    rect: PixelRect,
+    background: Option<String>,
+    request_id: u64,
+) -> AppResult<RecognizeResult> {
+    blocking(&state, move |core| {
+        core.recognize_region(&project_id, rect, background.as_deref(), request_id)
+    })
+    .await
+}
+
+#[tauri::command]
+pub fn cancel_workbench_ocr(state: State<'_, AppState>, request_id: u64) -> AppResult<bool> {
+    state.core().sidecar.cancel(request_id)
+}
+
+/// Start the model download; progress arrives on `ocr://progress`.
+#[tauri::command]
+pub fn install_ocr_package(app: AppHandle, state: State<'_, AppState>) -> AppResult<()> {
+    let core = state.core();
+    let proxy = core.get_config().ok().and_then(|config| config.proxy_url);
+    core.ocr
+        .start_install(core.app_data.clone(), proxy, move |progress| {
+            let _ = app.emit("ocr://progress", progress);
+        })
+}
+
+#[tauri::command]
+pub fn cancel_ocr_package_install(state: State<'_, AppState>) -> AppResult<()> {
+    state.core().ocr.cancel_install()
+}
+
+/// Removing models while the sidecar holds them open would fail on Windows
+/// and leave a half-deleted package, so the engine is stopped first.
+#[tauri::command]
+pub async fn remove_ocr_package(state: State<'_, AppState>) -> AppResult<()> {
+    blocking(&state, move |core| {
+        core.sidecar.shutdown();
+        core.ocr.remove(&core.app_data)
+    })
+    .await
 }

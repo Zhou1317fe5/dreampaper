@@ -86,10 +86,7 @@ impl<'a> ConfigService<'a> {
         Ok(config)
     }
 
-    pub fn active_profile<'c>(
-        config: &'c AppConfig,
-        role: &str,
-    ) -> AppResult<&'c ModelProfile> {
+    pub fn active_profile<'c>(config: &'c AppConfig, role: &str) -> AppResult<&'c ModelProfile> {
         let active_id = match role {
             "design" => &config.active_design_profile,
             "implement" => &config.active_implement_profile,
@@ -151,10 +148,21 @@ fn normalize_config(mut incoming: AppConfig, existing: Option<AppConfig>) -> App
         if profile.protocol == "banna2" {
             profile.protocol = "banana2".to_string();
         }
-        if profile.api_key.as_deref().unwrap_or_default().trim().is_empty() {
+        if profile
+            .api_key
+            .as_deref()
+            .unwrap_or_default()
+            .trim()
+            .is_empty()
+        {
             profile.api_key = existing
                 .as_ref()
-                .and_then(|config| config.model_profiles.iter().find(|item| item.id == profile.id))
+                .and_then(|config| {
+                    config
+                        .model_profiles
+                        .iter()
+                        .find(|item| item.id == profile.id)
+                })
                 .and_then(|profile| profile.api_key.clone());
         }
         profile.has_api_key = None;
@@ -165,7 +173,11 @@ fn normalize_config(mut incoming: AppConfig, existing: Option<AppConfig>) -> App
 }
 
 fn ensure_search_profile(config: &mut AppConfig) {
-    if !config.model_profiles.iter().any(|item| item.role == "search") {
+    if !config
+        .model_profiles
+        .iter()
+        .any(|item| item.role == "search")
+    {
         config.model_profiles.push(default_search());
     }
     if config.active_search_profile.trim().is_empty() {
@@ -199,7 +211,12 @@ fn normalize_concurrency(value: Option<i64>) -> Option<i64> {
 fn public_config(mut config: AppConfig) -> AppConfig {
     for profile in &mut config.model_profiles {
         profile.api_key_hint = profile.api_key.as_deref().map(mask_key);
-        profile.has_api_key = Some(profile.api_key.as_deref().is_some_and(|value| !value.trim().is_empty()));
+        profile.has_api_key = Some(
+            profile
+                .api_key
+                .as_deref()
+                .is_some_and(|value| !value.trim().is_empty()),
+        );
         profile.api_key = None;
     }
     config
@@ -281,7 +298,10 @@ fn default_implement() -> ModelProfile {
         ("thinking_level", "high"),
         ("mime_type", "image/png"),
     ] {
-        output_defaults.insert(key.to_string(), serde_json::Value::String(value.to_string()));
+        output_defaults.insert(
+            key.to_string(),
+            serde_json::Value::String(value.to_string()),
+        );
     }
     ModelProfile {
         id: "implement-default".to_string(),

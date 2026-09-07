@@ -46,9 +46,15 @@ example.md
 
 # Rust 构建产物
 src-tauri/target/
+src-tauri/ocr/target/
 
 # Tauri 每次构建自动重新生成，仅供编辑器补全 capability JSON
 src-tauri/gen/schemas/
 
 # CI 归集的待发布安装包
 release-artifacts/
+
+# OCR 辅助进程与 ONNX Runtime 的暂存产物（由 scripts/sidecar.mjs 生成）
+src-tauri/binaries/
+src-tauri/runtime/*/
+!src-tauri/runtime/runtime.json

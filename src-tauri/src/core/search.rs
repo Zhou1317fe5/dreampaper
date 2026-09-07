@@ -69,7 +69,9 @@ impl SearchClient {
             .map_err(|error| model_error(format!("DuckDuckGo search failed: {error}")))?;
         let status = response.status().as_u16();
         if status >= 400 {
-            return Err(model_error(format!("DuckDuckGo search failed: HTTP {status}")));
+            return Err(model_error(format!(
+                "DuckDuckGo search failed: HTTP {status}"
+            )));
         }
         let body = response
             .text()
@@ -125,7 +127,11 @@ impl SearchClient {
         if let Some(items) = data["results"].as_array() {
             for item in items.iter().take(max_results) {
                 results.push(SearchResult {
-                    title: item["title"].as_str().unwrap_or_default().trim().to_string(),
+                    title: item["title"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .trim()
+                        .to_string(),
                     url: item["url"].as_str().unwrap_or_default().trim().to_string(),
                     snippet: item["content"]
                         .as_str()
@@ -218,7 +224,11 @@ impl SearchClient {
             .iter()
             .filter(|item| item.is_object())
             .map(|item| SearchResult {
-                title: item["title"].as_str().unwrap_or_default().trim().to_string(),
+                title: item["title"]
+                    .as_str()
+                    .unwrap_or_default()
+                    .trim()
+                    .to_string(),
                 url: item["url"].as_str().unwrap_or_default().trim().to_string(),
                 snippet: item["snippet"]
                     .as_str()
@@ -254,7 +264,11 @@ impl SearchClient {
             .collect();
 
         let mut results = Vec::new();
-        for (index, caps) in link_pattern.captures_iter(html_text).take(max_results).enumerate() {
+        for (index, caps) in link_pattern
+            .captures_iter(html_text)
+            .take(max_results)
+            .enumerate()
+        {
             let href = unescape_html(caps.get(1).map(|m| m.as_str()).unwrap_or_default());
             let url = normalize_result_url(&href);
             if !(url.starts_with("http://") || url.starts_with("https://")) {
@@ -359,7 +373,10 @@ mod tests {
         "#;
         let results = SearchClient::parse_duckduckgo_html(html, 3);
         assert_eq!(results.len(), 1);
-        assert_eq!(results[0].url, "https://www.docker.com/company/newsroom/media-resources/");
+        assert_eq!(
+            results[0].url,
+            "https://www.docker.com/company/newsroom/media-resources/"
+        );
         assert_eq!(results[0].title, "Docker Media Resources");
         assert!(results[0].snippet.contains("Official Docker logos"));
     }
@@ -374,7 +391,10 @@ mod tests {
 
     #[test]
     fn encodes_chinese_query() {
-        assert_eq!(urlencode("离心机 实物"), "%E7%A6%BB%E5%BF%83%E6%9C%BA+%E5%AE%9E%E7%89%A9");
+        assert_eq!(
+            urlencode("离心机 实物"),
+            "%E7%A6%BB%E5%BF%83%E6%9C%BA+%E5%AE%9E%E7%89%A9"
+        );
         assert_eq!(urldecode("%E7%A6%BB%E5%BF%83%E6%9C%BA"), "离心机");
     }
 }

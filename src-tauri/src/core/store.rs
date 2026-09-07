@@ -2,7 +2,7 @@ use std::path::{Path, PathBuf};
 
 use rusqlite::Connection;
 
-use crate::error::AppResult;
+use crate::error::{AppError, AppResult};
 
 #[derive(Clone, Debug)]
 pub struct Store {
@@ -21,8 +21,65 @@ impl Store {
         };
         let conn = store.connection()?;
         conn.execute_batch(SCHEMA)?;
+        Self::migrate(&conn)?;
         Self::run_fts5_smoke_test(&conn)?;
         Ok(store)
+    }
+
+    /// Version the schema past the `CREATE TABLE IF NOT EXISTS` baseline.
+    ///
+    /// `SCHEMA` is the v1 baseline and stays idempotent; anything newer runs
+    /// here as a numbered step inside one transaction, so a failure leaves the
+    /// old database untouched instead of half-migrated. `schema_version` is the
+    /// only cursor: a step is applied exactly when the stored version is below
+    /// its number, and the version is bumped in the same transaction.
+    fn migrate(conn: &Connection) -> AppResult<()> {
+        let current: i64 = conn
+            .query_row(
+                "SELECT value FROM meta WHERE key = 'schema_version'",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .ok()
+            .and_then(|value| value.parse().ok())
+            .unwrap_or(1);
+        for (version, sql) in MIGRATIONS {
+            if current >= *version {
+                continue;
+            }
+            conn.execute_batch("BEGIN IMMEDIATE;")?;
+            let applied = conn.execute_batch(sql).and_then(|_| {
+                conn.execute(
+                    "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?1)",
+                    [version.to_string()],
+                )
+                .map(|_| ())
+            });
+            match applied {
+                Ok(()) => conn.execute_batch("COMMIT;")?,
+                Err(error) => {
+                    let _ = conn.execute_batch("ROLLBACK;");
+                    return Err(AppError::with_detail(
+                        "schema_migration_failed",
+                        format!("数据库升级到版本 {version} 失败：{error}"),
+                        serde_json::json!({ "from": current, "to": version }),
+                    ));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    pub fn schema_version(&self) -> AppResult<i64> {
+        let conn = self.connection()?;
+        let value: String = conn.query_row(
+            "SELECT value FROM meta WHERE key = 'schema_version'",
+            [],
+            |row| row.get(0),
+        )?;
+        value
+            .parse()
+            .map_err(|_| AppError::new("schema_version_invalid", "schema_version 不是数字"))
     }
 
     pub fn connection(&self) -> AppResult<Connection> {
@@ -167,6 +224,58 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
 );
 "#;
 
+/// Numbered schema steps applied on top of the v1 baseline, in order.
+///
+/// Append only; never edit a shipped step. Each step must be safe to run on
+/// a database that already has every earlier step applied.
+const MIGRATIONS: &[(i64, &str)] = &[(2, MIGRATION_V2_WORKBENCH)];
+
+/// v2: the image workbench. Source snapshots are immutable and deduplicated by
+/// content digest; projects reference them by id, and the JSON document on
+/// disk — not this index — is the project's source of truth. Exports only
+/// record where the user saved a PNG. Assets carry no manual refcount: an
+/// asset is live while any project row points at it.
+const MIGRATION_V2_WORKBENCH: &str = r#"
+CREATE TABLE IF NOT EXISTS workbench_assets(
+  id TEXT PRIMARY KEY,
+  digest TEXT NOT NULL UNIQUE,
+  filename TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  path TEXT NOT NULL,
+  bytes INTEGER NOT NULL,
+  width INTEGER NOT NULL,
+  height INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS workbench_projects(
+  id TEXT PRIMARY KEY,
+  asset_id TEXT NOT NULL REFERENCES workbench_assets(id),
+  name TEXT NOT NULL,
+  path TEXT NOT NULL,
+  schema_version INTEGER NOT NULL,
+  revision INTEGER NOT NULL,
+  export_width INTEGER NOT NULL,
+  export_height INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS workbench_projects_asset ON workbench_projects(asset_id);
+
+CREATE TABLE IF NOT EXISTS workbench_exports(
+  id TEXT PRIMARY KEY,
+  project_id TEXT NOT NULL REFERENCES workbench_projects(id) ON DELETE CASCADE,
+  filename TEXT NOT NULL,
+  path TEXT NOT NULL,
+  width INTEGER NOT NULL,
+  height INTEGER NOT NULL,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS workbench_exports_project ON workbench_exports(project_id);
+"#;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -204,6 +313,50 @@ mod tests {
         assert_eq!(probe, 0, "fts_probe 未被清理");
 
         drop(conn);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A v1 database (baseline schema only, version row = 1) must come out of
+    /// `initialize` at the latest version with the workbench tables present,
+    /// and a second run must be a no-op.
+    #[test]
+    fn migrates_a_v1_database_forward_once() {
+        let dir = std::env::temp_dir().join(format!(
+            "dreampaper-store-migrate-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        {
+            let conn = Connection::open(dir.join("dreampaper.sqlite")).unwrap();
+            conn.execute_batch(SCHEMA).unwrap();
+            let version: String = conn
+                .query_row(
+                    "SELECT value FROM meta WHERE key='schema_version'",
+                    [],
+                    |r| r.get(0),
+                )
+                .unwrap();
+            assert_eq!(version, "1");
+        }
+
+        let store = Store::initialize(&dir).expect("升级应成功");
+        assert_eq!(store.schema_version().unwrap(), 2);
+        let conn = store.connection().unwrap();
+        let tables: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE type='table' AND name IN \
+                 ('workbench_assets','workbench_projects','workbench_exports')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(tables, 3, "工作台表未建齐");
+        drop(conn);
+
+        let again = Store::initialize(&dir).expect("重复初始化应成功");
+        assert_eq!(again.schema_version().unwrap(), 2);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

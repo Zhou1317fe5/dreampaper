@@ -1,0 +1,706 @@
+/* Workbench page: one collapsible sidebar plus the canvas, inside the existing shell. */
+
+/* Fills the shell's page cell (a definite grid track) so the status bar is
+   always on screen and the page never grows an inner scrollbar. */
+.wb-root {
+  display: flex;
+  min-height: 0;
+  height: 100%;
+  gap: 10px;
+}
+
+.wb-side {
+  display: flex;
+  flex: none;
+  flex-direction: column;
+  min-height: 0;
+  width: 300px;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+}
+
+.wb-side-collapsed {
+  width: 40px;
+  align-items: center;
+  gap: 4px;
+  padding-top: 8px;
+}
+
+.wb-rail-sep {
+  width: 20px;
+  height: 1px;
+  margin: 4px 0;
+  background: var(--hairline);
+}
+
+.wb-side-head .wb-seg {
+  flex: 1;
+  display: flex;
+}
+
+.wb-side-head .wb-seg-btn {
+  flex: 1;
+}
+
+.wb-side-count {
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+.wb-side-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 12px 14px 8px;
+}
+
+.wb-side-actions {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  padding: 0 12px 6px 14px;
+}
+
+.wb-side-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 12px 14px 16px;
+}
+
+.wb-center {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-card);
+  background: var(--card);
+  box-shadow: var(--shadow-card);
+}
+
+.wb-placeholder {
+  align-items: center;
+  justify-content: center;
+  gap: 14px;
+  color: var(--text-2);
+  text-align: center;
+  padding: 24px;
+}
+
+.wb-toolbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 4px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--hairline);
+  overflow-x: auto;
+}
+
+.wb-toolbar-sep {
+  width: 1px;
+  height: 22px;
+  margin: 0 4px;
+  background: var(--hairline);
+}
+
+.wb-toolbar-spacer {
+  flex: 1;
+}
+
+.wb-tool {
+  display: inline-grid;
+  place-items: center;
+  height: 32px;
+  min-width: 32px;
+  padding: 0 6px;
+  border: 0;
+  border-radius: 9px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wb-tool svg {
+  width: 18px;
+  height: 18px;
+}
+
+.wb-tool:hover:not(:disabled) {
+  background: var(--chip);
+  color: var(--text-1);
+}
+
+.wb-tool.active {
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.wb-tool:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.wb-tool-text {
+  padding: 0 10px;
+  white-space: nowrap;
+}
+
+.wb-stage {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  background: repeating-conic-gradient(var(--chip) 0 25%, transparent 0 50%) 0 0 / 20px 20px;
+}
+
+:root[data-theme='dark'] .wb-stage {
+  background: repeating-conic-gradient(rgba(255, 255, 255, 0.04) 0 25%, transparent 0 50%) 0 0 / 20px 20px;
+}
+
+.wb-canvas {
+  position: absolute;
+  inset: 0;
+  overflow: hidden;
+}
+
+.wb-pending {
+  position: absolute;
+  left: 50%;
+  bottom: 14px;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: calc(100% - 28px);
+  padding: 8px 12px;
+  border-radius: var(--r-chip);
+  background: var(--card);
+  box-shadow: var(--shadow-float);
+  transform: translateX(-50%);
+}
+
+.wb-pending-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.wb-statusbar {
+  display: flex;
+  flex: none;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 12px;
+  border-top: 1px solid var(--hairline);
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.wb-save {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-save-failed {
+  color: var(--rose);
+}
+
+.wb-save-dirty {
+  color: var(--amber);
+}
+
+.wb-btn {
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: 9px;
+  background: var(--chip);
+  color: var(--text-1);
+  font: inherit;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.wb-btn:hover:not(:disabled) {
+  background: var(--chip-strong);
+}
+
+.wb-btn:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.wb-btn.active {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.wb-primary {
+  border-color: transparent;
+  background: var(--accent);
+  color: #fff;
+}
+
+.wb-primary:hover:not(:disabled) {
+  background: var(--accent-deep);
+}
+
+.wb-small {
+  height: 22px;
+  padding: 0 8px;
+  font-size: 11px;
+}
+
+.wb-danger {
+  color: var(--rose);
+}
+
+.wb-danger.confirming {
+  background: var(--rose);
+  color: #fff;
+  width: auto;
+  padding: 0 8px;
+}
+
+.wb-icon-btn {
+  display: inline-grid;
+  place-items: center;
+  width: 26px;
+  height: 26px;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wb-icon-btn:hover:not(:disabled) {
+  background: var(--chip);
+  color: var(--text-1);
+}
+
+.wb-icon-btn.active {
+  background: var(--chip);
+  color: var(--accent-ink);
+}
+
+.wb-icon-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.wb-icon-btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.wb-empty {
+  padding: 8px 14px;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.wb-project-list {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 0 8px 10px;
+  overflow: auto;
+  list-style: none;
+}
+
+.wb-project {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  border-radius: var(--r-inner);
+}
+
+.wb-project.active {
+  background: var(--accent-soft);
+}
+
+.wb-project-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+  padding: 8px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.wb-project-main img {
+  width: 56px;
+  height: 40px;
+  flex: none;
+  border-radius: 6px;
+  object-fit: cover;
+  background: var(--chip);
+}
+
+.wb-project-text {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wb-project-name {
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  font-weight: 600;
+}
+
+.wb-project-meta {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.wb-project-actions {
+  display: none;
+  flex: none;
+  padding-right: 4px;
+}
+
+.wb-project:hover .wb-project-actions,
+.wb-project.active .wb-project-actions {
+  display: inline-flex;
+}
+
+.wb-props {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wb-field {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.wb-field-label {
+  color: var(--text-3);
+  font-size: 11px;
+}
+
+.wb-row {
+  display: flex;
+  gap: 8px;
+}
+
+.wb-wrap {
+  flex-wrap: wrap;
+}
+
+.wb-input {
+  min-width: 0;
+  height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--chip);
+  color: var(--text-1);
+  font: inherit;
+}
+
+.wb-textarea {
+  height: auto;
+  padding: 6px 8px;
+  resize: vertical;
+}
+
+.wb-number {
+  width: 100%;
+}
+
+.wb-static {
+  line-height: 30px;
+}
+
+.wb-color-row {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.wb-color-row input[type='color'] {
+  width: 30px;
+  min-width: 30px;
+  height: 30px;
+  min-height: 30px;
+  padding: 0;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: transparent;
+}
+
+.wb-swatch {
+  width: 22px;
+  height: 22px;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+}
+
+.wb-chip {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--chip-strong);
+  color: var(--text-2);
+  font-size: 11px;
+}
+
+.wb-chip-warn {
+  background: rgba(245, 158, 11, 0.16);
+  color: #b45309;
+}
+
+.wb-warning {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(245, 158, 11, 0.12);
+  color: #92400e;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+:root[data-theme='dark'] .wb-warning {
+  color: #fbbf24;
+}
+
+.wb-muted {
+  margin: 0;
+  color: var(--text-3);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+/* Compact inline toggle. The desktop shell styles every `input` as a
+   full-width control, so the checkbox is reset back to a native 15 px box. */
+.wb-check {
+  display: inline-flex;
+  flex: none;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  color: var(--text-2);
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: pointer;
+  user-select: none;
+}
+
+.desktop-shell .wb-check input[type='checkbox'] {
+  width: 15px;
+  min-width: 15px;
+  height: 15px;
+  min-height: 15px;
+  flex: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: none;
+  appearance: auto;
+  -webkit-appearance: checkbox;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.wb-row-controls {
+  align-items: center;
+  gap: 14px;
+}
+
+.wb-seg {
+  display: inline-flex;
+  gap: 2px;
+  padding: 2px;
+  border-radius: 8px;
+  background: var(--chip);
+}
+
+.wb-seg-btn {
+  padding: 4px 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--text-2);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.wb-seg-btn.active {
+  background: var(--card);
+  color: var(--accent-ink);
+  box-shadow: var(--shadow-card);
+}
+
+.wb-layers {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.wb-layer {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  border-radius: 8px;
+}
+
+.wb-layer.child {
+  margin-left: 18px;
+}
+
+.wb-layer.active {
+  background: var(--accent-soft);
+}
+
+.wb-layer-eye {
+  width: 26px;
+  border: 0;
+  background: transparent;
+  color: var(--text-3);
+  font: inherit;
+  cursor: pointer;
+}
+
+.wb-layer-name {
+  flex: 1;
+  min-width: 0;
+  padding: 6px 4px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  overflow: hidden;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+  cursor: pointer;
+}
+
+.wb-layer-toggle {
+  display: inline-block;
+  width: 14px;
+  color: var(--text-3);
+}
+
+.wb-layer-actions {
+  display: none;
+}
+
+.wb-layer:hover .wb-layer-actions,
+.wb-layer.active .wb-layer-actions {
+  display: inline-flex;
+}
+
+.wb-modal-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.35);
+}
+
+.wb-modal {
+  width: min(460px, calc(100vw - 40px));
+  padding: 20px 22px;
+  border-radius: var(--r-card);
+  background: var(--card);
+  box-shadow: var(--shadow-float);
+}
+
+.wb-modal h3 {
+  margin: 0 0 12px;
+}
+
+.wb-modal p {
+  margin: 0 0 8px;
+  line-height: 1.5;
+}
+
+.wb-modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 16px;
+}
+
+.wb-progress-track {
+  height: 6px;
+  margin: 8px 0;
+  border-radius: 999px;
+  background: var(--chip);
+  overflow: hidden;
+}
+
+.wb-progress-track span {
+  display: block;
+  height: 100%;
+  background: var(--accent);
+  transition: width 0.2s;
+}
+
+.wb-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--hairline);
+}
+
+.wb-settings h3 {
+  margin: 0;
+}
+
+.wb-settings-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.wb-settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-inner);
+  background: var(--chip);
+}
+
+.wb-settings-card p {
+  margin: 0;
+  line-height: 1.5;
+}
+
+.wb-settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}

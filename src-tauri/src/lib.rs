@@ -9,11 +9,12 @@ mod window;
 use tauri::Manager;
 
 pub fn run() {
-    tauri::Builder::default()
+    let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())
         .register_asynchronous_uri_scheme_protocol("dp-asset", protocol::asset_response)
         .register_asynchronous_uri_scheme_protocol("dp-template", protocol::template_response)
+        .register_asynchronous_uri_scheme_protocol("dp-workbench", protocol::workbench_response)
         .setup(|app| {
             let state = state::AppState::new(app.handle())
                 .map_err(|error| Box::new(error) as Box<dyn std::error::Error>)?;
@@ -43,8 +44,38 @@ pub fn run() {
             cmd::delete_job,
             cmd::delete_templates,
             cmd::save_asset,
-            cmd::open_artifact
+            cmd::open_artifact,
+            cmd::list_workbench_projects,
+            cmd::open_workbench_project,
+            cmd::copy_workbench_project,
+            cmd::get_workbench_project,
+            cmd::save_workbench_project,
+            cmd::rename_workbench_project,
+            cmd::delete_workbench_project,
+            cmd::analyze_workbench_region,
+            cmd::recognize_workbench_region,
+            cmd::cancel_workbench_ocr,
+            cmd::measure_workbench_text,
+            cmd::list_workbench_fonts,
+            cmd::preview_workbench_export,
+            cmd::export_workbench_project,
+            cmd::workbench_storage,
+            cmd::cleanup_workbench_assets,
+            cmd::get_ocr_package_status,
+            cmd::install_ocr_package,
+            cmd::cancel_ocr_package_install,
+            cmd::remove_ocr_package
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application");
+
+    // The OCR sidecar must never outlive the app: stop it before the process
+    // exits, whatever closed the last window.
+    app.run(|handle, event| {
+        if let tauri::RunEvent::Exit = event {
+            if let Some(state) = handle.try_state::<state::AppState>() {
+                state.core().sidecar.shutdown();
+            }
+        }
+    });
 }

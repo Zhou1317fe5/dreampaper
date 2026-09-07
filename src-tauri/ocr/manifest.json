@@ -1,0 +1,30 @@
+{
+  "version": "native-pp-ocrv6-medium-1",
+  "license": "Apache-2.0",
+  "files": [
+    {
+      "name": "det.onnx",
+      "source": "PP-OCRv6_medium_det_onnx",
+      "bytes": 62032837,
+      "sha256": "eb13b44b25bb36f89528b68720af8a61d9cf381176107f465db1757b65d086e1"
+    },
+    {
+      "name": "cls.onnx",
+      "source": "ch_ppocr_mobile_v2.0_cls_mobile",
+      "bytes": 585532,
+      "sha256": "e47acedf663230f8863ff1ab0e64dd2d82b838fceb5957146dab185a89d6215c"
+    },
+    {
+      "name": "rec.onnx",
+      "source": "PP-OCRv6_medium_rec_onnx",
+      "bytes": 76554979,
+      "sha256": "9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba"
+    },
+    {
+      "name": "dict.txt",
+      "source": "PP-OCRv6_medium_rec_onnx/inference.yml:PostProcess.character_dict",
+      "bytes": 74947,
+      "sha256": "b5f2bfe2bdd9448429e3e82b51c789775d9b42f2403d082b00662eb77e401c5d"
+    }
+  ]
+}

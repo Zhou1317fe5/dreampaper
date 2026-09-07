@@ -245,6 +245,15 @@ pub fn model_http_error(
     )
 }
 
+/// reqwest sends no `User-Agent` by default; ModelScope's LFS CDN answers
+/// such requests with 403 (reproduced through a proxy), and model gateways
+/// generally prefer an identifiable client too.
+pub const USER_AGENT: &str = concat!(
+    "DreamPaper/",
+    env!("CARGO_PKG_VERSION"),
+    " (+https://github.com/dream-rec/dreampaper)"
+);
+
 pub fn build_client(
     read_timeout_seconds: u64,
     proxy_url: Option<&str>,
@@ -253,6 +262,7 @@ pub fn build_client(
         // Some gateways' bot protection serves empty 200 responses to rustls
         // HTTP/2 fingerprints on large payloads; HTTP/1.1 is accepted everywhere.
         .http1_only()
+        .user_agent(USER_AGENT)
         .connect_timeout(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECONDS))
         .timeout(Duration::from_secs(read_timeout_seconds.max(1)))
         .tcp_keepalive(Duration::from_secs(30))
@@ -431,6 +441,7 @@ fn build_stream_client(
     proxy_url: Option<&str>,
 ) -> AppResult<reqwest::Client> {
     let mut builder = reqwest::Client::builder()
+        .user_agent(USER_AGENT)
         .connect_timeout(Duration::from_secs(DEFAULT_CONNECT_TIMEOUT_SECONDS))
         .read_timeout(Duration::from_secs(idle_timeout_seconds.max(1)))
         .tcp_keepalive(Duration::from_secs(30))
@@ -774,11 +785,19 @@ mod tests {
         let mut buffer = Vec::new();
         buffer.extend_from_slice(b"data: {\"a\":1}\n\ndata: {\"b\"");
         let first = drain_sse_events(&mut buffer);
-        assert_eq!(first, vec!["{\"a\":1}".to_string()], "完整的一行要立刻交出去");
+        assert_eq!(
+            first,
+            vec!["{\"a\":1}".to_string()],
+            "完整的一行要立刻交出去"
+        );
 
         buffer.extend_from_slice(b":2}\n\n");
         let second = drain_sse_events(&mut buffer);
-        assert_eq!(second, vec!["{\"b\":2}".to_string()], "跨 chunk 的后半截要接上");
+        assert_eq!(
+            second,
+            vec!["{\"b\":2}".to_string()],
+            "跨 chunk 的后半截要接上"
+        );
     }
 
     #[test]
@@ -787,17 +806,26 @@ mod tests {
         let line = "data: {\"t\":\"图\"}\n".as_bytes().to_vec();
         let (head, tail) = line.split_at(line.len() - 3);
         buffer.extend_from_slice(head);
-        assert!(drain_sse_events(&mut buffer).is_empty(), "没收到换行就不该交出去");
+        assert!(
+            drain_sse_events(&mut buffer).is_empty(),
+            "没收到换行就不该交出去"
+        );
 
         buffer.extend_from_slice(tail);
-        assert_eq!(drain_sse_events(&mut buffer), vec!["{\"t\":\"图\"}".to_string()]);
+        assert_eq!(
+            drain_sse_events(&mut buffer),
+            vec!["{\"t\":\"图\"}".to_string()]
+        );
     }
 
     #[test]
     fn sse_framing_skips_terminators_and_comments() {
         let mut buffer =
             b": ping\r\nevent: message\r\ndata: {\"ok\":true}\r\n\r\ndata: [DONE]\r\n\r\n".to_vec();
-        assert_eq!(drain_sse_events(&mut buffer), vec!["{\"ok\":true}".to_string()]);
+        assert_eq!(
+            drain_sse_events(&mut buffer),
+            vec!["{\"ok\":true}".to_string()]
+        );
     }
 
     #[test]

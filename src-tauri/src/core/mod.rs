@@ -12,6 +12,7 @@ pub mod store;
 pub mod thumb;
 pub mod tpl;
 pub mod update;
+pub mod workbench;
 
 use std::path::PathBuf;
 
@@ -25,23 +26,80 @@ use self::job::{JobRecord, JobService};
 use self::prompt::PromptStore;
 use self::store::Store;
 use self::tpl::{TemplateFile, TemplatePackSummary, TemplateService, TemplateSummary};
+use self::workbench::WorkbenchService;
 
 pub struct Core {
     pub app_data: PathBuf,
     pub store: Store,
     pub prompts: PromptStore,
     pub cancels: CancelRegistry,
+    /// Directory holding the bundled fallback font (a Tauri resource).
+    pub font_root: PathBuf,
+    /// Decoded workbench sources, fonts and OCR download state outlive a
+    /// single command, so they live here rather than on the service.
+    pub sources: workbench::source::SourceCache,
+    pub fonts: workbench::text::FontHandle,
+    pub ocr: workbench::ocr::OcrPackages,
+    /// The native OCR sidecar (process supervisor + engine location).
+    pub sidecar: workbench::sidecar::OcrSidecar,
 }
 
 impl Core {
-    pub fn new(app_data: PathBuf, prompt_root: PathBuf) -> AppResult<Self> {
+    pub fn new(
+        app_data: PathBuf,
+        prompt_root: PathBuf,
+        font_root: PathBuf,
+        sidecar: workbench::sidecar::SidecarLocation,
+    ) -> AppResult<Self> {
         let store = Store::initialize(&app_data)?;
-        Ok(Self {
+        let core = Self {
             app_data,
             store,
             prompts: PromptStore::new(prompt_root),
             cancels: CancelRegistry::default(),
-        })
+            font_root,
+            sources: workbench::source::SourceCache::default(),
+            fonts: workbench::text::FontHandle::default(),
+            ocr: workbench::ocr::OcrPackages::default(),
+            sidecar: workbench::sidecar::OcrSidecar::new(sidecar),
+        };
+        core.workbench().bootstrap()?;
+        Ok(core)
+    }
+
+    /// OCR on a project region (D1): resolve the snapshot, cut and pad the
+    /// crop here, hand it to the sidecar and map the answer back. Blocks.
+    pub fn recognize_region(
+        &self,
+        project_id: &str,
+        rect: workbench::geom::PixelRect,
+        background: Option<&str>,
+        request_id: u64,
+    ) -> AppResult<workbench::sidecar::RecognizeResult> {
+        let models = self.ocr.model_paths(&self.app_data)?;
+        let (source, rect) = self.workbench().region_source(project_id, rect)?;
+        let background = match background {
+            Some(value) => workbench::sidecar::parse_hex_color(value).ok_or_else(|| {
+                crate::error::AppError::new("workbench_color_invalid", "背景色格式无效")
+            })?,
+            None => {
+                let analysis =
+                    workbench::color::analyze(&source, &rect, workbench::doc::Shape::Rect);
+                workbench::sidecar::parse_hex_color(&analysis.color).unwrap_or([255, 255, 255])
+            }
+        };
+        self.sidecar
+            .recognize(&models, &source, rect, background, request_id)
+    }
+
+    pub fn workbench(&self) -> WorkbenchService<'_> {
+        WorkbenchService::new(
+            &self.store,
+            &self.app_data,
+            &self.font_root,
+            &self.sources,
+            &self.fonts,
+        )
     }
 
     pub fn get_config(&self) -> AppResult<AppConfig> {

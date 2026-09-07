@@ -207,7 +207,8 @@
   gap: 2px;
 }
 
-.recent-rerun {
+.recent-rerun,
+.recent-workbench {
   display: grid;
   place-items: center;
   width: 24px;
@@ -225,11 +226,14 @@
 }
 
 .recent-row:hover .recent-rerun,
-.recent-rerun:focus-visible {
+.recent-row:hover .recent-workbench,
+.recent-rerun:focus-visible,
+.recent-workbench:focus-visible {
   opacity: 1;
 }
 
-.recent-rerun:hover {
+.recent-rerun:hover,
+.recent-workbench:hover {
   background: var(--chip);
   color: var(--text-1);
 }
@@ -2048,6 +2052,7 @@
    glyph, always visible, instead of the 14px hover-only affordance the compact
    recent-jobs rows use. */
 .hc-actions .recent-rerun,
+.hc-actions .recent-workbench,
 .hc-actions .recent-delete {
   width: 32px;
   min-width: 32px;
@@ -2060,7 +2065,8 @@
   opacity: 1;
 }
 
-.hc-actions .recent-rerun:hover {
+.hc-actions .recent-rerun:hover,
+.hc-actions .recent-workbench:hover {
   border-color: color-mix(in srgb, var(--accent) 45%, transparent);
   background: var(--accent-soft);
   color: var(--accent-ink);
@@ -2504,4 +2510,129 @@
   display: grid;
   gap: 12px;
   min-width: 0;
+}
+
+/* 约束标题行右侧的字体 / 背景色选择（style_picker.tsx） */
+.dp-field-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  min-height: 24px;
+}
+
+.dp-field-head .dp-field-label {
+  flex: none;
+}
+
+.dp-style {
+  position: relative;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.desktop-shell .dp-style select.dp-mini {
+  max-width: 190px;
+  min-height: 26px;
+  font-size: 11.5px;
+}
+
+.dp-swatch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 26px;
+  padding: 0 8px 0 5px;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  background: var(--card);
+  color: var(--text-2);
+  font: inherit;
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.dp-swatch-btn:hover {
+  color: var(--text-1);
+}
+
+.dp-swatch {
+  width: 14px;
+  height: 14px;
+  border: 1px solid var(--hairline);
+  border-radius: 4px;
+  background:
+    linear-gradient(45deg, var(--chip) 25%, transparent 25%, transparent 75%, var(--chip) 75%),
+    linear-gradient(45deg, var(--chip) 25%, transparent 25%, transparent 75%, var(--chip) 75%) 4px 4px / 8px 8px;
+  background-size: 8px 8px;
+}
+
+.dp-swatch-text {
+  font-variant-numeric: tabular-nums;
+}
+
+/* Present in the DOM so `.click()` opens the OS colour panel, but not visible. */
+.dp-native-color {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.dp-style-pop {
+  width: 292px;
+  gap: 8px;
+  padding: 12px;
+}
+
+.dp-swatch-grid {
+  display: grid;
+  grid-template-columns: repeat(10, 1fr);
+  gap: 6px;
+}
+
+.dp-swatch-cell {
+  width: 100%;
+  aspect-ratio: 1;
+  border: 1px solid var(--hairline);
+  border-radius: 6px;
+  cursor: pointer;
+}
+
+.dp-swatch-cell.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.dp-style-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.desktop-shell .dp-style-row .dp-mini {
+  min-height: 26px;
+  font-size: 11.5px;
+}
+
+.desktop-shell .dp-hex {
+  width: 96px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+.desktop-shell .dp-hex.invalid {
+  border-color: var(--danger, #d64545);
+}
+
+.dp-style-action {
+  cursor: pointer;
+}
+
+.dp-style-error {
+  margin: 0;
+  color: var(--danger, #d64545);
+  font-size: 11.5px;
 }

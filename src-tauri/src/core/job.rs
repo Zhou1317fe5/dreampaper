@@ -12,6 +12,11 @@ use super::store::Store;
 pub struct JobImage {
     pub name: String,
     pub url: String,
+    /// Id in the asset table, so the workbench can snapshot the image without
+    /// the frontend parsing the URL. Derived from the URL when reading rows
+    /// written before this field existed.
+    #[serde(default)]
+    pub asset_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -138,7 +143,8 @@ impl<'a> JobService<'a> {
         Ok(record)
     }
 
-    pub fn list_jobs(&self, limit: usize, offset: usize) -> AppResult<Vec<JobRecord>> {        let conn = self.store.connection()?;
+    pub fn list_jobs(&self, limit: usize, offset: usize) -> AppResult<Vec<JobRecord>> {
+        let conn = self.store.connection()?;
         let mut stmt = conn.prepare(
             "SELECT id, mode, status, message, stage, created_at, updated_at, payload_json, result_json FROM jobs ORDER BY created_at DESC LIMIT ?1 OFFSET ?2",
         )?;
@@ -170,7 +176,13 @@ impl<'a> JobService<'a> {
         Ok(records)
     }
 
-    pub fn mark_stage(&self, job_id: &str, stage: &str, message: &str, status: &str) -> AppResult<()> {
+    pub fn mark_stage(
+        &self,
+        job_id: &str,
+        stage: &str,
+        message: &str,
+        status: &str,
+    ) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
         let conn = self.store.connection()?;
         conn.execute(
@@ -238,7 +250,9 @@ impl<'a> JobService<'a> {
         let raw: String = stmt
             .query_row(params![job_id], |row| row.get(0))
             .map_err(|error| match error {
-                rusqlite::Error::QueryReturnedNoRows => AppError::new("job_not_found", "Job not found"),
+                rusqlite::Error::QueryReturnedNoRows => {
+                    AppError::new("job_not_found", "Job not found")
+                }
                 other => other.into(),
             })?;
         Ok(serde_json::from_str(&raw)?)
@@ -258,19 +272,43 @@ impl<'a> JobService<'a> {
         self.mark_stage(job_id, "completed", "任务完成", "succeeded")
     }
 
-    pub fn fail(&self, job_id: &str, message: &str, detail: Option<&serde_json::Value>) -> AppResult<()> {
+    pub fn fail(
+        &self,
+        job_id: &str,
+        message: &str,
+        detail: Option<&serde_json::Value>,
+    ) -> AppResult<()> {
         let now = Utc::now().to_rfc3339();
-        let stage = self.events_for_job(job_id)?.last().map(|event| event.stage.clone());
+        let stage = self
+            .events_for_job(job_id)?
+            .last()
+            .map(|event| event.stage.clone());
         let mut error = detail.cloned().unwrap_or_else(|| serde_json::json!({}));
         if let Some(object) = error.as_object_mut() {
-            object.insert("summary".to_string(), serde_json::Value::String(message.to_string()));
-            object.insert("message".to_string(), serde_json::Value::String(message.to_string()));
-            object.insert("failed_at".to_string(), serde_json::Value::String(now.clone()));
-            if object.get("stage").map(serde_json::Value::is_null).unwrap_or(true) {
+            object.insert(
+                "summary".to_string(),
+                serde_json::Value::String(message.to_string()),
+            );
+            object.insert(
+                "message".to_string(),
+                serde_json::Value::String(message.to_string()),
+            );
+            object.insert(
+                "failed_at".to_string(),
+                serde_json::Value::String(now.clone()),
+            );
+            if object
+                .get("stage")
+                .map(serde_json::Value::is_null)
+                .unwrap_or(true)
+            {
                 object.insert("stage".to_string(), serde_json::to_value(stage.clone())?);
             }
             if !object.contains_key("code") {
-                object.insert("code".to_string(), serde_json::Value::String("job_failed".to_string()));
+                object.insert(
+                    "code".to_string(),
+                    serde_json::Value::String("job_failed".to_string()),
+                );
             }
         }
         let conn = self.store.connection()?;
@@ -279,7 +317,12 @@ impl<'a> JobService<'a> {
             params![serde_json::to_string(&error)?, now, job_id],
         )?;
         drop(conn);
-        self.mark_stage(job_id, stage.as_deref().unwrap_or("failed"), message, "failed")
+        self.mark_stage(
+            job_id,
+            stage.as_deref().unwrap_or("failed"),
+            message,
+            "failed",
+        )
     }
 
     pub fn cancel(&self, job_id: &str, message: &str) -> AppResult<()> {
@@ -344,11 +387,15 @@ impl<'a> JobService<'a> {
             serde_json::from_value(value["images"].clone()).unwrap_or_default();
         for image in &mut images {
             image.url = normalize_asset_url(&image.url);
+            if image.asset_id.is_none() {
+                image.asset_id = asset_id_from_url(&image.url);
+            }
         }
         Ok(images)
     }
 
-    fn events_for_job(&self, job_id: &str) -> AppResult<Vec<JobEvent>> {        let conn = self.store.connection()?;
+    fn events_for_job(&self, job_id: &str) -> AppResult<Vec<JobEvent>> {
+        let conn = self.store.connection()?;
         let mut stmt = conn.prepare(
             "SELECT stage, message, status, created_at FROM job_stages WHERE job_id = ?1 ORDER BY id ASC",
         )?;
@@ -366,7 +413,11 @@ impl<'a> JobService<'a> {
     fn error_for_job(&self, job_id: &str, events: &[JobEvent]) -> AppResult<Option<JobError>> {
         let conn = self.store.connection()?;
         let raw: Option<String> = conn
-            .query_row("SELECT error_json FROM jobs WHERE id = ?1", params![job_id], |row| row.get(0))
+            .query_row(
+                "SELECT error_json FROM jobs WHERE id = ?1",
+                params![job_id],
+                |row| row.get(0),
+            )
             .unwrap_or(None);
         let Some(raw) = raw else {
             return Ok(None);
@@ -374,14 +425,25 @@ impl<'a> JobService<'a> {
         let mut value: serde_json::Value = serde_json::from_str(&raw)?;
         if let Some(object) = value.as_object_mut() {
             if !object.contains_key("summary") {
-                let summary = object.get("message").and_then(serde_json::Value::as_str).unwrap_or("任务失败").to_string();
+                let summary = object
+                    .get("message")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or("任务失败")
+                    .to_string();
                 object.insert("summary".to_string(), serde_json::Value::String(summary));
             }
             if !object.contains_key("code") {
-                object.insert("code".to_string(), serde_json::Value::String("job_failed".to_string()));
+                object.insert(
+                    "code".to_string(),
+                    serde_json::Value::String("job_failed".to_string()),
+                );
             }
             if !object.contains_key("stage") {
-                let stage = events.iter().rev().find(|event| event.stage != "failed").map(|event| event.stage.clone());
+                let stage = events
+                    .iter()
+                    .rev()
+                    .find(|event| event.stage != "failed")
+                    .map(|event| event.stage.clone());
                 object.insert("stage".to_string(), serde_json::to_value(stage)?);
             }
         }
@@ -405,6 +467,18 @@ fn normalize_asset_url(url: &str) -> String {
         Some(id) if !id.is_empty() => protocol_url("dp-asset", id),
         _ => url.to_string(),
     }
+}
+
+/// The asset id behind one of our own protocol URLs; external links have none.
+fn asset_id_from_url(url: &str) -> Option<String> {
+    if !url.contains("dp-asset") {
+        return None;
+    }
+    url.rsplit('/')
+        .next()
+        .map(|id| id.split('?').next().unwrap_or(id))
+        .filter(|id| !id.is_empty())
+        .map(str::to_string)
 }
 
 /// Derived display title for list rendering. Localization of the fallback
@@ -461,7 +535,10 @@ mod tests {
     #[test]
     fn stored_image_urls_are_rebuilt_for_this_platform() {
         let expected = protocol_url("dp-asset", "abc-123");
-        assert_eq!(normalize_asset_url("dp-asset://localhost/abc-123"), expected);
+        assert_eq!(
+            normalize_asset_url("dp-asset://localhost/abc-123"),
+            expected
+        );
         assert_eq!(
             normalize_asset_url("http://dp-asset.localhost/abc-123"),
             expected
@@ -561,6 +638,7 @@ mod tests {
             &[JobImage {
                 name: "figure.png".to_string(),
                 url: "dp-asset://localhost/t1".to_string(),
+                asset_id: None,
             }],
         )
         .expect("收尾");
@@ -614,7 +692,11 @@ mod tests {
         jobs.cancel(&settled.id, "任务已停止").expect("停止");
         std::fs::create_dir_all(dir.join("outputs").join(&settled.id)).expect("建产物目录");
         std::fs::create_dir_all(dir.join("logs").join(&settled.id)).expect("建日志目录");
-        std::fs::write(dir.join("outputs").join(&settled.id).join("figure.png"), b"png").expect("写产物");
+        std::fs::write(
+            dir.join("outputs").join(&settled.id).join("figure.png"),
+            b"png",
+        )
+        .expect("写产物");
 
         let other = jobs
             .create_job(serde_json::json!({ "mode": "paper_figure" }))
@@ -630,10 +712,17 @@ mod tests {
         let live = jobs
             .create_job(serde_json::json!({ "mode": "paper_figure" }))
             .expect("建进行中任务");
-        jobs.mark_stage(&live.id, "paper_design", "设计中", "running").expect("置为运行中");
-        let error = jobs.delete(&dir, &live.id).expect_err("运行中任务应拒绝删除");
+        jobs.mark_stage(&live.id, "paper_design", "设计中", "running")
+            .expect("置为运行中");
+        let error = jobs
+            .delete(&dir, &live.id)
+            .expect_err("运行中任务应拒绝删除");
         assert_eq!(error.code, "job_active");
-        assert!(jobs.list_jobs(20, 0).unwrap().iter().any(|r| r.id == live.id));
+        assert!(jobs
+            .list_jobs(20, 0)
+            .unwrap()
+            .iter()
+            .any(|r| r.id == live.id));
 
         // Missing output/log directories must not block deletion.
         jobs.cancel(&live.id, "任务已停止").expect("停止");
@@ -692,7 +781,10 @@ mod tests {
         assert_eq!(loaded.design_logs[0].step, "paper_structure");
         assert_eq!(loaded.design_logs[0].label, "分析 template 结构");
         assert_eq!(loaded.design_logs[1].content, "修复后的答案");
-        assert!(loaded.design_logs.iter().all(|log| !log.timestamp.is_empty()));
+        assert!(loaded
+            .design_logs
+            .iter()
+            .all(|log| !log.timestamp.is_empty()));
 
         // List rows stay light: a step's answer runs to tens of kilobytes.
         let listed = jobs.list_jobs(20, 0).expect("列表");
@@ -735,6 +827,7 @@ mod tests {
             &[JobImage {
                 name: "figure.png".to_string(),
                 url: "dp-asset://x".to_string(),
+                asset_id: None,
             }],
         )
         .expect("迟到的收尾");
@@ -742,9 +835,6 @@ mod tests {
         let after = jobs.get_job(job.id.clone()).expect("读任务");
         assert_eq!(after.status, "cancelled");
         assert_eq!(after.stage.as_deref(), Some("cancelled"));
-        assert!(
-            after.images.is_empty(),
-            "停止之后不该再把产出挂回这条任务"
-        );
+        assert!(after.images.is_empty(), "停止之后不该再把产出挂回这条任务");
     }
 }

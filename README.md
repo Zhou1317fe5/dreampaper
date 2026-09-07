@@ -215,6 +215,25 @@ npm run dev
 | 规划并发 | 全局（幻灯片） | 1–20 | 留空 = 跟随页数 |
 | 制图并发 | 全局（幻灯片） | 1–20 | 留空 = 跟随页数，建议先设 1 降低网关 502 |
 
+### 视觉主体词库
+
+幻灯片链路在检索实物 / logo 素材前，先用 `prompts/global/visual_terms.json` 从资料中抽出视觉主体；桌面版与 Web 后端读取同一份文件。每条记录形如：
+
+```json
+{"term": "Llama", "brand": "Meta", "category": "model", "aliases": ["LLaMA", "Llama 3", "Llama 4"]}
+```
+
+| 字段 | 含义 |
+| --- | --- |
+| `term` | 规范名，命中任一别名后统一输出该名称 |
+| `brand` | logo 归属品牌，检索 query 以它为主体（型号名落到所属品牌，如 Kimi → Moonshot AI） |
+| `category` | 12 类之一：`vendor` / `model` / `tool` / `cloud` / `infra` / `database` / `software` / `robot_vendor` 检索品牌标识；`robot` / `sensor` / `chip` / `instrument` 检索实物外观 |
+| `aliases` | 中英文别名，与 `term` 一样参与匹配 |
+
+匹配规则：Latin 词按 ASCII 字母数字边界匹配（`PyTorch框架` 命中 `PyTorch`，`Pipeline` 不命中 `Pi`），词内空白按任意空白匹配；全大写缩略词（`ARM`、`SEM`、`CT`）大小写敏感，其余不敏感；含汉字的词按子串匹配；同一条目取最长命中，跨条目时被更长命中包含的词会被丢弃（`Unitree G1` 优先于 `Unitree`）。
+
+扩充方式：新增 entry 或向已有 entry 追加 alias，`term` 与所有 `aliases` 在全文件内大小写不敏感唯一；软件 / 模型的版本型号挂到品牌条目的 `aliases`（`Llama 3` → `Llama`，`GLM-4.5` → `Zhipu`）而不是单开条目，需要检索实物外观的硬件产品（`Unitree G1`）则单开 `robot` / `sensor` / `chip` / `instrument` 条目并把 `brand` 填为厂商；通用英文词（`Pi`、`Spot`、`Figure`）必须带品牌限定（`Inflection Pi`、`Boston Dynamics Spot`、`Figure 02`），否则会大量误报。桌面版可执行文件内嵌该文件，同时与提示词文件一样随安装包打包到资源目录 `prompts/`（开发运行时取仓库根目录的 `prompts/`）：外部文件优先生效，缺失或解析失败时自动回退到内嵌版本，不会中断任务。
+
 ---
 
 ## 使用
@@ -229,11 +248,21 @@ npm run dev
 | `~/.dreampaper/assets/` | 上传文件 |
 | `~/.dreampaper/jobs/` | 任务记录与出图 |
 
+### 工作台（桌面版）
+
+左侧导航"历史数据"下方的**工作台**用于修复生成图中的乱码或错字：从生成结果、历史记录或本地文件打开图片，框选出错区域后自动用底色覆盖并识别文字，得到可编辑的文本层；随后可调整文案与排版、按原图整数像素裁剪，并导出与源图同分辨率的无损 PNG。源图始终只读，每张图的修改保存在独立工程中，可随时恢复。
+
+- **文字识别（OCR）完全离线**：识别引擎（纯 Rust 辅助进程 + ONNX Runtime）随安装包内置；首次使用时按提示下载 PP-OCRv6 medium 检测/识别模型与文字方向分类模型（约 133 MiB，来源与校验值锁定在应用内），之后图片与识别结果都不会离开本机。设置页可查看引擎版本、更新或删除模型。
+- 未安装模型时，纯色修补、裁剪与手工添加文字仍可使用。
+- 工作台数据位于应用数据目录的 `workbench/`（工程与源图快照）和 `ocr/`（模型）；设置页提供占用统计与只清理无引用快照的安全清理。
+
 ---
 
 ## 致谢
 
 科研图 template 来自 [PaperBananaBench](https://huggingface.co/datasets/dwzhu/PaperBananaBench)（[PaperBanana](https://github.com/dwzhu-pku/PaperBanana)）。
+
+工作台文字识别使用 [PaddleOCR](https://github.com/PaddlePaddle/PaddleOCR) 的 PP-OCRv6 模型与 [RapidOCR](https://github.com/RapidAI/RapidOCR) 分发的文字方向分类模型（Apache-2.0），推理运行时为 [ONNX Runtime](https://onnxruntime.ai/)（MIT）；Rust 侧预/后处理移植自 [ppocr-rs](https://crates.io/crates/ppocr-rs)（Apache-2.0）。回退字体 Noto Sans SC 采用 SIL OFL 1.1。详见 `src-tauri/ocr/THIRD_PARTY.md`。
 
 ---
 

@@ -41,8 +41,10 @@
       "icons/icon.ico"
     ],
     "resources": {
-      "../prompts": "prompts"
+      "../prompts": "prompts",
+      "fonts": "fonts"
     },
+    "externalBin": ["binaries/dreampaper-ocr"],
     "windows": {
       "nsis": {
         "installerIcon": "icons/icon.ico",

@@ -26,6 +26,7 @@ import {
   type SlideFormState
 } from './forms';
 import { TemplateLibrary } from './templates';
+import { WorkbenchPage, WorkbenchSettings, type LeaveGuard, type WorkbenchRequest } from '../workbench';
 import {
   applyTheme,
   autoUpdateEnabled,
@@ -36,7 +37,7 @@ import {
   type Theme
 } from './prefs';
 
-type Page = 'paper' | 'ppt' | 'templates' | 'history' | 'settings' | 'about';
+type Page = 'paper' | 'ppt' | 'templates' | 'history' | 'workbench' | 'settings' | 'about';
 type Copy = (typeof copy)[Lang];
 
 const supportsViewTransitions = typeof document !== 'undefined' && 'startViewTransition' in document;
@@ -55,6 +56,8 @@ export function DesktopApp() {
   const [pptJob, setPptJob] = useState<JobRecord | null>(null);
   const [figureState, setFigureState] = useState<FigureFormState>(defaultFigureForm);
   const [slideState, setSlideState] = useState<SlideFormState>(defaultSlideForm);
+  const [workbenchRequest, setWorkbenchRequest] = useState<WorkbenchRequest | null>(null);
+  const workbenchLeaveGuard = useRef<LeaveGuard | null>(null);
   async function deleteSettled(job: JobRecord, refresh?: () => void) {
     try {
       await deleteJob(job.id);
@@ -99,7 +102,9 @@ export function DesktopApp() {
   const t = copy[lang];
   const d = desktopCopy[lang];
 
-  const transitionToPage = (nextPage: Page) => {
+  const transitionToPage = async (nextPage: Page): Promise<boolean> => {
+    if (nextPage === page) return true;
+    if (page === 'workbench' && workbenchLeaveGuard.current && !(await workbenchLeaveGuard.current())) return false;
     if (supportsViewTransitions && !window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
       (document as any).startViewTransition(() => {
         setPage(nextPage);
@@ -107,12 +112,48 @@ export function DesktopApp() {
     } else {
       setPage(nextPage);
     }
+    return true;
   };
+
+  const openWorkbench = async (assetId: string) => {
+    if (!(await transitionToPage('workbench'))) return;
+    setWorkbenchRequest({ assetId, token: Date.now() });
+  };
+
+  const registerWorkbenchLeaveGuard = useCallback((guard: LeaveGuard | null) => {
+    workbenchLeaveGuard.current = guard;
+  }, []);
+
+  const handleWorkbenchRequest = useCallback(() => setWorkbenchRequest(null), []);
 
   const showMessage = useMemo(
     () => (text: string, tone: 'info' | 'error' = 'info') => setToast({ id: Date.now(), text, tone }),
     []
   );
+
+  useEffect(() => {
+    if (!desktopAvailable()) return;
+    let disposed = false;
+    let stop: (() => void) | undefined;
+    let closing = false;
+    void import('@tauri-apps/api/window').then(async ({ getCurrentWindow }) => {
+      const unsubscribe = await getCurrentWindow().onCloseRequested(async (event) => {
+        if (closing) { event.preventDefault(); return; }
+        closing = true;
+        try {
+          if (workbenchLeaveGuard.current && !(await workbenchLeaveGuard.current())) event.preventDefault();
+        } catch (error) {
+          event.preventDefault();
+          showMessage(error instanceof Error ? error.message : '关闭前保存失败', 'error');
+        } finally {
+          closing = false;
+        }
+      });
+      if (disposed) unsubscribe();
+      else stop = unsubscribe;
+    }).catch((error) => showMessage(String(error), 'error'));
+    return () => { disposed = true; stop?.(); };
+  }, [showMessage]);
 
   const runUpdateCheck = useCallback(async () => {
     setUpdate((current) => ({ status: 'checking', info: current.info, error: null }));
@@ -271,7 +312,8 @@ export function DesktopApp() {
     { key: 'paper', label: d.nav.paper, icon: <IconFigure /> },
     { key: 'ppt', label: d.nav.ppt, icon: <IconSlide /> },
     { key: 'templates', label: d.nav.templates, icon: <IconTemplates /> },
-    { key: 'history', label: d.nav.history, icon: <IconHistory /> }
+    { key: 'history', label: d.nav.history, icon: <IconHistory /> },
+    { key: 'workbench', label: d.nav.workbench, icon: <IconWorkbench /> }
   ];
 
   const head = pageHead[page];
@@ -363,7 +405,8 @@ export function DesktopApp() {
               job={paperJob}
               onJob={setPaperJob}
               onMessage={showMessage}
-              onGoTemplates={() => transitionToPage('templates')}
+              onGoTemplates={() => void transitionToPage('templates')}
+              onOpenWorkbench={(assetId) => void openWorkbench(assetId)}
               t={t}
               d={d}
             />
@@ -375,7 +418,8 @@ export function DesktopApp() {
               job={pptJob}
               onJob={setPptJob}
               onMessage={showMessage}
-              onGoTemplates={() => transitionToPage('templates')}
+              onGoTemplates={() => void transitionToPage('templates')}
+              onOpenWorkbench={(assetId) => void openWorkbench(assetId)}
               t={t}
               d={d}
             />
@@ -387,11 +431,22 @@ export function DesktopApp() {
               onOpen={openJob}
               onDelete={(job, refresh) => deleteSettled(job, refresh)}
               onRerun={rerunJob}
+              onOpenWorkbench={(assetId) => void openWorkbench(assetId)}
+            />
+          )}
+          {page === 'workbench' && (
+            <WorkbenchPage
+              lang={lang}
+              request={workbenchRequest}
+              onRequestHandled={handleWorkbenchRequest}
+              onMessage={showMessage}
+              registerLeaveGuard={registerWorkbenchLeaveGuard}
             />
           )}
           {page === 'settings' && (
             <SettingsPane>
               <Settings config={config} onChange={setConfig} onSave={persistConfig} t={t} />
+              <WorkbenchSettings lang={lang} onMessage={showMessage} />
             </SettingsPane>
           )}
           {page === 'about' && (
@@ -435,7 +490,8 @@ const HistoryCard = memo(function HistoryCard({
   onOpen,
   onPreview,
   onDelete,
-  onRerun
+  onRerun,
+  onOpenWorkbench
 }: {
   job: JobRecord;
   d: DesktopCopy;
@@ -445,6 +501,7 @@ const HistoryCard = memo(function HistoryCard({
   onPreview: (url: string) => void;
   onDelete: (job: JobRecord) => void;
   onRerun: (job: JobRecord) => void;
+  onOpenWorkbench: (assetId: string) => void;
 }) {
   const pill = (() => {
     switch (job.status) {
@@ -496,6 +553,17 @@ const HistoryCard = memo(function HistoryCard({
           <span className="desktop-recent-time">{shortTime(job.created_at)}</span>
           {isJobSettled(job.status) && (
             <span className="hc-actions">
+              {job.images[0]?.asset_id && (
+                <button
+                  type="button"
+                  className="recent-workbench"
+                  aria-label={d.nav.workbench}
+                  title={d.nav.workbench}
+                  onClick={() => onOpenWorkbench(job.images[0].asset_id!)}
+                >
+                  ✎
+                </button>
+              )}
               <button
                 type="button"
                 className="recent-rerun"
@@ -547,12 +615,14 @@ function HistoryPage({
   d,
   onOpen,
   onDelete,
-  onRerun
+  onRerun,
+  onOpenWorkbench
 }: {
   d: DesktopCopy;
   onOpen: (job: JobRecord) => void;
   onDelete: (job: JobRecord, refresh: () => void) => void;
   onRerun: (job: JobRecord) => void;
+  onOpenWorkbench: (assetId: string) => void;
 }) {
   const [pageIndex, setPageIndex] = useState(0);
   const [rows, setRows] = useState<JobRecord[]>(() => historyCache.get(0) ?? []);
@@ -745,6 +815,7 @@ function HistoryPage({
                     onPreview={setPreviewUrl}
                     onDelete={handleDelete}
                     onRerun={onRerun}
+                    onOpenWorkbench={onOpenWorkbench}
                   />
                 ))}
               </ul>
@@ -802,6 +873,7 @@ const pageHead: Record<
   templates: { title: (_t, d) => d.templates.title, intro: (_t, d) => d.templates.intro },
   history: { title: (_t, d) => d.history.title, intro: (_t, d) => d.history.intro },
   settings: { title: (_t, d) => d.nav.settings, intro: (_t, d) => d.settingsIntro },
+  workbench: { title: (_t, d) => d.nav.workbench, intro: (_t, d) => d.workbenchIntro },
   about: { title: (_t, d) => d.about.title, intro: (_t, d) => d.about.intro }
 };
 
@@ -857,6 +929,16 @@ function IconGear() {
         clipRule="evenodd"
         d="M8.94 1.5h2.12c.5 0 .92.36 1 .85l.2 1.2c.42.15.82.35 1.18.6l1.14-.44a1.01 1.01 0 0 1 1.23.43l1.06 1.84c.25.43.16.98-.22 1.3l-.94.78c.04.23.06.47.06.71 0 .24-.02.48-.06.71l.94.78c.38.32.47.87.22 1.3l-1.06 1.84a1.01 1.01 0 0 1-1.23.43l-1.14-.43c-.36.24-.76.44-1.18.59l-.2 1.2a1.01 1.01 0 0 1-1 .85H8.94a1.01 1.01 0 0 1-1-.85l-.2-1.2a5.9 5.9 0 0 1-1.18-.6l-1.14.44a1.01 1.01 0 0 1-1.23-.43L3.13 12.1a1.01 1.01 0 0 1 .22-1.3l.94-.78A5.6 5.6 0 0 1 4.23 10c0-.24.02-.48.06-.71l-.94-.78a1.01 1.01 0 0 1-.22-1.3l1.06-1.84a1.01 1.01 0 0 1 1.23-.43l1.14.43c.36-.24.76-.44 1.18-.59l.2-1.2c.08-.49.5-.85 1-.85Zm1.06 5.55a2.95 2.95 0 1 0 0 5.9 2.95 2.95 0 0 0 0-5.9Z"
       />
+    </svg>
+  );
+}
+
+function IconWorkbench() {
+  return (
+    <svg viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.6" aria-hidden="true">
+      <rect x="3" y="3" width="14" height="14" rx="2.2" />
+      <path d="M6 7h8M6 10h5M6 13h3" strokeLinecap="round" />
+      <circle cx="14" cy="13" r="1.2" fill="currentColor" stroke="none" />
     </svg>
   );
 }

@@ -53,11 +53,12 @@ impl<'a> AssetService<'a> {
         std::fs::create_dir_all(&upload_dir)?;
         let path = upload_dir.join(&stored_name);
         std::fs::write(&path, &bytes)?;
-        let detected_mime = if mime_type.trim().is_empty() || mime_type == "application/octet-stream" {
-            guess_mime(&path)
-        } else {
-            mime_type
-        };
+        let detected_mime =
+            if mime_type.trim().is_empty() || mime_type == "application/octet-stream" {
+                guess_mime(&path)
+            } else {
+                mime_type
+            };
 
         let conn = self.store.connection()?;
         conn.execute(
@@ -122,7 +123,10 @@ impl<'a> AssetService<'a> {
         bytes: &[u8],
     ) -> AppResult<AssetUpload> {
         let id = Uuid::new_v4().to_string();
-        let job_dir = self.app_data.join("outputs").join(sanitize_filename(job_id));
+        let job_dir = self
+            .app_data
+            .join("outputs")
+            .join(sanitize_filename(job_id));
         std::fs::create_dir_all(&job_dir)?;
         let path = job_dir.join(sanitize_filename(filename));
         std::fs::write(&path, bytes)?;

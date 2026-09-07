@@ -2,7 +2,8 @@ import type { Lang } from '../app';
 
 export const desktopCopy = {
   zh: {
-    nav: { paper: '科研图', ppt: '幻灯片', templates: '模板库', history: '历史', settings: '设置', about: '项目介绍' },
+    nav: { paper: '科研图', ppt: '幻灯片', templates: '模板库', history: '历史', workbench: '工作台', settings: '设置', about: '项目介绍' },
+    workbenchIntro: '框选修补错字、恢复可编辑文本、按原图像素裁剪，并以无损 PNG 导出。',
     settingsIntro: '配置 Design / Implement / Search 模型，以及代理与并发。',
     theme: { light: '切换到浅色模式', dark: '切换到深色模式' },
     about: {
@@ -63,6 +64,20 @@ export const desktopCopy = {
       rulesFold: '展开约束',
       rulesUnfold: '收起约束'
     },
+    style: {
+      font: '字体',
+      fontNone: '默认字体',
+      background: '背景色',
+      hex: '#RRGGBB',
+      palette: '常用背景色',
+      eyedropper: '取色器',
+      eyedropperHint: '取色器：在屏幕上点选颜色',
+      systemPicker: '系统调色板',
+      clear: '清除',
+      invalidHex: '请输入 6 位十六进制颜色，如 #FFFFFF',
+      fontLine: (font: string) => `全部文字统一使用字体「${font}」。`,
+      backgroundLine: (hex: string) => `整体背景色使用 ${hex}。`
+    },
     templates: {
       title: '模板库',
       intro: '科研图以模板作 few-shot 参考，幻灯片以母版定版式。两类分开管理，导入也在这里。',
@@ -112,7 +127,8 @@ export const desktopCopy = {
     }
   },
   en: {
-    nav: { paper: 'Figure', ppt: 'Slide', templates: 'Templates', history: 'History', settings: 'Settings', about: 'About' },
+    nav: { paper: 'Figure', ppt: 'Slide', templates: 'Templates', history: 'History', workbench: 'Workbench', settings: 'Settings', about: 'About' },
+    workbenchIntro: 'Repair text, crop at source pixels, and export a lossless PNG.',
     settingsIntro: 'Configure Design / Implement / Search models, proxy and concurrency.',
     theme: { light: 'Switch to light mode', dark: 'Switch to dark mode' },
     about: {
@@ -172,6 +188,20 @@ export const desktopCopy = {
       emptyHint: 'Import them on the Templates page and they show up here.',
       rulesFold: 'Show rules',
       rulesUnfold: 'Hide rules'
+    },
+    style: {
+      font: 'Font',
+      fontNone: 'Default font',
+      background: 'Background',
+      hex: '#RRGGBB',
+      palette: 'Common backgrounds',
+      eyedropper: 'Eyedropper',
+      eyedropperHint: 'Eyedropper: pick a colour from the screen',
+      systemPicker: 'System colour picker',
+      clear: 'Clear',
+      invalidHex: 'Enter a 6-digit hex colour such as #FFFFFF',
+      fontLine: (font: string) => `Use the font "${font}" for all text.`,
+      backgroundLine: (hex: string) => `Use ${hex} as the overall background colour.`
     },
     templates: {
       title: 'Template library',

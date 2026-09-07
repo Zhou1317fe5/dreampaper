@@ -7,9 +7,9 @@ use crate::core::config::ModelProfile;
 use crate::core::model::design::ImageInput;
 use crate::core::net::{
     build_client, decode_b64, describe_transport_error, effective_timeout, encode_b64,
-    format_http_error, is_retryable, merged_headers, model_error, model_http_error, normalize_base_url,
-    post_json_with_retries, require_api_key, retry_backoff, retry_delay,
-    IMAGE_RETRY_INTERVAL_SECONDS, MIN_IMAGE_TIMEOUT_SECONDS, PostOptions,
+    format_http_error, is_retryable, merged_headers, model_error, model_http_error,
+    normalize_base_url, post_json_with_retries, require_api_key, retry_backoff, retry_delay,
+    PostOptions, IMAGE_RETRY_INTERVAL_SECONDS, MIN_IMAGE_TIMEOUT_SECONDS,
 };
 use crate::error::AppResult;
 
@@ -44,9 +44,29 @@ impl ImplementClient {
             profile.protocol.as_str()
         };
         match protocol {
-            "image2" => Self::image2(profile, prompt, reference_images, output_overrides, proxy_url).await,
-            "banana2" => Self::banana2(profile, prompt, reference_images, output_overrides, proxy_url).await,
-            other => Err(model_error(format!("Unsupported implement protocol: {other}"))),
+            "image2" => {
+                Self::image2(
+                    profile,
+                    prompt,
+                    reference_images,
+                    output_overrides,
+                    proxy_url,
+                )
+                .await
+            }
+            "banana2" => {
+                Self::banana2(
+                    profile,
+                    prompt,
+                    reference_images,
+                    output_overrides,
+                    proxy_url,
+                )
+                .await
+            }
+            other => Err(model_error(format!(
+                "Unsupported implement protocol: {other}"
+            ))),
         }
     }
 
@@ -78,13 +98,22 @@ impl ImplementClient {
         };
         fields.insert("size".to_string(), pick("size", "1200x675"));
         fields.insert("quality".to_string(), pick("quality", "auto"));
-        fields.insert("response_format".to_string(), pick("response_format", "url"));
+        fields.insert(
+            "response_format".to_string(),
+            pick("response_format", "url"),
+        );
         let n = defaults
             .get("n")
             .and_then(|value| value.as_i64().or_else(|| value.as_str()?.parse().ok()))
             .unwrap_or(1);
         fields.insert("n".to_string(), json!(n));
-        for key in ["background", "moderation", "output_format", "output_compression", "user"] {
+        for key in [
+            "background",
+            "moderation",
+            "output_format",
+            "output_compression",
+            "user",
+        ] {
             if let Some(value) = defaults.get(key) {
                 if !value.is_null() && value.as_str() != Some("") {
                     fields.insert(key.to_string(), value.clone());
@@ -142,7 +171,16 @@ impl ImplementClient {
             .await?
         };
 
-        Self::resolve_response(profile, &endpoint, "Implement", status, &body, read_timeout, proxy_url).await
+        Self::resolve_response(
+            profile,
+            &endpoint,
+            "Implement",
+            status,
+            &body,
+            read_timeout,
+            proxy_url,
+        )
+        .await
     }
 
     async fn resolve_response(
@@ -162,9 +200,7 @@ impl ImplementClient {
         if let Some(payload) = found {
             return match payload {
                 ImagePayload::B64(b64) => Ok(b64),
-                ImagePayload::Url(url) => {
-                    Self::download_image(&url, read_timeout, proxy_url).await
-                }
+                ImagePayload::Url(url) => Self::download_image(&url, read_timeout, proxy_url).await,
             };
         }
         if status >= 400 {
@@ -185,9 +221,7 @@ impl ImplementClient {
         proxy_url: Option<&str>,
     ) -> AppResult<String> {
         const ATTEMPTS: u32 = 3;
-        let proxy = proxy_url
-            .map(str::trim)
-            .filter(|value| !value.is_empty());
+        let proxy = proxy_url.map(str::trim).filter(|value| !value.is_empty());
         let routes: Vec<Option<&str>> = match proxy {
             Some(value) => vec![Some(value), None],
             None => vec![None],
@@ -214,7 +248,8 @@ impl ImplementClient {
         read_timeout: u64,
         proxy_url: Option<&str>,
     ) -> Result<String, String> {
-        let client = build_client(read_timeout.max(60), proxy_url).map_err(|error| error.message)?;
+        let client =
+            build_client(read_timeout.max(60), proxy_url).map_err(|error| error.message)?;
         let response = client
             .get(url)
             .send()
@@ -256,7 +291,10 @@ impl ImplementClient {
                 .text("model", profile.model.clone())
                 .text("prompt", prompt.to_string());
             for (key, value) in fields {
-                let text = value.as_str().map(str::to_string).unwrap_or_else(|| value.to_string());
+                let text = value
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| value.to_string());
                 form = form.text(key.clone(), text);
             }
             for image in reference_images {
@@ -315,9 +353,9 @@ impl ImplementClient {
                 }
             }
         }
-        Err(model_error(
-            last_error.unwrap_or_else(|| "模型请求失败：未收到有效响应".to_string()),
-        ))
+        Err(model_error(last_error.unwrap_or_else(|| {
+            "模型请求失败：未收到有效响应".to_string()
+        })))
     }
 
     async fn banana2(
@@ -328,8 +366,14 @@ impl ImplementClient {
         proxy_url: Option<&str>,
     ) -> AppResult<String> {
         let defaults = Self::merged_defaults(profile, output_overrides);
-        let version = profile.api_version.clone().unwrap_or_else(|| "v1beta".to_string());
-        let url = format!("{}/{version}/interactions", profile.base_url.trim_end_matches('/'));
+        let version = profile
+            .api_version
+            .clone()
+            .unwrap_or_else(|| "v1beta".to_string());
+        let url = format!(
+            "{}/{version}/interactions",
+            profile.base_url.trim_end_matches('/')
+        );
 
         let mut input: Vec<Value> = reference_images
             .iter()
@@ -462,8 +506,9 @@ fn find_image_payload(root: &Value) -> Option<ImagePayload> {
 
 fn find_image_url_in_text(root: &Value) -> Option<ImagePayload> {
     let markdown = Regex::new(r"!\[[^\]]*\]\((https?://[^\s)]+)\)").expect("valid regex");
-    let bare = Regex::new(r"https?://[^\s\]\)\x22']+\.(?:png|jpe?g|webp|gif)(?:\?[^\s\]\)\x22']*)?")
-        .expect("valid regex");
+    let bare =
+        Regex::new(r"https?://[^\s\]\)\x22']+\.(?:png|jpe?g|webp|gif)(?:\?[^\s\]\)\x22']*)?")
+            .expect("valid regex");
     let mut queue = VecDeque::new();
     queue.push_back(root);
     while let Some(node) = queue.pop_front() {
@@ -504,9 +549,9 @@ fn as_image_b64(text: &str) -> Option<String> {
     if body.len() < 256 {
         return None;
     }
-    let valid = body
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=' | '-' | '_' | '\n' | '\r'));
+    let valid = body.chars().all(|ch| {
+        ch.is_ascii_alphanumeric() || matches!(ch, '+' | '/' | '=' | '-' | '_' | '\n' | '\r')
+    });
     valid.then(|| body.to_string())
 }
 
@@ -517,11 +562,22 @@ mod tests {
     #[test]
     fn extracts_image_from_both_gemini_shapes() {
         let steps = json!({"steps": [{"type": "model_output", "content": [{"type": "image", "data": "AAA"}]}]});
-        assert_eq!(ImplementClient::extract_gemini_image(&steps).as_deref(), Some("AAA"));
-        let candidates = json!({"candidates": [{"content": {"parts": [{"inlineData": {"data": "BBB"}}]}}]});
-        assert_eq!(ImplementClient::extract_gemini_image(&candidates).as_deref(), Some("BBB"));
-        let snake = json!({"candidates": [{"content": {"parts": [{"inline_data": {"data": "CCC"}}]}}]});
-        assert_eq!(ImplementClient::extract_gemini_image(&snake).as_deref(), Some("CCC"));
+        assert_eq!(
+            ImplementClient::extract_gemini_image(&steps).as_deref(),
+            Some("AAA")
+        );
+        let candidates =
+            json!({"candidates": [{"content": {"parts": [{"inlineData": {"data": "BBB"}}]}}]});
+        assert_eq!(
+            ImplementClient::extract_gemini_image(&candidates).as_deref(),
+            Some("BBB")
+        );
+        let snake =
+            json!({"candidates": [{"content": {"parts": [{"inline_data": {"data": "CCC"}}]}}]});
+        assert_eq!(
+            ImplementClient::extract_gemini_image(&snake).as_deref(),
+            Some("CCC")
+        );
         assert!(ImplementClient::extract_gemini_image(&json!({"data": []})).is_none());
     }
 
@@ -549,14 +605,23 @@ mod tests {
         let by_url = json!({"data": [{"url": "https://cdn.example.com/a.png"}]});
         assert_eq!(
             find_image_payload(&by_url),
-            Some(ImagePayload::Url("https://cdn.example.com/a.png".to_string()))
+            Some(ImagePayload::Url(
+                "https://cdn.example.com/a.png".to_string()
+            ))
         );
 
-        let nested = json!({"result": {"outputs": [{"mime_type": "image/png", "data": long_b64()}]}});
-        assert_eq!(find_image_payload(&nested), Some(ImagePayload::B64(long_b64())));
+        let nested =
+            json!({"result": {"outputs": [{"mime_type": "image/png", "data": long_b64()}]}});
+        assert_eq!(
+            find_image_payload(&nested),
+            Some(ImagePayload::B64(long_b64()))
+        );
 
         let data_url = json!({"image": format!("data:image/png;base64,{}", long_b64())});
-        assert_eq!(find_image_payload(&data_url), Some(ImagePayload::B64(long_b64())));
+        assert_eq!(
+            find_image_payload(&data_url),
+            Some(ImagePayload::B64(long_b64()))
+        );
 
         let chat = json!({"choices": [{"message": {"images": [{"image_url": {"url": "https://x.io/b.png"}}]}}]});
         assert_eq!(
@@ -577,12 +642,16 @@ mod tests {
         let markdown = json!({"choices": [{"message": {"content": "画好了 ![img](https://cdn.example.com/x.png) 请查收"}}]});
         assert_eq!(
             find_image_url_in_text(&markdown),
-            Some(ImagePayload::Url("https://cdn.example.com/x.png".to_string()))
+            Some(ImagePayload::Url(
+                "https://cdn.example.com/x.png".to_string()
+            ))
         );
         let bare = json!({"output_text": "结果：https://cdn.example.com/y.jpeg?sig=1"});
         assert_eq!(
             find_image_url_in_text(&bare),
-            Some(ImagePayload::Url("https://cdn.example.com/y.jpeg?sig=1".to_string()))
+            Some(ImagePayload::Url(
+                "https://cdn.example.com/y.jpeg?sig=1".to_string()
+            ))
         );
         assert_eq!(find_image_url_in_text(&json!({"text": "没有图"})), None);
     }

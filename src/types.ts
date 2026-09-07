@@ -99,7 +99,7 @@ export interface JobRecord {
   stage?: string;
   created_at: string;
   updated_at: string;
-  images: Array<{ name: string; url: string }>;
+  images: Array<{ name: string; url: string; asset_id?: string | null }>;
   events?: JobEvent[];
   error?: JobError | null;
   title?: string | null;

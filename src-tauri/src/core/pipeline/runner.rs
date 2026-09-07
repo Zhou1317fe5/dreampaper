@@ -3,7 +3,7 @@ use std::future::Future;
 use serde_json::Value;
 
 use crate::core::config::ModelProfile;
-use crate::core::model::design::{DesignClient, DeltaSink, DesignDelta, ImageInput};
+use crate::core::model::design::{DeltaSink, DesignClient, DesignDelta, ImageInput};
 use crate::core::net::parse_json_response;
 use crate::core::pipeline::validate::ValidationError;
 use crate::error::{AppError, AppResult};
@@ -142,7 +142,11 @@ pub async fn parse_or_repair<G: DesignGenerator>(call: &G, text: &str) -> AppRes
         }
     }
 
-    let source = if retry_text.is_empty() { text } else { &retry_text };
+    let source = if retry_text.is_empty() {
+        text
+    } else {
+        &retry_text
+    };
     let repair_prompt = format!(
         "The previous model output was not valid JSON. Convert it into strict JSON only, preserving all useful content.\n\
          Return JSON only. Do not wrap in Markdown. Do not explain.\n\n\
@@ -229,7 +233,13 @@ mod tests {
         fn new(user_prompt: &str, responses: &[&str]) -> Self {
             Self {
                 user_prompt: user_prompt.to_string(),
-                responses: Mutex::new(responses.iter().rev().map(|item| item.to_string()).collect()),
+                responses: Mutex::new(
+                    responses
+                        .iter()
+                        .rev()
+                        .map(|item| item.to_string())
+                        .collect(),
+                ),
                 prompts: Mutex::new(Vec::new()),
             }
         }
@@ -294,7 +304,10 @@ mod tests {
         let stub = StubGenerator::new("original task", &[&filled.to_string()]);
 
         let mut initial = valid_diagram_design();
-        initial["figure"].as_object_mut().unwrap().remove("diagram_spec");
+        initial["figure"]
+            .as_object_mut()
+            .unwrap()
+            .remove("diagram_spec");
 
         let result = parse_validate_or_fill(&stub, &initial.to_string(), |value| {
             validate_paper_design(value)
@@ -313,7 +326,10 @@ mod tests {
 
     #[tokio::test]
     async fn semantic_errors_retry_then_fail_after_exhaustion() {
-        let stub = StubGenerator::new("original task", &[r#"{"still": "bad"}"#, r#"{"still": "bad"}"#]);
+        let stub = StubGenerator::new(
+            "original task",
+            &[r#"{"still": "bad"}"#, r#"{"still": "bad"}"#],
+        );
         let error = parse_validate_or_fill(&stub, r#"{"ok": true}"#, |_| {
             Err::<(), _>(ValidationError::Value("page 3 out of order".to_string()))
         })

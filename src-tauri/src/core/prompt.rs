@@ -6,10 +6,21 @@ use sha2::{Digest, Sha256};
 use crate::error::{AppError, AppResult};
 
 const EMBEDDED_PROMPTS: &[(&str, &str)] = &[
-    ("global/system.md", include_str!("../../../prompts/global/system.md")),
+    (
+        "global/system.md",
+        include_str!("../../../prompts/global/system.md"),
+    ),
     (
         "global/figure_style.md",
         include_str!("../../../prompts/global/figure_style.md"),
+    ),
+    (
+        "global/expression.md",
+        include_str!("../../../prompts/global/expression.md"),
+    ),
+    (
+        "global/visual_terms.json",
+        include_str!("../../../prompts/global/visual_terms.json"),
     ),
     (
         "modes/paper_figure/structure.md",
@@ -71,14 +82,14 @@ impl PromptStore {
         let path = self.root.join(Path::new(key));
         let content = match std::fs::read_to_string(&path) {
             Ok(content) => content,
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => embedded_prompt(key)
-                .map(str::to_string)
-                .ok_or_else(|| {
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                embedded_prompt(key).map(str::to_string).ok_or_else(|| {
                     AppError::new(
                         "prompt_not_found",
                         format!("Prompt resource not found: {}", path.display()),
                     )
-                })?,
+                })?
+            }
             Err(error) => {
                 return Err(AppError::new(
                     "prompt_read_failed",
@@ -150,14 +161,19 @@ mod tests {
         assert!(prompt.contains("PaperBanana"));
         assert!(prompt.contains("master_style_spec"));
         assert_eq!(
-            assets.iter().map(|asset| asset.key.as_str()).collect::<Vec<_>>(),
+            assets
+                .iter()
+                .map(|asset| asset.key.as_str())
+                .collect::<Vec<_>>(),
             keys
         );
         assert!(assets
             .iter()
             .all(|asset| !asset.hash.is_empty() && asset.version == asset.hash));
-        assert!(prompt.find("## modes/paper_figure/diagram_rules.md")
-            < prompt.find("## Output Contract"));
+        assert!(
+            prompt.find("## modes/paper_figure/diagram_rules.md")
+                < prompt.find("## Output Contract")
+        );
     }
 
     #[test]
