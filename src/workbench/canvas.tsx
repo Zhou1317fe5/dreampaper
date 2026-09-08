@@ -44,9 +44,12 @@ export const PENDING_ID = '__pending__';
 type Handle = 'nw' | 'n' | 'ne' | 'e' | 'se' | 's' | 'sw' | 'w';
 const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 
-function fontStyle(text: TextLayer): string {
+// `fauxItalic` means Rust found no italic face and shears the glyphs itself;
+// the node is then skewed instead of asking the browser for an italic it
+// may not synthesise for CJK families.
+function fontStyle(text: TextLayer, fauxItalic = false): string {
   const parts: string[] = [];
-  if (text.font.italic) parts.push('italic');
+  if (text.font.italic && !fauxItalic) parts.push('italic');
   if (text.font.weight >= 600) parts.push('bold');
   else if (text.font.weight !== 400) parts.push(String(text.font.weight));
   return parts.length ? parts.join(' ') : 'normal';
@@ -294,12 +297,16 @@ export function WorkbenchCanvas(props: CanvasProps) {
           layout.lines.map((line, index) => (
             <KonvaText
               key={index}
-              x={line.x}
+              // Shear around the baseline like the export does: Konva skews
+              // about the node origin, so the origin moves right by the
+              // baseline's share to keep the baseline in place.
+              x={line.x + (layout.synthetic_italic > 0 ? layout.synthetic_italic * layout.font_size * 0.8 : 0)}
               y={layout.offset_y + line.y}
+              skewX={layout.synthetic_italic > 0 ? -layout.synthetic_italic : 0}
               text={line.text}
               fontFamily={`${layout.family_used || text.font.family}, ${text.font.family}, "Noto Sans SC", sans-serif`}
               fontSize={layout.font_size}
-              fontStyle={fontStyle(text)}
+              fontStyle={fontStyle(text, layout.synthetic_italic > 0)}
               fill={text.color}
               // Rust emboldens faces without a bold cut by overprinting; a
               // stroke of the same width keeps the preview in step.

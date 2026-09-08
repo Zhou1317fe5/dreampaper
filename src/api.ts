@@ -341,6 +341,18 @@ export async function listenOcrProgress(
   return listen<import('./workbench/types').OcrProgress>('ocr://progress', (event) => handler(event.payload));
 }
 
+export interface ExportProgress {
+  project_id: string;
+  stage: 'compose' | 'encode' | 'write' | 'done';
+  percent: number;
+}
+
+export async function listenExportProgress(handler: (progress: ExportProgress) => void): Promise<() => void> {
+  if (!isDesktop) return () => {};
+  const { listen } = await import('@tauri-apps/api/event');
+  return listen<ExportProgress>('workbench://export-progress', (event) => handler(event.payload));
+}
+
 /** Ask for an image file to open in the workbench; null when dismissed. */
 export async function pickImageFile(title: string): Promise<string | null> {
   const { open } = await import('@tauri-apps/plugin-dialog');

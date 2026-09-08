@@ -9,7 +9,7 @@ import type { ProjectDetail, ProjectDoc } from './types';
 
 const api = vi.hoisted(() => ({
   listWorkbenchProjects: vi.fn(), openWorkbenchProject: vi.fn(), saveWorkbenchProject: vi.fn(),
-  getWorkbenchProject: vi.fn(), getOcrPackageStatus: vi.fn(), listenOcrProgress: vi.fn(),
+  getWorkbenchProject: vi.fn(), getOcrPackageStatus: vi.fn(), listenOcrProgress: vi.fn(), listenExportProgress: vi.fn(),
   listWorkbenchFonts: vi.fn(), analyzeWorkbenchRegion: vi.fn(), previewWorkbenchExport: vi.fn(),
   pickSavePath: vi.fn(), exportWorkbenchProject: vi.fn(),
   deleteWorkbenchProject: vi.fn()
@@ -74,6 +74,7 @@ beforeEach(() => {
   });
   api.getOcrPackageStatus.mockResolvedValue({ installed: false });
   api.listenOcrProgress.mockResolvedValue(() => {});
+  api.listenExportProgress.mockResolvedValue(() => {});
   api.listWorkbenchFonts.mockResolvedValue([]);
   api.analyzeWorkbenchRegion.mockResolvedValue({ color: '#ffffff', coverage: 1, uneven: false, candidates: [], samples: 10 });
   api.previewWorkbenchExport.mockImplementation(async (_id, doc) => ({ width: doc.viewport.crop.width, height: doc.viewport.crop.height, missing_fonts: [], had_alpha: false, color_note: null }));

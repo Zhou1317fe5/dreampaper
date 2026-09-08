@@ -11,6 +11,7 @@ import {
   getOcrPackageStatus,
   getWorkbenchProject,
   installOcrPackage,
+  listenExportProgress,
   listenOcrProgress,
   listWorkbenchFonts,
   listWorkbenchProjects,
@@ -423,6 +424,7 @@ function Editor({ detail, c, sidebar, onMessage, onGuard, onSaved }: EditorProps
   const [ocrDialog, setOcrDialog] = useState<OcrDialog>({ kind: 'closed' });
   const [exportPreview, setExportPreview] = useState<ExportPreview | null>(null);
   const [exporting, setExporting] = useState(false);
+  const [exportProgress, setExportProgress] = useState<{ stage: string; percent: number } | null>(null);
   const [leaveDialog, setLeaveDialog] = useState<{ resolve: (ok: boolean) => void } | null>(null);
   const [layouts, setLayouts] = useState<Map<string, { key: string; layout: TextLayout }>>(new Map());
   const requestCounter = useRef(0);
@@ -556,10 +558,21 @@ function Editor({ detail, c, sidebar, onMessage, onGuard, onSaved }: EditorProps
           for (const entry of results) if (entry) next.set(entry[0], entry[1]);
           return next;
         });
+        // Auto-fit texts adopt the size Rust settled on, so the panel shows
+        // the real size and export/preview agree. Pending (unapplied) texts
+        // are fitted once they are committed.
+        for (const entry of results) {
+          if (!entry) continue;
+          const located = findLayer(stateRef.current.doc, entry[0]);
+          if (!located || located.layer.kind !== 'text' || !located.layer.auto_fit) continue;
+          if (Math.abs(entry[1].layout.font_size - located.layer.font.size) >= 0.25) {
+            dispatch({ type: 'fit_text_size', id: entry[0], size: entry[1].layout.font_size });
+          }
+        }
       });
     }, 220);
     return () => window.clearTimeout(timer);
-  }, [state.doc, state.pending, state.transientBase, layouts]);
+  }, [state.doc, state.pending, state.transientBase, layouts, dispatch]);
 
   const calibrated = useMemo(() => {
     const map = new Map<string, TextLayout>();
@@ -903,6 +916,12 @@ function Editor({ detail, c, sidebar, onMessage, onGuard, onSaved }: EditorProps
     const path = await pickSavePath(c.exportDialog.defaultName(stem));
     if (!path) return;
     setExporting(true);
+    setExportProgress({ stage: 'compose', percent: 0 });
+    // Progress events are tagged with the project so a stale export of another
+    // project (or a superseded run) cannot drive this bar.
+    const stop = await listenExportProgress((progress) => {
+      if (progress.project_id === projectId) setExportProgress({ stage: progress.stage, percent: progress.percent });
+    });
     try {
       if (!(await saveRef.current.flush())) throw new Error(c.exportDialog.needSave);
       const record = await exportWorkbenchProject(projectId, outgoingDoc(stateRef.current), path);
@@ -911,7 +930,9 @@ function Editor({ detail, c, sidebar, onMessage, onGuard, onSaved }: EditorProps
     } catch (error) {
       onMessage(error instanceof Error ? error.message : c.exportDialog.failed, 'error');
     } finally {
+      stop();
       setExporting(false);
+      setExportProgress(null);
     }
   };
 
@@ -1121,14 +1142,25 @@ function Editor({ detail, c, sidebar, onMessage, onGuard, onSaved }: EditorProps
           {exportPreview.missing_fonts.length > 0 && <p className="wb-warning">{c.exportDialog.missingFonts(exportPreview.missing_fonts.join(', '))}</p>}
           {exportPreview.color_note && <p className="wb-warning">{exportPreview.color_note}</p>}
           {exportPreview.had_alpha && <p className="wb-muted">{c.exportDialog.alpha}</p>}
-          <div className="wb-modal-actions">
-            <button type="button" className="wb-btn" onClick={() => setExportPreview(null)}>
-              {c.exportDialog.cancel}
-            </button>
+          {exporting && exportProgress ? (
+            <div className="wb-progress" role="progressbar" aria-valuenow={exportProgress.percent} aria-valuemin={0} aria-valuemax={100}>
+              <div className="wb-progress-track">
+                <span style={{ width: `${exportProgress.percent}%` }} />
+              </div>
+              <p className="wb-muted">
+                {c.exportDialog.progress[exportProgress.stage] ?? exportProgress.stage} {exportProgress.percent}%
+              </p>
+            </div>
+          ) : (
+            <div className="wb-modal-actions">
+              <button type="button" className="wb-btn" onClick={() => setExportPreview(null)}>
+                {c.exportDialog.cancel}
+              </button>
               <button type="button" className="wb-btn wb-primary" disabled={exporting || exportPreview.color_note !== null} onClick={() => void confirmExport()}>
                 {c.exportDialog.confirm}
               </button>
-          </div>
+            </div>
+          )}
         </Modal>
       )}
 

@@ -184,6 +184,8 @@ export interface TextLayout {
   missing_font: boolean;
   /** Horizontal fake-bold width in source px when the face has no bold cut; 0 otherwise. */
   synthetic_bold: number;
+  /** Shear (tan of the slant) applied when the face has no italic cut; 0 otherwise. */
+  synthetic_italic: number;
 }
 
 export interface FontInfo {

@@ -70,6 +70,19 @@ pub struct TextLayout {
     /// weight). Zero when a real bold face was used. The preview strokes the
     /// glyphs by this amount so it matches the export.
     pub synthetic_bold: f64,
+    /// Shear (tan of the slant angle) applied around each baseline when italic
+    /// was requested but the matched face is upright. Zero when a real italic
+    /// face was used. The preview skews its text nodes by the same amount.
+    pub synthetic_italic: f64,
+}
+
+/// Slant used for faux italics: 14°, the angle WebKit and Skia use.
+pub const SYNTHETIC_ITALIC_SKEW: f64 = 0.249_328;
+
+/// Upper bound for auto-fit growth: one line can never be taller than the box,
+/// so the size that makes a single line fill the height caps the search.
+fn auto_fit_ceiling(spec: &TextSpec) -> f64 {
+    (spec.height / spec.line_height.clamp(0.5, 4.0)).clamp(1.0, 4096.0)
 }
 
 /// How much to embolden glyphs for `requested` weight when the face that was
@@ -214,16 +227,28 @@ impl Fonts {
         }
         let (family, missing) = self.resolve_family(&spec.family);
         let mut size = spec.size;
-        let min_size = MIN_FIT_SIZE.min(spec.size);
         let mut attempt = self.shape(spec, &family, size);
-        if spec.auto_fit && attempt.1.overflow && size > min_size {
-            // Binary search the largest size that fits; sizes are kept on a
+        if spec.auto_fit {
+            // Auto-fit picks the largest size that fits the box — growing into
+            // free space as well as shrinking out of overflow. Sizes stay on a
             // quarter-pixel grid so preview and export ask for the same one.
-            let mut lo = min_size;
-            let mut hi = size;
-            let mut best: Option<(Buffer, TextLayout)> = None;
-            for _ in 0..12 {
-                let mid = ((lo + hi) / 2.0 * 4.0).round() / 4.0;
+            let min_size = MIN_FIT_SIZE.min(spec.size);
+            let max_size = auto_fit_ceiling(spec).max(spec.size);
+            let quarter = |value: f64| (value * 4.0).round() / 4.0;
+            let (mut lo, mut hi, mut best) = if attempt.1.overflow {
+                (min_size, size, None)
+            } else {
+                (size, max_size, Some(attempt))
+            };
+            if best.is_some() && hi > lo {
+                let top = self.shape(spec, &family, hi);
+                if !top.1.overflow {
+                    lo = hi;
+                    best = Some(top);
+                }
+            }
+            for _ in 0..14 {
+                let mid = quarter((lo + hi) / 2.0);
                 if mid <= lo || mid >= hi {
                     break;
                 }
@@ -235,16 +260,11 @@ impl Fonts {
                     best = Some(candidate);
                 }
             }
-            match best {
-                Some(found) => {
-                    size = found.1.font_size;
-                    attempt = found;
-                }
-                None => {
-                    size = min_size;
-                    attempt = self.shape(spec, &family, size);
-                }
-            }
+            attempt = match best {
+                Some(found) => found,
+                None => self.shape(spec, &family, min_size),
+            };
+            size = attempt.1.font_size;
         }
         let (buffer, mut layout) = attempt;
         layout.font_size = size;
@@ -279,16 +299,30 @@ impl Fonts {
         buffer.set_text(&spec.text, &attrs, Shaping::Advanced, Some(align));
         buffer.shape_until_scroll(&mut self.system, false);
 
-        // The face fontdb matched for the first glyph tells whether a bold
-        // request was honoured by a real bold cut or needs emboldening.
+        // The face fontdb matched for the first glyph tells whether bold or
+        // italic requests were honoured by real cuts or need synthesis.
         let requested_weight = spec.weight.clamp(100, 900);
-        let face_weight = buffer
+        let matched = buffer
             .layout_runs()
             .flat_map(|run| run.glyphs.iter().map(|glyph| glyph.font_id))
             .next()
-            .and_then(|id| self.system.db().face(id).map(|face| face.weight.0))
+            .and_then(|id| {
+                self.system
+                    .db()
+                    .face(id)
+                    .map(|face| (face.weight.0, face.style))
+            });
+        let face_weight = matched
+            .map(|(weight, _)| weight)
             .unwrap_or(requested_weight);
+        let face_upright =
+            matched.is_some_and(|(_, style)| style == cosmic_text::fontdb::Style::Normal);
         let synthetic_bold = synthetic_bold_px(size, requested_weight, face_weight);
+        let synthetic_italic = if spec.italic && face_upright {
+            SYNTHETIC_ITALIC_SKEW
+        } else {
+            0.0
+        };
 
         let mut lines = Vec::new();
         let mut content_width: f64 = 0.0;
@@ -309,7 +343,7 @@ impl Fonts {
             content_width = content_width.max(f64::from(run.line_w));
             content_height = content_height.max(f64::from(run.line_top + run.line_height));
         }
-        content_width += synthetic_bold;
+        content_width += synthetic_bold + synthetic_italic * size;
         let overflow = content_height > spec.height + 0.5 || content_width > spec.width + 0.5;
         let offset_y = match spec.valign.as_str() {
             "middle" => ((spec.height - content_height) / 2.0).max(0.0),
@@ -326,6 +360,7 @@ impl Fonts {
             family_used: family.to_string(),
             missing_font: false,
             synthetic_bold,
+            synthetic_italic,
         };
         (buffer, layout)
     }
@@ -355,6 +390,30 @@ impl Fonts {
         let origin_x = pad;
         let origin_y = pad + layout.offset_y.round() as i32;
         let base = cosmic_text::Color::rgb(color[0], color[1], color[2]);
+        // Faux italic shears every pixel around its own line's baseline.
+        let skew = layout.synthetic_italic as f32;
+        let baselines: Vec<(i32, i32, f32)> = buffer
+            .layout_runs()
+            .map(|run| {
+                (
+                    run.line_top.floor() as i32,
+                    (run.line_top + run.line_height).ceil() as i32,
+                    run.line_y,
+                )
+            })
+            .collect();
+        let shear = |py: i32| -> i32 {
+            if skew == 0.0 {
+                return 0;
+            }
+            let baseline = baselines
+                .iter()
+                .find(|(top, bottom, _)| py >= *top && py < *bottom)
+                .or(baselines.last())
+                .map(|(_, _, baseline)| *baseline)
+                .unwrap_or(0.0);
+            ((baseline - py as f32) * skew).round() as i32
+        };
         // Synthetic bold: overprint the run shifted right by one pixel per pass,
         // the same fake-bold technique browsers use for faces without a bold cut.
         let passes = layout.synthetic_bold.round().max(0.0) as i32;
@@ -365,8 +424,9 @@ impl Fonts {
                     return;
                 }
                 for py in y..y + h as i32 {
+                    let slant = shear(py);
                     for px in x..x + w as i32 {
-                        let (tx, ty) = (px + origin_x + shift, py + origin_y);
+                        let (tx, ty) = (px + origin_x + shift + slant, py + origin_y);
                         if tx < 0 || ty < 0 || tx >= width || ty >= height {
                             continue;
                         }
@@ -458,6 +518,26 @@ mod tests {
         let fit = fonts.measure(&fitted).unwrap();
         assert!(fit.font_size < 24.0);
         assert!(!fit.overflow, "自动适配后不应溢出: {fit:?}");
+
+        // Growth: a short label in a roomy box fills the box instead of
+        // staying at the requested size, and stays on the quarter-pixel grid.
+        let mut roomy = spec("Ab", 400.0, 120.0, 12.0);
+        roomy.auto_fit = true;
+        let grown = fonts.measure(&roomy).unwrap();
+        assert!(grown.font_size > 12.0, "{grown:?}");
+        assert!(
+            grown.font_size <= 100.0,
+            "不能超过 height / line_height: {grown:?}"
+        );
+        assert!(!grown.overflow);
+        assert_eq!(grown.font_size * 4.0, (grown.font_size * 4.0).round());
+        let mut fixed = roomy.clone();
+        fixed.auto_fit = false;
+        assert_eq!(
+            fonts.measure(&fixed).unwrap().font_size,
+            12.0,
+            "关闭自动适配保留手动字号"
+        );
     }
 
     #[test]
@@ -539,6 +619,50 @@ mod tests {
         assert!(
             ink(&bold_px) > ink(&regular_px) * 11 / 10,
             "加粗后墨迹应明显增加"
+        );
+    }
+
+    /// Noto Sans SC has no italic cut either: an italic request must shear the
+    /// glyphs. Pixels above the baseline move right, so the ink's horizontal
+    /// centre of mass in the top half ends up right of the bottom half's.
+    #[test]
+    fn italic_request_on_upright_family_shears_output() {
+        let mut fonts = Fonts::for_tests();
+        if !fonts.bundled_available() {
+            return;
+        }
+        let upright = spec("HHHH", 300.0, 80.0, 48.0);
+        let mut italic = upright.clone();
+        italic.italic = true;
+        let (upright_px, upright_layout, _, _) = fonts.rasterize(&upright, [0, 0, 0]).unwrap();
+        let (italic_px, italic_layout, _, _) = fonts.rasterize(&italic, [0, 0, 0]).unwrap();
+        assert_eq!(upright_layout.synthetic_italic, 0.0);
+        assert!((italic_layout.synthetic_italic - SYNTHETIC_ITALIC_SKEW).abs() < 1e-9);
+        let lean = |pixmap: &tiny_skia::Pixmap| -> f64 {
+            let width = pixmap.width() as usize;
+            let height = pixmap.height() as usize;
+            let (mut top_x, mut top_n, mut bottom_x, mut bottom_n) =
+                (0.0_f64, 0.0_f64, 0.0_f64, 0.0_f64);
+            for (index, px) in pixmap.data().chunks(4).enumerate() {
+                if px[3] <= 64 {
+                    continue;
+                }
+                let (x, y) = ((index % width) as f64, index / width);
+                if y < height / 2 {
+                    top_x += x;
+                    top_n += 1.0;
+                } else {
+                    bottom_x += x;
+                    bottom_n += 1.0;
+                }
+            }
+            top_x / top_n.max(1.0) - bottom_x / bottom_n.max(1.0)
+        };
+        assert!(lean(&upright_px).abs() < 1.0, "直立字形上下重心应对齐");
+        assert!(
+            lean(&italic_px) > 3.0,
+            "倾斜后上半部分应明显右移: {}",
+            lean(&italic_px)
         );
     }
 

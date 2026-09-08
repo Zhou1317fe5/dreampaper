@@ -704,3 +704,15 @@
   align-items: center;
   gap: 10px;
 }
+
+/* Alignment / aspect segments fill their field so every option gets equal room. */
+.wb-props .wb-seg {
+  display: flex;
+  width: 100%;
+}
+
+.wb-props .wb-seg-btn {
+  flex: 1 1 0;
+  min-width: 0;
+  text-align: center;
+}

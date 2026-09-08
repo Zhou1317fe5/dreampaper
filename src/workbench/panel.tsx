@@ -466,8 +466,15 @@ function TextProperties({ text, parent, state, dispatch, c, fonts, layouts }: In
       </Field>
       {layout?.missing_font && <p className="wb-warning">{c.inspector.fontMissing(text.font.family)}</p>}
       <div className="wb-row">
-        <Field label={c.inspector.fontSize}>
-          <NumberInput value={text.font.size} min={1} max={4096} step={0.5} onCommit={(v) => update({ font: { ...text.font, size: v } })} />
+        <Field label={text.auto_fit ? c.inspector.fontSizeAuto : c.inspector.fontSize}>
+          <NumberInput
+            value={layout && text.auto_fit ? layout.font_size : text.font.size}
+            min={1}
+            max={4096}
+            step={0.5}
+            disabled={text.auto_fit}
+            onCommit={(v) => update({ font: { ...text.font, size: v } })}
+          />
         </Field>
         <Field label={c.inspector.weight}>
           <select className="wb-input" value={text.font.weight} onChange={(event) => update({ font: { ...text.font, weight: Number(event.target.value) } })}>
@@ -484,11 +491,11 @@ function TextProperties({ text, parent, state, dispatch, c, fonts, layouts }: In
           <input type="color" aria-label={c.inspector.color} value={text.color} onChange={(event) => update({ color: event.target.value }, `color:${text.id}`)} />
           <code>{text.color}</code>
         </span>
-        <label className="wb-check">
+        <label className="wb-check" title={c.inspector.italicHint}>
           <input type="checkbox" checked={text.font.italic} onChange={(event) => update({ font: { ...text.font, italic: event.target.checked } })} />
           <span>{c.inspector.italic}</span>
         </label>
-        <label className="wb-check">
+        <label className="wb-check" title={c.inspector.autoFitHint}>
           <input type="checkbox" checked={text.auto_fit} onChange={(event) => update({ auto_fit: event.target.checked })} />
           <span>{c.inspector.autoFit}</span>
         </label>

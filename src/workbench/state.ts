@@ -68,6 +68,9 @@ export type Action =
   | { type: 'end_transient' }
   | { type: 'cancel_transient' }
   | { type: 'update_text'; id: string; patch: Partial<Omit<TextLayer, 'kind' | 'id'>>; mergeKey?: string; now?: number }
+  /** Auto-fit result from the Rust measurement: adopts the fitted size silently
+   *  (no history step, no "edited" mark) so the panel shows the real size. */
+  | { type: 'fit_text_size'; id: string; size: number }
   | { type: 'set_fill'; id: string; color: string }
   | { type: 'reset_fill'; id: string }
   | { type: 'add_text'; text: TextLayer; parentId: string | null }
@@ -314,6 +317,18 @@ export function reduce(state: EditorState, action: Action): EditorState {
       }));
       if (patchKeys.length > 0) doc = markParentEdited(doc, action.id);
       return commit(state, doc, action.mergeKey, action.now);
+    }
+
+    case 'fit_text_size': {
+      const located = findLayer(state.doc, action.id);
+      if (!located || located.layer.kind !== 'text' || !located.layer.auto_fit) return state;
+      if (Math.abs(located.layer.font.size - action.size) < 0.25) return state;
+      const doc = mapLayer(state.doc, action.id, (layer) => ({
+        ...(layer as TextLayer),
+        font: { ...(layer as TextLayer).font, size: action.size }
+      }));
+      // History entries keep their own sizes; auto-fit re-applies after undo.
+      return { ...state, doc };
     }
 
     case 'set_fill': {

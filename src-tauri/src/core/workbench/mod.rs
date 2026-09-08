@@ -248,11 +248,24 @@ impl<'a> WorkbenchService<'a> {
     /// Compose and write the PNG, then record where it went. The document
     /// must already be saved at `base_revision`; exporting unsaved state
     /// would let the file and the project disagree after a crash.
+    #[cfg(test)]
     pub fn export(
         &self,
         project_id: &str,
         document: &ProjectDoc,
         target: &Path,
+    ) -> AppResult<ExportRecord> {
+        self.export_with_progress(project_id, document, target, &mut |_| {})
+    }
+
+    /// `export` with per-phase progress (compose → encode → write → done),
+    /// which the command layer forwards to the webview as events.
+    pub fn export_with_progress(
+        &self,
+        project_id: &str,
+        document: &ProjectDoc,
+        target: &Path,
+        progress: render::ProgressSink<'_>,
     ) -> AppResult<ExportRecord> {
         let summary = self.projects().summary(project_id)?;
         let saved = self.projects().get(project_id)?.document;
@@ -285,9 +298,9 @@ impl<'a> WorkbenchService<'a> {
         }
         let source = self.decoded(&summary.asset_id)?;
         let composite = self.fonts.with(self.font_root, |fonts| {
-            render::compose(&source, document, fonts)
+            render::compose_with_progress(&source, document, fonts, progress)
         })?;
-        render::write_png(&composite, &source, target)?;
+        render::write_png_with_progress(&composite, &source, target, progress)?;
         Ok(self
             .projects()
             .export_record(project_id, target, composite.width, composite.height))

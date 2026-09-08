@@ -254,6 +254,21 @@ describe('history and saving', () => {
     expect(reduce(merged, { type: 'undo' }).doc).toBe(state.doc);
   });
 
+  it('adopts auto-fit sizes silently and ignores them for fixed-size text', () => {
+    const state = withGroup(initialState(detail()));
+    const before = state.past.length;
+    const fitted = reduce(state, { type: 'fit_text_size', id: 't1', size: 18.25 });
+    const layer = findLayer(fitted.doc, 't1')!.layer as TextLayer;
+    expect(layer.font.size).toBe(18.25);
+    expect(layer.edited).toBe(false);
+    expect(fitted.past).toHaveLength(before);
+    expect(isDirty(fitted)).toBe(true);
+    // Sub-quarter differences and non-auto-fit texts leave the state untouched.
+    expect(reduce(fitted, { type: 'fit_text_size', id: 't1', size: 18.4 })).toBe(fitted);
+    const fixed = reduce(fitted, { type: 'update_text', id: 't1', patch: { auto_fit: false } });
+    expect(reduce(fixed, { type: 'fit_text_size', id: 't1', size: 40 })).toBe(fixed);
+  });
+
   it('tracks dirtiness against the saved snapshot and sends the disk revision', () => {
     let state = withGroup(initialState(detail()));
     expect(isDirty(state)).toBe(true);

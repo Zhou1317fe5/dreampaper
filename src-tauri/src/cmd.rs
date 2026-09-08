@@ -329,16 +329,30 @@ pub async fn preview_workbench_export(
     .await
 }
 
+/// Progress arrives on `workbench://export-progress` tagged with the project.
 #[tauri::command]
 pub async fn export_workbench_project(
+    app: AppHandle,
     state: State<'_, AppState>,
     project_id: String,
     document: ProjectDoc,
     path: String,
 ) -> AppResult<ExportRecord> {
     blocking(&state, move |core| {
-        core.workbench()
-            .export(&project_id, &document, std::path::Path::new(&path))
+        let emitter = app.clone();
+        let tag = project_id.clone();
+        let mut progress = |update: crate::core::workbench::render::ExportProgress| {
+            let _ = emitter.emit(
+                "workbench://export-progress",
+                serde_json::json!({ "project_id": tag, "stage": update.stage, "percent": update.percent }),
+            );
+        };
+        core.workbench().export_with_progress(
+            &project_id,
+            &document,
+            std::path::Path::new(&path),
+            &mut progress,
+        )
     })
     .await
 }

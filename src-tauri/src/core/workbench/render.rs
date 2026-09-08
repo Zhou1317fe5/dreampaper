@@ -123,14 +123,43 @@ pub fn text_spec(text: &TextLayer) -> TextSpec {
     }
 }
 
+/// Export phases reported to the UI. `percent` is cumulative over the whole
+/// export: compositing owns 0–60, PNG encoding 60–95, the atomic write the rest.
+#[derive(Clone, Debug, Serialize)]
+pub struct ExportProgress {
+    /// `compose` | `encode` | `write` | `done`
+    pub stage: &'static str,
+    pub percent: u8,
+}
+
+pub type ProgressSink<'a> = &'a mut dyn FnMut(ExportProgress);
+
+fn report(progress: &mut ProgressSink<'_>, stage: &'static str, percent: f64) {
+    progress(ExportProgress {
+        stage,
+        percent: percent.round().clamp(0.0, 100.0) as u8,
+    });
+}
+
 /// Paint the document over the source and apply the viewport.
+#[cfg(test)]
 pub fn compose(
     source: &DecodedSource,
     doc: &ProjectDoc,
     fonts: &mut Fonts,
 ) -> AppResult<Composite> {
+    compose_with_progress(source, doc, fonts, &mut |_| {})
+}
+
+pub fn compose_with_progress(
+    source: &DecodedSource,
+    doc: &ProjectDoc,
+    fonts: &mut Fonts,
+    mut progress: ProgressSink<'_>,
+) -> AppResult<Composite> {
     check_source(source, doc)?;
     check_color_profile(source)?;
+    report(&mut progress, "compose", 0.0);
     let (width, height) = (source.width, source.height);
     let mut pixmap = Pixmap::new(width, height)
         .ok_or_else(|| AppError::new("workbench_compose_failed", "合成缓冲区创建失败"))?;
@@ -143,9 +172,11 @@ pub fn compose(
             dst[3] = 255;
         }
     }
+    report(&mut progress, "compose", 5.0);
 
     let mut missing_fonts = Vec::new();
-    for layer in &doc.layers {
+    let total = doc.layers.len().max(1) as f64;
+    for (index, layer) in doc.layers.iter().enumerate() {
         match layer {
             Layer::Repair(group) if group.visible => {
                 fill_group(&mut pixmap, group)?;
@@ -158,6 +189,11 @@ pub fn compose(
             }
             _ => {}
         }
+        report(
+            &mut progress,
+            "compose",
+            5.0 + 50.0 * (index as f64 + 1.0) / total,
+        );
     }
 
     let crop = doc.viewport.crop;
@@ -168,6 +204,7 @@ pub fn compose(
     if doc.viewport.flip_y {
         flip_y(&mut rgb, crop.width as usize, crop.height as usize);
     }
+    report(&mut progress, "compose", 60.0);
     Ok(Composite {
         width: crop.width as u32,
         height: crop.height as u32,
@@ -278,32 +315,64 @@ fn flip_y(rgb: &mut [u8], width: usize, height: usize) {
 
 /// Encode `composite` as an opaque RGB PNG with only whitelisted metadata,
 /// written through a sibling temp file so `target` is never half a file.
+#[cfg(test)]
 pub fn write_png(composite: &Composite, source: &DecodedSource, target: &Path) -> AppResult<u64> {
+    write_png_with_progress(composite, source, target, &mut |_| {})
+}
+
+pub fn write_png_with_progress(
+    composite: &Composite,
+    source: &DecodedSource,
+    target: &Path,
+    mut progress: ProgressSink<'_>,
+) -> AppResult<u64> {
+    use std::io::Write;
+
     check_color_profile(source)?;
+    let png_error = |error: png::EncodingError| {
+        AppError::new("workbench_png_failed", format!("PNG 编码失败：{error}"))
+    };
+    let io_error = |error: std::io::Error| {
+        AppError::new("workbench_png_failed", format!("PNG 编码失败：{error}"))
+    };
+    report(&mut progress, "encode", 60.0);
     let mut bytes = Vec::new();
     {
         let mut info = png::Info::with_size(composite.width, composite.height);
         info.color_type = png::ColorType::Rgb;
         info.bit_depth = png::BitDepth::Eight;
         apply_metadata(&mut info, source);
-        let mut encoder = png::Encoder::with_info(&mut bytes, info).map_err(|error| {
-            AppError::new("workbench_png_failed", format!("PNG 编码失败：{error}"))
-        })?;
+        let mut encoder = png::Encoder::with_info(&mut bytes, info).map_err(png_error)?;
         encoder.set_compression(png::Compression::Balanced);
         encoder.set_filter(png::Filter::Adaptive);
-        let mut writer = encoder.write_header().map_err(|error| {
-            AppError::new("workbench_png_failed", format!("PNG 编码失败：{error}"))
-        })?;
-        writer.write_image_data(&composite.rgb).map_err(|error| {
-            AppError::new("workbench_png_failed", format!("PNG 编码失败：{error}"))
-        })?;
+        let mut writer = encoder.write_header().map_err(png_error)?;
+        // Rows go through the streaming writer in bands so a 5504×3072 export
+        // can report progress instead of freezing at "encoding".
+        let mut stream = writer.stream_writer().map_err(png_error)?;
+        let stride = composite.width as usize * 3;
+        let rows = composite.height as usize;
+        let band = 64usize;
+        for start in (0..rows).step_by(band) {
+            let end = (start + band).min(rows);
+            stream
+                .write_all(&composite.rgb[start * stride..end * stride])
+                .map_err(io_error)?;
+            report(
+                &mut progress,
+                "encode",
+                60.0 + 35.0 * end as f64 / rows.max(1) as f64,
+            );
+        }
+        stream.finish().map_err(png_error)?;
     }
+    report(&mut progress, "write", 96.0);
     super::asset::write_atomic(target, &bytes).map_err(|error| {
         AppError::new(
             "workbench_export_write_failed",
             format!("无法写入导出文件：{}", error.message),
         )
     })?;
+    report(&mut progress, "done", 100.0);
     Ok(bytes.len() as u64)
 }
 
@@ -402,6 +471,38 @@ mod tests {
     fn px(c: &Composite, x: u32, y: u32) -> [u8; 3] {
         let i = ((y * c.width + x) * 3) as usize;
         [c.rgb[i], c.rgb[i + 1], c.rgb[i + 2]]
+    }
+
+    #[test]
+    fn export_progress_is_monotonic_and_ends_at_100() {
+        let src = source(64, 48);
+        let mut d = doc(64, 48);
+        d.layers.push(group(
+            "g",
+            Shape::Rect,
+            PixelRect::new(4, 4, 20, 10),
+            "#ff0000",
+        ));
+        let mut fonts = Fonts::for_tests();
+        let mut seen: Vec<(&'static str, u8)> = Vec::new();
+        let dir = super::super::asset::tests::temp_dir("progress");
+        let target = dir.join("out.png");
+        let composite = compose_with_progress(&src, &d, &mut fonts, &mut |p| {
+            seen.push((p.stage, p.percent))
+        })
+        .unwrap();
+        write_png_with_progress(&composite, &src, &target, &mut |p| {
+            seen.push((p.stage, p.percent))
+        })
+        .unwrap();
+        assert_eq!(seen.first().map(|s| s.1), Some(0));
+        assert_eq!(seen.last().copied(), Some(("done", 100)));
+        assert!(seen.windows(2).all(|w| w[0].1 <= w[1].1), "{seen:?}");
+        assert!(seen.iter().any(|s| s.0 == "encode"));
+        assert!(seen.iter().any(|s| s.0 == "write"));
+        let decoded = image::open(&target).unwrap();
+        assert_eq!((decoded.width(), decoded.height()), (64, 48));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
