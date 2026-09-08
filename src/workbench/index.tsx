@@ -258,16 +258,45 @@ export function WorkbenchPage({ lang, request, onRequestHandled, onMessage, regi
   );
 }
 
+/** What the settings row header shows while the section is collapsed. */
+export interface WorkbenchSummary {
+  summary: string;
+  badge?: string;
+  badgeTone?: 'ok' | 'warn';
+}
+
 export interface WorkbenchSettingsProps {
   lang: Lang;
   onMessage: (text: string, tone?: 'info' | 'error') => void;
+  /** Rendered inside a collapsible settings row: no own heading or divider. */
+  embedded?: boolean;
+  onSummary?: (summary: WorkbenchSummary) => void;
 }
 
-export function WorkbenchSettings({ lang, onMessage }: WorkbenchSettingsProps) {
+export function WorkbenchSettings({ lang, onMessage, embedded = false, onSummary }: WorkbenchSettingsProps) {
   const c = workbenchCopy[lang];
   const [storage, setStorage] = useState<import('./types').StorageStats | null>(null);
   const [ocr, setOcr] = useState<OcrPackageStatus | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!onSummary) return;
+    if (!storage && !ocr) {
+      onSummary({ summary: c.settings.refresh });
+      return;
+    }
+    const parts: string[] = [];
+    if (storage) parts.push(c.settings.summaryStorage(storage.project_count, formatBytes(storage.project_bytes + storage.asset_bytes)));
+    if (ocr) parts.push(ocr.installed ? c.settings.summaryModels(formatBytes(ocr.installed_bytes)) : c.settings.summaryNoModels);
+    const badge = !ocr
+      ? undefined
+      : !ocr.engine.available
+        ? { badge: c.settings.badgeEngineMissing, badgeTone: 'warn' as const }
+        : ocr.installed
+          ? { badge: c.settings.badgeOcrReady, badgeTone: 'ok' as const }
+          : { badge: c.settings.badgeOcrMissing, badgeTone: 'warn' as const };
+    onSummary({ summary: parts.join(' · '), ...badge });
+  }, [storage, ocr, onSummary, c]);
 
   const refresh = useCallback(async () => {
     try {
@@ -325,9 +354,9 @@ export function WorkbenchSettings({ lang, onMessage }: WorkbenchSettingsProps) {
   };
 
   return (
-    <section className="wb-settings">
+    <section className={`wb-settings${embedded ? ' wb-settings-embedded' : ''}`}>
       <div className="wb-settings-head">
-        <h3>{c.settings.title}</h3>
+        {embedded ? <span className="wb-muted">{c.settings.intro}</span> : <h3>{c.settings.title}</h3>}
         <button type="button" className="wb-btn" disabled={busy !== null} onClick={() => void refresh()}>{c.settings.refresh}</button>
       </div>
       <div className="wb-settings-card">

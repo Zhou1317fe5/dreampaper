@@ -408,7 +408,20 @@ function protocolLabel(value: string) {
   return PROTOCOL_LABELS[value] || value;
 }
 
-export function Settings({ config, onChange, onSave, t }: { config: AppConfig; onChange: (config: AppConfig) => void; onSave: (config: AppConfig) => void; t: typeof copy[Lang] }) {
+export function Settings({
+  config,
+  onChange,
+  onSave,
+  t,
+  tail
+}: {
+  config: AppConfig;
+  onChange: (config: AppConfig) => void;
+  onSave: (config: AppConfig) => void;
+  t: typeof copy[Lang];
+  /** Extra collapsible rows rendered after the built-in ones (desktop-only sections). */
+  tail?: React.ReactNode;
+}) {
   const design = config.model_profiles.find((item) => item.role === 'design') || defaultDesign();
   const implement = config.model_profiles.find((item) => item.role === 'implement') || defaultImplement();
   const search = config.model_profiles.find((item) => item.role === 'search') || defaultSearch();
@@ -521,6 +534,8 @@ export function Settings({ config, onChange, onSave, t }: { config: AppConfig; o
         </div>
       </SettingsSection>
 
+      {tail}
+
       <div className="actions-row left settings-actions">
         <button className="primary" onClick={() => onSave(config)}>{t.common.save}</button>
       </div>
@@ -528,7 +543,7 @@ export function Settings({ config, onChange, onSave, t }: { config: AppConfig; o
   );
 }
 
-function SettingsSection({
+export function SettingsSection({
   title,
   summary,
   badge,

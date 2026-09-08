@@ -716,3 +716,10 @@
   min-width: 0;
   text-align: center;
 }
+
+/* Inside a collapsible settings row the section header supplies the title. */
+.wb-settings.wb-settings-embedded {
+  margin-top: 0;
+  padding-top: 0;
+  border-top: 0;
+}

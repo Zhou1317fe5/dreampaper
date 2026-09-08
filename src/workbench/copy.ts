@@ -187,6 +187,13 @@ export const workbenchCopy = {
     },
     settings: {
       title: '工作台',
+      intro: '工程与源图快照占用、离线 OCR 引擎与模型。',
+      summaryStorage: (projects: number, bytes: string) => `${projects} 个工程（${bytes}）`,
+      summaryModels: (bytes: string) => `OCR 模型 ${bytes}`,
+      summaryNoModels: 'OCR 模型未安装',
+      badgeOcrReady: 'OCR 已就绪',
+      badgeOcrMissing: 'OCR 未安装',
+      badgeEngineMissing: '引擎不可用',
       storage: '工程与源图快照',
       storageLine: (projects: number, projectBytes: string, assets: number, assetBytes: string) =>
         `${projects} 个工程（${projectBytes}），${assets} 份源图快照（${assetBytes}）`,
@@ -403,6 +410,13 @@ export const workbenchCopy = {
     },
     settings: {
       title: 'Workbench',
+      intro: 'Project and snapshot storage, the offline OCR engine and its models.',
+      summaryStorage: (projects: number, bytes: string) => `${projects} project(s) (${bytes})`,
+      summaryModels: (bytes: string) => `OCR models ${bytes}`,
+      summaryNoModels: 'OCR models not installed',
+      badgeOcrReady: 'OCR ready',
+      badgeOcrMissing: 'OCR not installed',
+      badgeEngineMissing: 'Engine unavailable',
       storage: 'Projects and source snapshots',
       storageLine: (projects: number, projectBytes: string, assets: number, assetBytes: string) =>
         `${projects} project(s) (${projectBytes}), ${assets} snapshot(s) (${assetBytes})`,

@@ -12,7 +12,7 @@ import {
   openExternal,
   saveConfig
 } from '../api';
-import { copy, emptyConfig, isJobSettled, Settings, useJobPolling, type Lang } from '../app';
+import { copy, emptyConfig, isJobSettled, Settings, SettingsSection, useJobPolling, type Lang } from '../app';
 import type { AppConfig, JobRecord } from '../types';
 import { AboutPage, IconGitHub, type UpdateState } from './about';
 import { desktopCopy, type DesktopCopy } from './copy';
@@ -26,7 +26,7 @@ import {
   type SlideFormState
 } from './forms';
 import { TemplateLibrary } from './templates';
-import { WorkbenchPage, WorkbenchSettings, type LeaveGuard, type WorkbenchRequest } from '../workbench';
+import { WorkbenchPage, WorkbenchSettings, type LeaveGuard, type WorkbenchRequest, type WorkbenchSummary } from '../workbench';
 import {
   applyTheme,
   autoUpdateEnabled,
@@ -57,6 +57,8 @@ export function DesktopApp() {
   const [figureState, setFigureState] = useState<FigureFormState>(defaultFigureForm);
   const [slideState, setSlideState] = useState<SlideFormState>(defaultSlideForm);
   const [workbenchRequest, setWorkbenchRequest] = useState<WorkbenchRequest | null>(null);
+  const [workbenchOpen, setWorkbenchOpen] = useState(false);
+  const [workbenchSummary, setWorkbenchSummary] = useState<WorkbenchSummary>({ summary: '' });
   const workbenchLeaveGuard = useRef<LeaveGuard | null>(null);
   async function deleteSettled(job: JobRecord, refresh?: () => void) {
     try {
@@ -445,8 +447,24 @@ export function DesktopApp() {
           )}
           {page === 'settings' && (
             <SettingsPane>
-              <Settings config={config} onChange={setConfig} onSave={persistConfig} t={t} />
-              <WorkbenchSettings lang={lang} onMessage={showMessage} />
+              <Settings
+                config={config}
+                onChange={setConfig}
+                onSave={persistConfig}
+                t={t}
+                tail={
+                  <SettingsSection
+                    title={d.nav.workbench}
+                    summary={workbenchSummary.summary}
+                    badge={workbenchSummary.badge}
+                    badgeTone={workbenchSummary.badgeTone}
+                    open={workbenchOpen}
+                    onToggle={() => setWorkbenchOpen((value) => !value)}
+                  >
+                    <WorkbenchSettings lang={lang} onMessage={showMessage} embedded onSummary={setWorkbenchSummary} />
+                  </SettingsSection>
+                }
+              />
             </SettingsPane>
           )}
           {page === 'about' && (
