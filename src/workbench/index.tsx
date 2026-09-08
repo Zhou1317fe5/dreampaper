@@ -984,8 +984,15 @@ function Editor({ detail, c, sidebar, onMessage, onGuard, onSaved }: EditorProps
       else if ((event.key === 'Delete' || event.key === 'Backspace') && stateRef.current.selection.id) {
         dispatch({ type: 'remove_layer', id: stateRef.current.selection.id });
         window.setTimeout(() => void saveRef.current.flush(), 0);
-      } else if (event.key === 'Enter' && stateRef.current.pending?.analysis) {
-        applyPending();
+      } else if (event.key === 'Enter') {
+        // Enter confirms whatever is being adjusted: the crop first, else the
+        // pending repair preview.
+        if (cropDraft) {
+          event.preventDefault();
+          finishCrop();
+        } else if (stateRef.current.pending?.analysis) {
+          applyPending();
+        }
       }
     };
     window.addEventListener('keydown', onKey);

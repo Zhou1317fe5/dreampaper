@@ -47,6 +47,45 @@ const HANDLES: Handle[] = ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'];
 // `fauxItalic` means Rust found no italic face and shears the glyphs itself;
 // the node is then skewed instead of asking the browser for an italic it
 // may not synthesise for CJK families.
+/** Longest side below which no further mip level is generated. */
+const MIP_FLOOR = 1024;
+
+// Pre-scaled copies of the source for zoomed-out views. Drawing a 5504 px wide
+// bitmap at 16 % straight from full resolution leaves the browser one bilinear
+// pass, which looks soft and aliased; halving step by step is a box filter, and
+// the level closest above the on-screen scale is then at most 2× downsampled.
+function useMipmaps(image: HTMLImageElement | null): HTMLCanvasElement[] {
+  return useMemo(() => {
+    if (!image) return [];
+    const levels: HTMLCanvasElement[] = [];
+    let source: CanvasImageSource = image;
+    let width = image.naturalWidth;
+    let height = image.naturalHeight;
+    while (Math.max(width, height) > MIP_FLOOR && levels.length < 5) {
+      width = Math.max(1, Math.round(width / 2));
+      height = Math.max(1, Math.round(height / 2));
+      const canvas = document.createElement('canvas');
+      canvas.width = width;
+      canvas.height = height;
+      const ctx = canvas.getContext('2d');
+      if (!ctx) break;
+      ctx.imageSmoothingEnabled = true;
+      ctx.imageSmoothingQuality = 'high';
+      ctx.drawImage(source, 0, 0, width, height);
+      levels.push(canvas);
+      source = canvas;
+    }
+    return levels;
+  }, [image]);
+}
+
+/** The mip level to draw at `scale` (stage scale × device pixel ratio). */
+export function mipLevel(levelCount: number, scale: number): number {
+  let level = 0;
+  while (level < levelCount && Math.pow(0.5, level + 1) >= scale) level += 1;
+  return level;
+}
+
 function fontStyle(text: TextLayer, fauxItalic = false): string {
   const parts: string[] = [];
   if (text.font.italic && !fauxItalic) parts.push('italic');
@@ -399,6 +438,9 @@ export function WorkbenchCanvas(props: CanvasProps) {
 
   const rubberBox = rubber ? rubberRect(rubber.start, rubber.current, rubber.shift, W, H) : null;
   const cursor = spaceHeld ? 'grab' : tool === 'eyedropper' ? 'crosshair' : tool === 'select' ? 'default' : 'crosshair';
+  const mips = useMipmaps(image);
+  const level = mipLevel(mips.length, view.scale * (typeof window !== 'undefined' ? window.devicePixelRatio || 1 : 1));
+  const sourceBitmap: CanvasImageSource | undefined = level === 0 ? (image ?? undefined) : mips[level - 1];
 
   return (
     <div ref={container} className="wb-canvas" style={{ cursor }}>
@@ -419,7 +461,7 @@ export function WorkbenchCanvas(props: CanvasProps) {
           <Group x={view.x} y={view.y} scaleX={view.scale} scaleY={view.scale}>
             <Group {...flipProps} {...clip}>
               <Rect width={W} height={H} fill="#ffffff" />
-              {image && <KonvaImage image={image} width={W} height={H} />}
+              {image && <KonvaImage image={sourceBitmap} width={W} height={H} />}
               {!image && <Rect width={W} height={H} fill="#ddd" />}
             </Group>
           </Group>

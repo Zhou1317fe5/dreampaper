@@ -2,7 +2,7 @@
 import { act, createElement, useState, type ReactNode } from 'react';
 import { createRoot, type Root } from 'react-dom/client';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { WorkbenchCanvas, type CanvasProps, type CropDraft } from './canvas';
+import { mipLevel, WorkbenchCanvas, type CanvasProps, type CropDraft } from './canvas';
 import type { ProjectDoc } from './types';
 
 interface DragEvent {
@@ -108,5 +108,18 @@ describe('cropped canvas interactions', () => {
       await act(async () => frame().onDragEnd!(event(180, 100)));
       expect(current).toEqual({ ...crop, x: 130, y: 60 });
     }
+  });
+});
+
+describe('zoomed-out source rendering', () => {
+  it('picks the smallest mip that is still at least the on-screen scale', () => {
+    // Levels: 0 = full, 1 = 1/2, 2 = 1/4, 3 = 1/8.
+    expect(mipLevel(3, 1.0)).toBe(0);
+    expect(mipLevel(3, 0.6)).toBe(0);
+    expect(mipLevel(3, 0.5)).toBe(1);
+    expect(mipLevel(3, 0.32)).toBe(1);
+    expect(mipLevel(3, 0.16)).toBe(2);
+    expect(mipLevel(3, 0.01), 'never beyond the levels that exist').toBe(3);
+    expect(mipLevel(0, 0.1)).toBe(0);
   });
 });

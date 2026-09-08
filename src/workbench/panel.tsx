@@ -568,13 +568,13 @@ function CropProperties({ controls, state, c }: { controls: CropControls; state:
       <strong>{c.inspector.cropTitle}</strong>
       <p className="wb-muted">{c.inspector.cropHint}</p>
       <Field label={c.inspector.aspect}>
-        <span className="wb-seg wb-wrap">
+        <select className="wb-input" value={controls.aspect} onChange={(event) => controls.onAspect(event.target.value as AspectPreset)}>
           {ASPECTS.map((aspect) => (
-            <button key={aspect} type="button" className={`wb-seg-btn${controls.aspect === aspect ? ' active' : ''}`} onClick={() => controls.onAspect(aspect)}>
+            <option key={aspect} value={aspect}>
               {label(aspect)}
-            </button>
+            </option>
           ))}
-        </span>
+        </select>
       </Field>
       {controls.aspect === 'custom' && (
         <div className="wb-row">
