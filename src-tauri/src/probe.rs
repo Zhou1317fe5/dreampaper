@@ -159,7 +159,10 @@ fn run(mode: &str, directory: &Path) -> AppResult<Value> {
                             .progress
                             .as_ref()
                             .is_some_and(|p| p.state == "cancelled"),
-                    "下载中断被误标为已安装或未执行中断",
+                    &format!(
+                        "取消下载门禁失败，已发出取消={}，状态={status:?}",
+                        cancelled.load(Ordering::SeqCst)
+                    ),
                 )?;
                 return Ok(json!({"cancelled": true, "installed": false}));
             }

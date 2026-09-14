@@ -134,8 +134,16 @@ impl Fonts {
 
     #[cfg(test)]
     pub fn for_tests() -> Self {
-        let root = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("fonts");
-        Self::load(&root)
+        let path = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("fonts")
+            .join(BUNDLED_FILE);
+        let mut db = cosmic_text::fontdb::Database::new();
+        db.load_font_data(std::fs::read(path).expect("测试需要仓库内置字体"));
+        Self {
+            system: FontSystem::new_with_locale_and_db("zh-CN".into(), db),
+            cache: SwashCache::new(),
+            bundled: true,
+        }
     }
 
     pub fn bundled_available(&self) -> bool {
