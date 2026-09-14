@@ -58,13 +58,13 @@ for (const patch of PATCHES) {
 }
 const buildArgs = [
   join(source, 'tools/ci_build/build.py'), '--build_dir', build,
-  '--config', 'Release', '--update', '--build', '--build_shared_lib',
+  '--config', 'Release', '--update', '--build', '--build_shared_lib', '--targets', 'onnxruntime',
   '--skip_tests', '--skip_pip_install', '--compile_no_warning_as_error', '--no_telemetry',
   '--parallel', String(Math.min(6, availableParallelism())),
   '--cmake_path', cmake, '--ctest_path', ctest,
   '--cmake_generator', windows ? 'Visual Studio 17 2022' : 'Ninja',
   ...(windows ? ['--enable_msvc_static_runtime'] : ['--osx_arch', arch, '--apple_deploy_target', '13.0']),
-  '--cmake_extra_defines', 'CMAKE_BUILD_TYPE=Release',
+  '--cmake_extra_defines', 'CMAKE_BUILD_TYPE=Release', 'onnxruntime_BUILD_UNIT_TESTS=OFF',
   ...(windows ? [] : ['CMAKE_OSX_DEPLOYMENT_TARGET=13.0'])
 ];
 const toolchain = {

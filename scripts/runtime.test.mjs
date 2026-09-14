@@ -76,3 +76,13 @@ test('macOS 动态库加载例外仅限辅助程序，最终包重新签名', ()
   assert.ok(!config.bundle.macOS.entitlements);
   assert.notEqual(config.bundle.macOS.hardenedRuntime, false);
 });
+
+test('引擎构建仅编译生产动态库，项目和最终包测试仍执行', () => {
+  const ort = readFileSync(join(root, 'scripts/ort.mjs'), 'utf8');
+  assert.ok(ort.includes("'--targets', 'onnxruntime'"));
+  assert.ok(ort.includes('onnxruntime_BUILD_UNIT_TESTS=OFF'));
+  const workflow = readFileSync(join(root, '.github/workflows/release.yml'), 'utf8');
+  assert.ok(workflow.includes('cargo test --locked --manifest-path src-tauri/Cargo.toml'));
+  assert.ok(workflow.includes('cargo test --locked --manifest-path src-tauri/ocr/Cargo.toml'));
+  assert.ok(workflow.includes('scripts/probe.mjs'));
+});

@@ -138,7 +138,11 @@ fn run(mode: &str, directory: &Path) -> AppResult<Value> {
             let started = Instant::now();
             let status = loop {
                 let status = packages.status(&data);
-                if !status.downloading && status.progress.as_ref().is_some_and(|p| matches!(p.state.as_str(), "done" | "cancelled" | "failed")) {
+                if !status.downloading
+                    && status.progress.as_ref().is_some_and(|p| {
+                        matches!(p.state.as_str(), "done" | "cancelled" | "failed")
+                    })
+                {
                     break status;
                 }
                 require(
