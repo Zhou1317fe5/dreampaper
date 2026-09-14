@@ -38,7 +38,7 @@ jobs:
           node-version: 22
       - uses: actions/setup-python@v5
         with:
-          python-version: '3.12.11'
+          python-version: '3.12.10'
       - uses: ilammy/msvc-dev-cmd@v1
         if: runner.os == 'Windows'
         with:
