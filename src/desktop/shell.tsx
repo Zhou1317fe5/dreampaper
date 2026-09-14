@@ -12,7 +12,7 @@ import {
   openExternal,
   saveConfig
 } from '../api';
-import { copy, emptyConfig, isJobSettled, Settings, SettingsSection, useJobPolling, type Lang } from '../app';
+import { copy, emptyConfig, isJobSettled, Settings, SettingsSection, type Lang } from '../app';
 import type { AppConfig, JobRecord } from '../types';
 import { AboutPage, IconGitHub, type UpdateState } from './about';
 import { desktopCopy, type DesktopCopy } from './copy';
@@ -26,6 +26,20 @@ import {
   type SlideFormState
 } from './forms';
 import { TemplateLibrary } from './templates';
+import {
+  activeTab,
+  addTab,
+  applyJob,
+  closeTab,
+  liveJobs,
+  MAX_TABS,
+  openBook,
+  patchTab,
+  selectTab,
+  tabForJob,
+  tabLabel,
+  type TaskBook
+} from './tasks';
 import { WorkbenchPage, WorkbenchSettings, type LeaveGuard, type WorkbenchRequest, type WorkbenchSummary } from '../workbench';
 import {
   applyTheme,
@@ -52,10 +66,12 @@ export function DesktopApp() {
   const [update, setUpdate] = useState<UpdateState>({ status: 'idle', info: null, error: null });
   const [config, setConfig] = useState<AppConfig>(emptyConfig);
   const [toast, setToast] = useState<{ id: number; text: string; tone: 'info' | 'error' } | null>(null);
-  const [paperJob, setPaperJob] = useState<JobRecord | null>(null);
-  const [pptJob, setPptJob] = useState<JobRecord | null>(null);
-  const [figureState, setFigureState] = useState<FigureFormState>(defaultFigureForm);
-  const [slideState, setSlideState] = useState<SlideFormState>(defaultSlideForm);
+  // Each page keeps a book of task tabs; a tab owns its form and its job, so
+  // two figures drafted side by side never see each other's inputs or output.
+  const [figureBook, setFigureBook] = useState<TaskBook<FigureFormState>>(() => openBook(defaultFigureForm));
+  const [slideBook, setSlideBook] = useState<TaskBook<SlideFormState>>(() => openBook(defaultSlideForm));
+  const figureTab = activeTab(figureBook);
+  const slideTab = activeTab(slideBook);
   const [workbenchRequest, setWorkbenchRequest] = useState<WorkbenchRequest | null>(null);
   const [workbenchOpen, setWorkbenchOpen] = useState(false);
   const [workbenchSummary, setWorkbenchSummary] = useState<WorkbenchSummary>({ summary: '' });
@@ -81,16 +97,15 @@ export function DesktopApp() {
         return;
       }
       const created = await createJob(full.payload);
-      // The rerun reuses the stored payload, so the form has to show the same
-      // inputs it was built from; otherwise the panel contradicts the job.
+      // The rerun reuses the stored payload, so the tab has to show the same
+      // inputs it was built from; otherwise the panel contradicts the job. It
+      // opens in a fresh tab so whatever the user was drafting stays put.
       const inputs = full.payload.payload;
       if (created.mode === 'ppt_slide') {
-        setPptJob(created);
-        fillSlideForm(inputs);
+        openSlideTab(created, inputs);
         transitionToPage('ppt');
       } else {
-        setPaperJob(created);
-        fillFigureForm(inputs);
+        openFigureTab(created, inputs);
         transitionToPage('paper');
       }
     } catch (error) {
@@ -200,8 +215,8 @@ export function DesktopApp() {
       .catch((error) => showMessage(error.message, 'error'));
   }, [autoUpdate, runUpdateCheck, showMessage]);
 
-  useJobPolling(paperJob, setPaperJob, (message) => showMessage(message, 'error'));
-  useJobPolling(pptJob, setPptJob, (message) => showMessage(message, 'error'));
+  useBookPolling(figureBook, setFigureBook, showMessage);
+  useBookPolling(slideBook, setSlideBook, showMessage);
 
   useEffect(() => {
     if (!toast) return;
@@ -246,12 +261,10 @@ export function DesktopApp() {
     try {
       const job = await getJob(summary.id);
       if (job.mode === 'ppt_slide') {
-        setPptJob(job);
-        fillSlideForm(job.payload?.payload);
+        openSlideTab(job, job.payload?.payload);
         transitionToPage('ppt');
       } else {
-        setPaperJob(job);
-        fillFigureForm(job.payload?.payload);
+        openFigureTab(job, job.payload?.payload);
         transitionToPage('paper');
       }
     } catch (error) {
@@ -259,55 +272,50 @@ export function DesktopApp() {
     }
   }
 
-  // Restores the original inputs so an old job can be tweaked and resubmitted.
-  // Unknown/missing fields keep whatever the user already typed.
-  function fillFigureForm(payload: unknown) {
-    if (!payload || typeof payload !== 'object') return;
-    const p = payload as Record<string, unknown>;
-    const ids = Array.isArray(p.template_ids)
-      ? (p.template_ids as unknown[]).filter((id): id is string => typeof id === 'string')
-      : [];
-    const apply = (existing: string[]) =>
-      setFigureState((current) => ({
-        ...current,
-        title: typeof p.figure_title === 'string' ? p.figure_title : current.title,
-        description:
-          typeof p.section_description === 'string' ? p.section_description : current.description,
-        selected: ids.length > 0 ? existing : current.selected,
-        aspectRatio: typeof p.aspect_ratio === 'string' ? p.aspect_ratio : current.aspectRatio,
-        layoutFidelity:
-          p.layout_fidelity === 'strict' || p.layout_fidelity === 'balanced' || p.layout_fidelity === 'loose'
-            ? p.layout_fidelity
-            : current.layoutFidelity,
-        styleStrength:
-          p.style_strength === 'high' || p.style_strength === 'medium' || p.style_strength === 'low'
-            ? p.style_strength
-            : current.styleStrength,
-        custom: typeof p.custom_prompt === 'string' ? p.custom_prompt : ''
-      }));
-    if (ids.length === 0) {
-      apply([]);
-      return;
-    }
-    // Drop ids whose templates no longer exist so the picker and the ready
-    // flag stay truthful.
+  // A job already shown in some tab is focused there rather than opened twice;
+  // otherwise it gets a tab of its own with the original inputs restored so it
+  // can be tweaked and resubmitted. When the book is full the active tab is
+  // reused, which is the old single-slot behaviour.
+  function openFigureTab(job: JobRecord, payload: unknown) {
+    setFigureBook((book) => {
+      const existing = tabForJob(book, job.id);
+      if (existing) return selectTab(patchTab(book, existing.id, () => ({ job })), existing.id);
+      const form = figureFormFrom(payload, defaultFigureForm);
+      const next = addTab(book, form, job);
+      if (next !== book) return next;
+      showMessage(d.tasks.full(MAX_TABS), 'error');
+      return patchTab(book, book.active, () => ({ job, form }));
+    });
+    pruneFigureTemplates(payload);
+  }
+
+  function openSlideTab(job: JobRecord, payload: unknown) {
+    setSlideBook((book) => {
+      const existing = tabForJob(book, job.id);
+      if (existing) return selectTab(patchTab(book, existing.id, () => ({ job })), existing.id);
+      const form = slideFormFrom(payload, defaultSlideForm);
+      const next = addTab(book, form, job);
+      if (next !== book) return next;
+      showMessage(d.tasks.full(MAX_TABS), 'error');
+      return patchTab(book, book.active, () => ({ job, form }));
+    });
+  }
+
+  // Drop template ids that no longer exist so the picker and the ready flag
+  // stay truthful. Runs after the tab exists, on whichever tab holds the job.
+  function pruneFigureTemplates(payload: unknown) {
+    const ids = figureFormFrom(payload, defaultFigureForm).selected;
+    if (ids.length === 0) return;
     listTemplates('all', '')
       .then((templates) => {
         const available = new Set(templates.map((item) => item.id));
-        apply(ids.filter((id) => available.has(id)));
+        const kept = ids.filter((id) => available.has(id));
+        if (kept.length === ids.length) return;
+        setFigureBook((book) =>
+          patchTab(book, book.active, (tab) => ({ form: { ...tab.form, selected: kept } }))
+        );
       })
-      .catch(() => apply(ids));
-  }
-
-  function fillSlideForm(payload: unknown) {
-    if (!payload || typeof payload !== 'object') return;
-    const p = payload as Record<string, unknown>;
-    setSlideState((current) => ({
-      ...current,
-      material: typeof p.material_text === 'string' ? p.material_text : current.material,
-      pages: typeof p.page_count === 'number' && p.page_count > 0 ? p.page_count : current.pages,
-      custom: typeof p.custom_prompt === 'string' ? p.custom_prompt : ''
-    }));
+      .catch(() => {});
   }
 
   const navItems: Array<{ key: Page; label: string; icon: JSX.Element }> = [
@@ -401,30 +409,52 @@ export function DesktopApp() {
 
         <div key={page} className={supportsViewTransitions ? 'desktop-page' : 'desktop-page page-enter'}>
           {page === 'paper' && (
-            <FigureForm
-              state={figureState}
-              onState={setFigureState}
-              job={paperJob}
-              onJob={setPaperJob}
-              onMessage={showMessage}
-              onGoTemplates={() => void transitionToPage('templates')}
-              onOpenWorkbench={(assetId) => void openWorkbench(assetId)}
-              t={t}
-              d={d}
-            />
+            <div className="task-page">
+              <TaskStrip
+                book={figureBook}
+                d={d}
+                formTitle={(form) => form.title}
+                onSelect={(id) => setFigureBook((book) => selectTab(book, id))}
+                onAdd={() => setFigureBook((book) => addTab(book, defaultFigureForm))}
+                onClose={(id) => setFigureBook((book) => closeTab(book, id, defaultFigureForm))}
+              />
+              <FigureForm
+                key={figureTab.id}
+                state={figureTab.form}
+                onState={(next) => setFigureBook((book) => patchTab(book, figureTab.id, (tab) => ({ form: next(tab.form) })))}
+                job={figureTab.job}
+                onJob={(job) => setFigureBook((book) => patchTab(book, figureTab.id, () => ({ job })))}
+                onMessage={showMessage}
+                onGoTemplates={() => void transitionToPage('templates')}
+                onOpenWorkbench={(assetId) => void openWorkbench(assetId)}
+                t={t}
+                d={d}
+              />
+            </div>
           )}
           {page === 'ppt' && (
-            <SlideForm
-              state={slideState}
-              onState={setSlideState}
-              job={pptJob}
-              onJob={setPptJob}
-              onMessage={showMessage}
-              onGoTemplates={() => void transitionToPage('templates')}
-              onOpenWorkbench={(assetId) => void openWorkbench(assetId)}
-              t={t}
-              d={d}
-            />
+            <div className="task-page">
+              <TaskStrip
+                book={slideBook}
+                d={d}
+                formTitle={(form) => form.material}
+                onSelect={(id) => setSlideBook((book) => selectTab(book, id))}
+                onAdd={() => setSlideBook((book) => addTab(book, defaultSlideForm))}
+                onClose={(id) => setSlideBook((book) => closeTab(book, id, defaultSlideForm))}
+              />
+              <SlideForm
+                key={slideTab.id}
+                state={slideTab.form}
+                onState={(next) => setSlideBook((book) => patchTab(book, slideTab.id, (tab) => ({ form: next(tab.form) })))}
+                job={slideTab.job}
+                onJob={(job) => setSlideBook((book) => patchTab(book, slideTab.id, () => ({ job })))}
+                onMessage={showMessage}
+                onGoTemplates={() => void transitionToPage('templates')}
+                onOpenWorkbench={(assetId) => void openWorkbench(assetId)}
+                t={t}
+                d={d}
+              />
+            </div>
           )}
           {page === 'templates' && <TemplateLibrary t={d} onMessage={showMessage} />}
           {page === 'history' && (
@@ -489,6 +519,135 @@ export function DesktopApp() {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+/**
+ * Polls every unsettled job in a book, not only the visible tab's: a tab left
+ * running in the background must still show its result when the user returns.
+ * One interval for the whole book keeps the IPC rate flat as tabs are added.
+ */
+function useBookPolling<F>(
+  book: TaskBook<F>,
+  setBook: (next: (book: TaskBook<F>) => TaskBook<F>) => void,
+  showMessage: (text: string, tone?: 'info' | 'error') => void
+) {
+  const live = liveJobs(book).map((job) => job.id);
+  const liveKey = live.join(',');
+  useEffect(() => {
+    if (!liveKey) return;
+    const ids = liveKey.split(',');
+    const timer = window.setInterval(() => {
+      for (const id of ids) {
+        getJob(id)
+          .then((job) => setBook((current) => applyJob(current, job)))
+          .catch((error) => showMessage(error instanceof Error ? error.message : String(error), 'error'));
+      }
+    }, 1800);
+    return () => window.clearInterval(timer);
+  }, [liveKey, setBook, showMessage]);
+}
+
+// Restores a stored figure payload into a form. Unknown or missing fields
+// fall back to the given base so a partial payload still yields a valid form.
+function figureFormFrom(payload: unknown, base: FigureFormState): FigureFormState {
+  if (!payload || typeof payload !== 'object') return base;
+  const p = payload as Record<string, unknown>;
+  const ids = Array.isArray(p.template_ids)
+    ? (p.template_ids as unknown[]).filter((id): id is string => typeof id === 'string')
+    : [];
+  return {
+    ...base,
+    title: typeof p.figure_title === 'string' ? p.figure_title : base.title,
+    description: typeof p.section_description === 'string' ? p.section_description : base.description,
+    selected: ids.length > 0 ? ids : base.selected,
+    aspectRatio: typeof p.aspect_ratio === 'string' ? p.aspect_ratio : base.aspectRatio,
+    layoutFidelity:
+      p.layout_fidelity === 'strict' || p.layout_fidelity === 'balanced' || p.layout_fidelity === 'loose'
+        ? p.layout_fidelity
+        : base.layoutFidelity,
+    styleStrength:
+      p.style_strength === 'high' || p.style_strength === 'medium' || p.style_strength === 'low'
+        ? p.style_strength
+        : base.styleStrength,
+    custom: typeof p.custom_prompt === 'string' ? p.custom_prompt : ''
+  };
+}
+
+function slideFormFrom(payload: unknown, base: SlideFormState): SlideFormState {
+  if (!payload || typeof payload !== 'object') return base;
+  const p = payload as Record<string, unknown>;
+  return {
+    ...base,
+    material: typeof p.material_text === 'string' ? p.material_text : base.material,
+    pages: typeof p.page_count === 'number' && p.page_count > 0 ? p.page_count : base.pages,
+    custom: typeof p.custom_prompt === 'string' ? p.custom_prompt : ''
+  };
+}
+
+function TaskStrip<F>({
+  book,
+  d,
+  formTitle,
+  onSelect,
+  onAdd,
+  onClose
+}: {
+  book: TaskBook<F>;
+  d: DesktopCopy;
+  formTitle: (form: F) => string;
+  onSelect: (id: string) => void;
+  onAdd: () => void;
+  onClose: (id: string) => void;
+}) {
+  return (
+    <div className="task-strip" role="tablist" aria-label={d.tasks.label}>
+      {book.tabs.map((tab) => {
+        const active = tab.id === book.active;
+        const status = tab.job?.status;
+        return (
+          <div
+            key={tab.id}
+            role="tab"
+            aria-selected={active}
+            tabIndex={0}
+            className={`task-tab${active ? ' active' : ''}`}
+            onClick={() => onSelect(tab.id)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                onSelect(tab.id);
+              }
+            }}
+          >
+            {status && <span className={`task-tab-dot ${status}`} aria-hidden="true" />}
+            <span className="task-tab-label">{tabLabel(tab, formTitle, d.tasks.untitled)}</span>
+            <button
+              type="button"
+              className="task-tab-close"
+              aria-label={d.tasks.close}
+              title={d.tasks.close}
+              onClick={(event) => {
+                event.stopPropagation();
+                onClose(tab.id);
+              }}
+            >
+              ×
+            </button>
+          </div>
+        );
+      })}
+      <button
+        type="button"
+        className="task-tab-add"
+        aria-label={d.tasks.add}
+        title={book.tabs.length >= MAX_TABS ? d.tasks.full(MAX_TABS) : d.tasks.add}
+        disabled={book.tabs.length >= MAX_TABS}
+        onClick={onAdd}
+      >
+        +
+      </button>
     </div>
   );
 }
@@ -559,6 +718,11 @@ const HistoryCard = memo(function HistoryCard({
         >
           <span className="hc-title-row">
             <span className={`recent-pill recent-pill-${job.status}`}>{pill}</span>
+            {job.rating && (
+              <span className={`recent-pill hc-rating hc-rating-${job.rating}`} title={d.history.ratingTitle}>
+                {d.history.rating[job.rating]}
+              </span>
+            )}
             <span className="hc-title" title={job.title ?? undefined}>
               {job.title || d.recent.untitled}
             </span>

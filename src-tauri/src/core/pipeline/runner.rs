@@ -39,7 +39,6 @@ pub struct DesignCall<'a> {
     pub system_prompt: &'a str,
     pub user_prompt: &'a str,
     pub images: &'a [ImageInput],
-    pub timeout_seconds: Option<u64>,
     pub proxy_url: Option<&'a str>,
     pub response_sink: Option<&'a (dyn Fn(&str) + Send + Sync)>,
     pub log: Option<DesignStep<'a>>,
@@ -75,7 +74,6 @@ impl DesignCall<'_> {
             self.system_prompt,
             prompt,
             self.images,
-            self.timeout_seconds,
             self.proxy_url,
             sink,
         )

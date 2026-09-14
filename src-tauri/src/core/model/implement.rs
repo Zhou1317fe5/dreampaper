@@ -6,10 +6,9 @@ use serde_json::{json, Map, Value};
 use crate::core::config::ModelProfile;
 use crate::core::model::design::ImageInput;
 use crate::core::net::{
-    build_client, decode_b64, describe_transport_error, effective_timeout, encode_b64,
-    format_http_error, is_retryable, merged_headers, model_error, model_http_error,
-    normalize_base_url, post_json_with_retries, require_api_key, retry_backoff, retry_delay,
-    PostOptions, IMAGE_RETRY_INTERVAL_SECONDS, MIN_IMAGE_TIMEOUT_SECONDS,
+    build_model_client, decode_b64, describe_transport_error, encode_b64, format_http_error,
+    is_retryable, merged_headers, model_error, model_http_error, normalize_base_url,
+    post_json_with_retries, read_http_response, require_api_key, wait_before_retry, HttpOutcome,
 };
 use crate::error::AppResult;
 
@@ -20,15 +19,6 @@ enum ImagePayload {
 }
 
 pub struct ImplementClient;
-
-fn image_post_options(proxy_url: Option<&str>) -> PostOptions<'_> {
-    PostOptions {
-        timeout_seconds: None,
-        minimum_timeout: Some(MIN_IMAGE_TIMEOUT_SECONDS),
-        retry_interval_seconds: Some(IMAGE_RETRY_INTERVAL_SECONDS),
-        proxy_url,
-    }
-}
 
 impl ImplementClient {
     pub async fn generate(
@@ -134,7 +124,7 @@ impl ImplementClient {
         let defaults = Self::merged_defaults(profile, output_overrides);
         let fields = Self::image2_fields(&defaults);
         let api_key = require_api_key(profile)?;
-        let read_timeout = effective_timeout(profile, None, Some(MIN_IMAGE_TIMEOUT_SECONDS));
+        let read_timeout = profile.request_timeout();
         let endpoint = if reference_images.is_empty() {
             format!("{base}/images/generations")
         } else {
@@ -153,7 +143,7 @@ impl ImplementClient {
                 &endpoint,
                 &payload,
                 vec![("Authorization".to_string(), format!("Bearer {api_key}"))],
-                image_post_options(proxy_url),
+                proxy_url,
             )
             .await?;
             (outcome.status, outcome.body)
@@ -234,7 +224,7 @@ impl ImplementClient {
                     Err(message) => {
                         last = message;
                         if attempt + 1 < ATTEMPTS {
-                            tokio::time::sleep(retry_backoff(attempt, None)).await;
+                            wait_before_retry().await;
                         }
                     }
                 }
@@ -248,8 +238,7 @@ impl ImplementClient {
         read_timeout: u64,
         proxy_url: Option<&str>,
     ) -> Result<String, String> {
-        let client =
-            build_client(read_timeout.max(60), proxy_url).map_err(|error| error.message)?;
+        let client = build_model_client(read_timeout, proxy_url).map_err(|error| error.message)?;
         let response = client
             .get(url)
             .send()
@@ -281,7 +270,7 @@ impl ImplementClient {
         read_timeout: u64,
         proxy_url: Option<&str>,
     ) -> AppResult<(u16, String)> {
-        let client = build_client(read_timeout, proxy_url)?;
+        let client = build_model_client(read_timeout, proxy_url)?;
         let attempts = (profile.max_retries.max(0) as u32) + 1;
         let mut last_error: Option<String> = None;
 
@@ -315,19 +304,13 @@ impl ImplementClient {
             }
             request = request.header("Authorization", format!("Bearer {api_key}"));
 
-            match request.send().await {
-                Ok(response) => {
-                    let status = response.status().as_u16();
-                    let body = response.text().await.unwrap_or_default();
+            let outcome = async { read_http_response(request.send().await?).await }.await;
+            match outcome {
+                Ok(HttpOutcome { status, body }) => {
                     if !is_retryable(status) || attempt == attempts - 1 {
                         return Ok((status, body));
                     }
-                    tokio::time::sleep(retry_delay(
-                        attempt,
-                        Some(status),
-                        Some(IMAGE_RETRY_INTERVAL_SECONDS),
-                    ))
-                    .await;
+                    wait_before_retry().await;
                 }
                 Err(error) => {
                     let elapsed = started.elapsed().as_secs();
@@ -344,12 +327,7 @@ impl ImplementClient {
                     if attempt == attempts - 1 {
                         break;
                     }
-                    tokio::time::sleep(retry_delay(
-                        attempt,
-                        None,
-                        Some(IMAGE_RETRY_INTERVAL_SECONDS),
-                    ))
-                    .await;
+                    wait_before_retry().await;
                 }
             }
         }
@@ -405,7 +383,7 @@ impl ImplementClient {
             &url,
             &payload,
             vec![("x-goog-api-key".to_string(), require_api_key(profile)?)],
-            image_post_options(proxy_url),
+            proxy_url,
         )
         .await?;
         if let Some(image) = serde_json::from_str::<Value>(&outcome.body)
@@ -415,7 +393,7 @@ impl ImplementClient {
         {
             return Ok(image);
         }
-        let read_timeout = effective_timeout(profile, None, Some(MIN_IMAGE_TIMEOUT_SECONDS));
+        let read_timeout = profile.request_timeout();
         Self::resolve_response(
             profile,
             &url,

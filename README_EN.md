@@ -26,12 +26,22 @@
 - **Template-driven** — figures use PaperBananaBench few-shot refs; slides lock layout and palette from your master image
 - **Two-stage design** — structure / master first, then content, less template-copy and style drift
 - **Bring your own models** — separate Design / Implement / Search profiles (OpenAI, Anthropic, image2, banana2, …)
+- **Stage hooks** — event hooks stream the design log; context hooks inject contracts, inventories and evidence into each stage prompt as pluggable sections
+- **Case memory + advisor** — design products are kept as cases, recalled by CJK-bigram FTS5 similarity, and an advisor role compares them into layout advice; rate a task good / fair / poor to steer later recalls
 - **Slide visual grounding** — detect products and instruments in material, search appearance cues, draw real objects instead of labeled boxes
 - **Fully local** — config and outputs under `~/.dreampaper/`; keys never enter the repo
 
 ---
 
 ## What's new
+
+**Unreleased**
+- Stage hooks: context injection is now an explicit, pluggable hook chain; the progress log names what each stage was injected with
+- Case memory: design products are stored and recalled through CJK-bigram FTS5, up to 3 same-mode matches per task
+- Advisor role: compares the recalled cases and injects reusable layouts, term mappings and failure modes to avoid
+- Task rating: tag a finished task good / fair / poor; the rating lives in the case record and informs the advisor
+- Multi-task tabs: up to 8 isolated task pages each on the figure and slide screens
+- Result card: the workbench and download buttons are equal height and flush with the card edges
 
 **v0.1.3**
 - Reworked history manager: browse every past job, rerun any of them in one click

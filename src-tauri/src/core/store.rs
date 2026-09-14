@@ -228,7 +228,10 @@ CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
 ///
 /// Append only; never edit a shipped step. Each step must be safe to run on
 /// a database that already has every earlier step applied.
-const MIGRATIONS: &[(i64, &str)] = &[(2, MIGRATION_V2_WORKBENCH)];
+const MIGRATIONS: &[(i64, &str)] = &[
+    (2, MIGRATION_V2_WORKBENCH),
+    (3, MIGRATION_V3_MEMORY),
+];
 
 /// v2: the image workbench. Source snapshots are immutable and deduplicated by
 /// content digest; projects reference them by id, and the JSON document on
@@ -274,6 +277,27 @@ CREATE TABLE IF NOT EXISTS workbench_exports(
 );
 
 CREATE INDEX IF NOT EXISTS workbench_exports_project ON workbench_exports(project_id);
+"#;
+
+/// v3: case memory. One row per job that reached the implement stage, holding
+/// the design product and the user's rating. `memory_fts` indexes the task
+/// brief rewritten as CJK bigrams (see `memory.rs`); it is external-content
+/// free so the index text can differ from the stored brief.
+const MIGRATION_V3_MEMORY: &str = r#"
+CREATE TABLE IF NOT EXISTS memory_cases(
+  rowid INTEGER PRIMARY KEY,
+  job_id TEXT NOT NULL UNIQUE,
+  mode TEXT NOT NULL,
+  title TEXT NOT NULL,
+  brief TEXT NOT NULL,
+  design_json TEXT NOT NULL,
+  rating TEXT,
+  created_at TEXT NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS memory_cases_mode ON memory_cases(mode);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS memory_fts USING fts5(body);
 "#;
 
 #[cfg(test)]
@@ -342,7 +366,7 @@ mod tests {
         }
 
         let store = Store::initialize(&dir).expect("升级应成功");
-        assert_eq!(store.schema_version().unwrap(), 2);
+        assert_eq!(store.schema_version().unwrap(), 3);
         let conn = store.connection().unwrap();
         let tables: i64 = conn
             .query_row(
@@ -353,10 +377,18 @@ mod tests {
             )
             .unwrap();
         assert_eq!(tables, 3, "工作台表未建齐");
+        let memory: i64 = conn
+            .query_row(
+                "SELECT count(*) FROM sqlite_master WHERE name IN ('memory_cases','memory_fts')",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(memory, 2, "案例记忆表未建齐");
         drop(conn);
 
         let again = Store::initialize(&dir).expect("重复初始化应成功");
-        assert_eq!(again.schema_version().unwrap(), 2);
+        assert_eq!(again.schema_version().unwrap(), 3);
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

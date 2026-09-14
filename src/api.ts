@@ -2,6 +2,7 @@ import type {
   AppConfig,
   AssetUpload,
   DesignLogEvent,
+  JobRating,
   JobRecord,
   ReleaseInfo,
   TemplatePackSummary,
@@ -151,6 +152,11 @@ export function cancelJob(id: string) {
 
 export function deleteJob(id: string) {
   return ipc<null>('delete_job', { id });
+}
+
+/** Tag a finished job 优/良/差; `null` clears the tag. The case memory keeps it. */
+export function rateJob(id: string, rating: JobRating | null) {
+  return ipc<JobRecord>('rate_job', { id, rating });
 }
 
 export function deleteTemplates(ids: string[]) {

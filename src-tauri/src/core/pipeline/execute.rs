@@ -8,6 +8,7 @@ use crate::core::asset::AssetService;
 use crate::core::config::ConfigService;
 use crate::core::doc::extract_material_text;
 use crate::core::job::{JobImage, JobService};
+use crate::core::memory::{Fingerprint, MemoryService, RECALL_LIMIT};
 use crate::core::model::design::ImageInput;
 use crate::core::net::{decode_b64, encode_b64};
 use crate::core::pipeline::figure::{self, FigureRun, PaperFigurePayload};
@@ -146,7 +147,14 @@ pub fn spawn(app: AppHandle, core: Arc<Core>, job_id: String) {
                 return;
             }
             match outcome {
-                Ok(images) => {
+                Ok(RunOutput { images, case }) => {
+                    // The case is sedimented before the job is marked done, so
+                    // a rating can never race ahead of the row it lands on. A
+                    // memory failure is not a job failure: the image exists.
+                    if let Some((fingerprint, design)) = case {
+                        sink("memory_record", "沉淀 design 产物到案例库");
+                        let _ = MemoryService::new(&core.store).record(&job_id, &fingerprint, &design);
+                    }
                     let _ = JobService::new(&core.store).finish(&job_id, &images);
                     emit("completed", "任务完成", "succeeded");
                 }
@@ -171,12 +179,41 @@ pub fn spawn(app: AppHandle, core: Arc<Core>, job_id: String) {
         .register(&job_id, cancelled, move || handle.abort());
 }
 
+struct RunOutput {
+    images: Vec<JobImage>,
+    /// The task fingerprint and design product to sediment as a case.
+    case: Option<(Fingerprint, serde_json::Value)>,
+}
+
+/// Recall similar finished cases for this job, or nothing when the brief is
+/// empty or the memory query fails: recall is best effort, the job is not.
+fn recall_cases(
+    core: &Core,
+    job_id: &str,
+    fingerprint: Option<&Fingerprint>,
+    stage: &(dyn Fn(&str, &str) + Send + Sync),
+    stage_key: &str,
+) -> Vec<crate::core::memory::MemoryCase> {
+    let Some(fingerprint) = fingerprint else {
+        return Vec::new();
+    };
+    let cases = MemoryService::new(&core.store)
+        .recall(fingerprint, Some(job_id), RECALL_LIMIT)
+        .unwrap_or_default();
+    if cases.is_empty() {
+        stage(stage_key, "案例库中没有相似历史任务，跳过 advisor");
+    } else {
+        stage(stage_key, &format!("召回 {} 个相似历史案例", cases.len()));
+    }
+    cases
+}
+
 async fn run(
     core: &Core,
     job_id: &str,
     stage: &(dyn Fn(&str, &str) + Send + Sync),
     design_log: DesignSink<'_>,
-) -> AppResult<Vec<JobImage>> {
+) -> AppResult<RunOutput> {
     let envelope = JobService::new(&core.store).payload(job_id)?;
     let mode = envelope
         .get("mode")
@@ -187,6 +224,7 @@ async fn run(
         .get("payload")
         .cloned()
         .unwrap_or(serde_json::Value::Null);
+    let fingerprint = Fingerprint::from_payload(&envelope);
 
     let config = ConfigService::new(&core.store).runtime_config()?;
     let design_profile = ConfigService::active_profile(&config, "design")?.clone();
@@ -208,6 +246,8 @@ async fn run(
                 images.push(read_image_input(&detail.image_path, &detail.mime_type)?);
             }
 
+            let similar_cases =
+                recall_cases(core, job_id, fingerprint.as_ref(), stage, "paper_memory");
             let run = FigureRun {
                 prompts: &core.prompts,
                 config: &config,
@@ -218,9 +258,14 @@ async fn run(
                 app_data: &core.app_data,
                 job_id,
                 design_log,
+                similar_cases,
+                fingerprint: fingerprint.clone(),
             };
-            let image_b64 = run.run(&payload, stage).await?;
-            Ok(vec![save_image(core, job_id, "figure.png", &image_b64)?])
+            let output = run.run(&payload, stage).await?;
+            Ok(RunOutput {
+                images: vec![save_image(core, job_id, "figure.png", &output.image_b64)?],
+                case: fingerprint.map(|fingerprint| (fingerprint, output.design)),
+            })
         }
         "ppt_slide" => {
             let payload: PptSlidePayload = serde_json::from_value(payload)?;
@@ -246,6 +291,18 @@ async fn run(
             }
             let material_context =
                 compose_material_context(&payload.material_text, &material_assets);
+            // File material has no payload field, so a deck built only from
+            // uploads still gets a fingerprint from the composed context.
+            let fingerprint = fingerprint.or_else(|| {
+                let brief = material_context.trim();
+                (!brief.is_empty()).then(|| Fingerprint {
+                    mode: "ppt_slide".to_string(),
+                    title: brief.lines().next().unwrap_or_default().trim().to_string(),
+                    brief: brief.chars().take(4000).collect(),
+                })
+            });
+            let similar_cases =
+                recall_cases(core, job_id, fingerprint.as_ref(), stage, "ppt_memory");
 
             let run = SlideRun {
                 prompts: &core.prompts,
@@ -256,16 +313,23 @@ async fn run(
                 template_image,
                 material_context,
                 design_log,
+                similar_cases,
+                fingerprint: fingerprint.clone(),
             };
-            let pages = run.run(&payload, stage).await?;
+            let output = run.run(&payload, stage).await?;
             stage("ppt_save", "保存生成图片");
-            pages
+            let images = output
+                .pages
                 .iter()
                 .enumerate()
                 .map(|(index, image_b64)| {
                     save_image(core, job_id, &format!("slide_{}.png", index + 1), image_b64)
                 })
-                .collect()
+                .collect::<AppResult<Vec<_>>>()?;
+            Ok(RunOutput {
+                images,
+                case: fingerprint.map(|fingerprint| (fingerprint, output.design)),
+            })
         }
         other => Err(AppError::new(
             "invalid_mode",

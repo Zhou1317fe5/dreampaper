@@ -1652,9 +1652,62 @@ textarea:focus {
 
 .result-card-footer {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+}
+
+.result-card-actions {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
   gap: 10px;
+}
+
+.result-card-actions .download-button {
+  height: 36px;
+  min-height: 36px;
+  box-sizing: border-box;
+}
+
+/* With no workbench button (web build) the download still sits at the right edge. */
+.result-card-actions .result-download {
+  margin-left: auto;
+}
+
+.rate-row {
+  display: flex;
   align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.rate-label {
+  color: #59626c;
+  font-size: 0.9rem;
+}
+
+.rate-btn {
+  min-width: 44px;
+  min-height: 30px;
+  padding: 0 12px;
+  border: 1px solid rgba(52, 65, 60, 0.18);
+  border-radius: 999px;
+  background: transparent;
+  color: #34413c;
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.rate-btn.active.rate-good {
+  background: #d6f0e5;
+}
+
+.rate-btn.active.rate-fair {
+  background: #fdf1cf;
+}
+
+.rate-btn.active.rate-poor {
+  background: #fcdce9;
 }
 
 .result-card-footer span {

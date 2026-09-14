@@ -3,6 +3,7 @@ pub mod cancel;
 pub mod config;
 pub mod doc;
 pub mod job;
+pub mod memory;
 pub mod model;
 pub mod net;
 pub mod pipeline;
@@ -203,6 +204,27 @@ impl Core {
 
     pub fn delete_job(&self, id: String) -> AppResult<()> {
         JobService::new(&self.store).delete(&self.app_data, &id)
+    }
+
+    /// Tag a finished job 优/良/差 (`good`/`fair`/`poor`), or clear the tag
+    /// with `None`. Only jobs that reached implement have a case to tag.
+    pub fn rate_job(&self, id: String, rating: Option<String>) -> AppResult<JobRecord> {
+        let parsed = match rating.as_deref().map(str::trim).filter(|value| !value.is_empty()) {
+            Some(value) => Some(memory::Rating::parse(value).ok_or_else(|| {
+                crate::error::AppError::new("invalid_rating", "评分只能是 good / fair / poor")
+            })?),
+            None => None,
+        };
+        let jobs = JobService::new(&self.store);
+        let record = jobs.get_job(id.clone())?;
+        if record.status != "succeeded" {
+            return Err(crate::error::AppError::new(
+                "job_not_finished",
+                "只能评价已完成的任务",
+            ));
+        }
+        memory::MemoryService::new(&self.store).rate(&id, parsed)?;
+        jobs.get_job(id)
     }
 
     pub fn delete_templates(&self, ids: Vec<String>) -> AppResult<usize> {

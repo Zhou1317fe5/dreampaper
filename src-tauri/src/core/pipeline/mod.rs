@@ -1,6 +1,8 @@
+pub mod advisor;
 pub mod contract;
 pub mod execute;
 pub mod figure;
+pub mod hook;
 pub mod runner;
 pub mod slide;
 pub mod slide_validate;

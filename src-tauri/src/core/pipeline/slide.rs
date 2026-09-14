@@ -5,10 +5,13 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 
 use crate::core::config::{AppConfig, ModelProfile};
+use crate::core::memory::{Fingerprint, MemoryCase};
 use crate::core::model::design::ImageInput;
 use crate::core::model::implement::ImplementClient;
+use crate::core::pipeline::advisor::{AdvisorHook, AdvisorRun};
 use crate::core::pipeline::contract;
 use crate::core::pipeline::figure::StageSink;
+use crate::core::pipeline::hook::{injected_summary, ContextHooks, Section, StaticContext};
 use crate::core::pipeline::runner::{parse_validate_or_fill, DesignCall, DesignStep};
 use crate::core::pipeline::slide_validate::{
     apply_master_prompt_prefix, validate_ppt_outline, validate_ppt_pages, validate_ppt_single_page,
@@ -17,11 +20,16 @@ use crate::core::pipeline::slide_validate::{
 use crate::core::pipeline::visual::{
     build_visual_asset_context, visual_asset_context_text, VisualTerms,
 };
-use crate::core::prompt::{compose_prompt, PromptAsset, PromptStore};
+use crate::core::prompt::{PromptAsset, PromptStore};
 use crate::error::{AppError, AppResult};
 use crate::event::DesignSink;
 
-const PPT_DESIGN_TIMEOUT_SECONDS: u64 = 300;
+/// Stage keys the context hooks are registered against. Page planning shares
+/// one key across pages: the hooks contribute the same deck-level context to
+/// every page, and the page-specific sections stay with the call.
+pub const STAGE_ANALYZE: &str = "ppt_analyze";
+pub const STAGE_OUTLINE: &str = "ppt_outline";
+pub const STAGE_PAGE: &str = "ppt_page_plan";
 
 const PPT_PLAN_TEMPLATE_LIMIT: usize = 2600;
 const PPT_PLAN_MATERIAL_LIMIT: usize = 3200;
@@ -298,12 +306,8 @@ struct PagePlanContext<'a> {
     system_prompt: &'a str,
     page_assets: &'a [PromptAsset],
     template_analysis: &'a Value,
-    compact_template_analysis: &'a str,
-    compact_material_context: &'a str,
-    compact_visual_asset_prompt: &'a str,
+    hooks: &'a ContextHooks,
     deck_outline: &'a Value,
-    custom_prompt: &'a str,
-    timeout_seconds: u64,
     proxy_url: Option<&'a str>,
     design_log: DesignSink<'a>,
 }
@@ -315,43 +319,40 @@ impl PagePlanContext<'_> {
             &format!("ppt_page_prompt_{page_number}"),
             &format!("拼接第 {page_number} 页规划 prompt"),
         );
-        let page_prompt = compose_prompt(
-            self.page_assets,
-            &[
-                (
-                    "Task Mode",
-                    "Single-page worker mode. Return exactly one page object only. \
-                     Do not plan or output other pages."
-                        .to_string(),
-                ),
-                (
-                    "Template Analysis",
-                    self.compact_template_analysis.to_string(),
-                ),
-                ("Deck Outline", serde_json::to_string(self.deck_outline)?),
-                (
-                    "Current Page Brief",
-                    serde_json::to_string_pretty(page_brief)?,
-                ),
-                (
-                    "Adjacent Page Context",
-                    serde_json::to_string_pretty(&adjacent_page_context(
-                        self.deck_outline,
-                        page_number,
-                    ))?,
-                ),
-                ("Material", self.compact_material_context.to_string()),
-                (
-                    "Visual Asset Search Context",
-                    self.compact_visual_asset_prompt.to_string(),
-                ),
-                ("Custom Prompt", self.custom_prompt.to_string()),
-                (
-                    "Output Contract",
-                    contract::ppt_single_page(page_number.max(0) as usize),
-                ),
-            ],
-        );
+        let page_prompt = self
+            .hooks
+            .compose(
+                STAGE_PAGE,
+                self.page_assets,
+                vec![
+                    Section::new(
+                        "Task Mode",
+                        "Single-page worker mode. Return exactly one page object only. \
+                         Do not plan or output other pages.",
+                    )
+                    .at(-30),
+                    Section::new("Deck Outline", serde_json::to_string(self.deck_outline)?).at(-15),
+                    Section::new(
+                        "Current Page Brief",
+                        serde_json::to_string_pretty(page_brief)?,
+                    )
+                    .at(-12),
+                    Section::new(
+                        "Adjacent Page Context",
+                        serde_json::to_string_pretty(&adjacent_page_context(
+                            self.deck_outline,
+                            page_number,
+                        ))?,
+                    )
+                    .at(-11),
+                    Section::new(
+                        "Output Contract",
+                        contract::ppt_single_page(page_number.max(0) as usize),
+                    )
+                    .at(crate::core::pipeline::hook::CONTRACT_ORDER),
+                ],
+            )
+            .prompt;
 
         stage(
             &format!("ppt_page_plan_{page_number}"),
@@ -365,7 +366,6 @@ impl PagePlanContext<'_> {
             system_prompt: self.system_prompt,
             user_prompt: &page_prompt,
             images: &no_images,
-            timeout_seconds: Some(self.timeout_seconds),
             proxy_url: self.proxy_url,
             response_sink: None,
             log: Some(DesignStep {
@@ -394,6 +394,16 @@ pub struct SlideRun<'a> {
     pub template_image: ImageInput,
     pub material_context: String,
     pub design_log: DesignSink<'a>,
+    /// Recalled cases for the advisor step; empty means the step is skipped.
+    pub similar_cases: Vec<MemoryCase>,
+    pub fingerprint: Option<Fingerprint>,
+}
+
+/// What a slide run hands back: one image per page and the deck-level design
+/// product (master analysis plus outline) the memory keeps as the case.
+pub struct SlideOutput {
+    pub pages: Vec<String>,
+    pub design: Value,
 }
 
 impl SlideRun<'_> {
@@ -401,7 +411,7 @@ impl SlideRun<'_> {
         &self,
         payload: &PptSlidePayload,
         stage: StageSink<'_>,
-    ) -> AppResult<Vec<String>> {
+    ) -> AppResult<SlideOutput> {
         let proxy = self.config.proxy_url.as_deref();
         let page_count = payload.page_count;
         let custom_prompt = payload.custom_prompt_text();
@@ -409,8 +419,6 @@ impl SlideRun<'_> {
             resolve_ppt_concurrency(self.config.ppt_page_plan_concurrency, page_count);
         let image_concurrency =
             resolve_ppt_concurrency(self.config.ppt_image_concurrency, page_count);
-        let design_timeout =
-            (self.design_profile.timeout_seconds.max(0) as u64).max(PPT_DESIGN_TIMEOUT_SECONDS);
 
         if self.material_context.trim().is_empty() {
             return Err(AppError::new(
@@ -431,15 +439,58 @@ impl SlideRun<'_> {
         let visual_asset_prompt = visual_asset_context_text(&visual_asset_context);
         let ppt_output = ppt_output_defaults(self.implement_profile);
 
+        let mut hooks = ContextHooks::default();
+        hooks.register(
+            StaticContext::new(
+                "analysis-contract",
+                &[STAGE_ANALYZE],
+                "Output Contract",
+                contract::template_analysis(),
+            )
+            .contract(),
+        );
+        hooks.register(StaticContext::new(
+            "content-inventory",
+            &[STAGE_OUTLINE, STAGE_PAGE],
+            "Material",
+            truncate_text(&self.material_context, PPT_PLAN_MATERIAL_LIMIT),
+        ));
+        hooks.register(
+            StaticContext::new(
+                "search-evidence",
+                &[STAGE_OUTLINE, STAGE_PAGE],
+                "Visual Asset Search Context",
+                truncate_text(&visual_asset_prompt, PPT_PLAN_VISUAL_CONTEXT_LIMIT),
+            )
+            .at(5),
+        );
+        hooks.register(
+            StaticContext::new(
+                "custom-prompt",
+                &[STAGE_OUTLINE, STAGE_PAGE],
+                "Custom Prompt",
+                custom_prompt.clone(),
+            )
+            .at(20),
+        );
+        hooks.register(
+            StaticContext::new(
+                "outline-contract",
+                &[STAGE_OUTLINE],
+                "Output Contract",
+                contract::ppt_outline(page_count),
+            )
+            .contract(),
+        );
+
         let analyzer_assets = self.prompts.load_all(&[
             "global/system.md",
             "modes/ppt_slide/analyzer.md",
             "modes/ppt_slide/master_rules.md",
         ])?;
-        let analyzer_prompt = compose_prompt(
-            &analyzer_assets,
-            &[("Output Contract", contract::template_analysis().to_string())],
-        );
+        let analyzer_prompt = hooks
+            .compose(STAGE_ANALYZE, &analyzer_assets, Vec::new())
+            .prompt;
         let template_images = vec![self.template_image.clone()];
 
         let analyzer_call = DesignCall {
@@ -447,7 +498,6 @@ impl SlideRun<'_> {
             system_prompt: &analyzer_assets[0].content,
             user_prompt: &analyzer_prompt,
             images: &template_images,
-            timeout_seconds: Some(design_timeout),
             proxy_url: proxy,
             response_sink: None,
             log: Some(DesignStep {
@@ -472,33 +522,62 @@ impl SlideRun<'_> {
             "global/expression.md",
             "styles/academic_ppt.md",
         ])?;
-        let compact_template_analysis = compact_template_analysis(&template_analysis);
-        let compact_material_context =
-            truncate_text(&self.material_context, PPT_PLAN_MATERIAL_LIMIT);
-        let compact_visual_asset_prompt =
-            truncate_text(&visual_asset_prompt, PPT_PLAN_VISUAL_CONTEXT_LIMIT);
+        // The master contract distils the template image into text; from here
+        // on no stage sees the image again, only this section.
+        hooks.register(
+            StaticContext::new(
+                "master-contract",
+                &[STAGE_OUTLINE, STAGE_PAGE],
+                "Template Analysis",
+                compact_template_analysis(&template_analysis),
+            )
+            .at(-20),
+        );
 
-        stage("ppt_outline_prompt", "拼接整套大纲规划 prompt");
-        let outline_prompt = compose_prompt(
+        if let Some(fingerprint) = self
+            .fingerprint
+            .as_ref()
+            .filter(|_| !self.similar_cases.is_empty())
+        {
+            stage(
+                "ppt_advisor",
+                &format!("advisor 比对 {} 个相似历史案例", self.similar_cases.len()),
+            );
+            let advisor = AdvisorRun {
+                prompts: self.prompts,
+                profile: self.design_profile,
+                proxy_url: proxy,
+                design_log: self.design_log,
+            };
+            match advisor.advise(fingerprint, &self.similar_cases).await {
+                Some(advice) => {
+                    hooks.register(AdvisorHook::new(&[STAGE_OUTLINE, STAGE_PAGE], advice))
+                }
+                None => stage("ppt_advisor", "advisor 未给出可用建议，按无历史案例继续"),
+            }
+        }
+
+        let outline_composed = hooks.compose(
+            STAGE_OUTLINE,
             &page_assets,
-            &[
-                (
+            vec![
+                Section::new(
                     "Task Mode",
                     "Deck outline mode. Plan only the deck narrative and lightweight page briefs. \
-                     Do not write page-level implement_prompt."
-                        .to_string(),
-                ),
-                ("Template Analysis", compact_template_analysis.clone()),
-                ("Material", compact_material_context.clone()),
-                (
-                    "Visual Asset Search Context",
-                    compact_visual_asset_prompt.clone(),
-                ),
-                ("Page Count", page_count.to_string()),
-                ("Custom Prompt", custom_prompt.clone()),
-                ("Output Contract", contract::ppt_outline(page_count)),
+                     Do not write page-level implement_prompt.",
+                )
+                .at(-30),
+                Section::new("Page Count", page_count.to_string()).at(10),
             ],
         );
+        stage(
+            "ppt_outline_prompt",
+            &format!(
+                "拼接整套大纲规划 prompt（注入 {}）",
+                injected_summary(&outline_composed)
+            ),
+        );
+        let outline_prompt = outline_composed.prompt;
 
         let no_images: Vec<ImageInput> = Vec::new();
         let outline_call = DesignCall {
@@ -506,7 +585,6 @@ impl SlideRun<'_> {
             system_prompt: &page_assets[0].content,
             user_prompt: &outline_prompt,
             images: &no_images,
-            timeout_seconds: Some(design_timeout),
             proxy_url: proxy,
             response_sink: None,
             log: Some(DesignStep {
@@ -539,12 +617,8 @@ impl SlideRun<'_> {
             system_prompt: &page_assets[0].content,
             page_assets: &page_assets,
             template_analysis: &template_analysis,
-            compact_template_analysis: &compact_template_analysis,
-            compact_material_context: &compact_material_context,
-            compact_visual_asset_prompt: &compact_visual_asset_prompt,
+            hooks: &hooks,
             deck_outline: &deck_outline,
-            custom_prompt: &custom_prompt,
-            timeout_seconds: design_timeout,
             proxy_url: proxy,
             design_log: self.design_log,
         };
@@ -566,14 +640,33 @@ impl SlideRun<'_> {
             "ppt_implement_queue",
             &format!("按并发 {image_concurrency} 排队生成图片"),
         );
-        run_ordered(
+        let rendered = run_ordered(
             pages
                 .iter()
                 .map(|page| self.implement_page(page, &ppt_output, proxy, stage))
                 .collect(),
             image_concurrency,
         )
-        .await
+        .await?;
+        let page_plans: Vec<Value> = pages
+            .iter()
+            .map(|page| {
+                json!({
+                    "page": page["page"],
+                    "title": page["title"],
+                    "selected_template": page["selected_template"],
+                    "body_layout_plan": page["body_layout_plan"],
+                })
+            })
+            .collect();
+        Ok(SlideOutput {
+            pages: rendered,
+            design: json!({
+                "template_analysis": template_analysis,
+                "deck_outline": deck_outline,
+                "pages": page_plans,
+            }),
+        })
     }
 
     async fn implement_page(

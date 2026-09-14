@@ -1748,6 +1748,187 @@
   font-size: 12px;
 }
 
+.desktop-shell .result-card-actions .download-button {
+  height: 30px;
+  min-height: 30px;
+}
+
+.desktop-shell .rate-label {
+  color: var(--text-2);
+  font-size: 12px;
+}
+
+.desktop-shell .rate-btn {
+  min-width: 40px;
+  min-height: 28px;
+  padding: 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-pill);
+  background: var(--chip);
+  color: var(--text-1);
+  font-size: 12px;
+  font-weight: 600;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+
+.desktop-shell .rate-btn:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+}
+
+.desktop-shell .rate-btn.active.rate-good {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-ink);
+}
+
+.desktop-shell .rate-btn.active.rate-fair {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--amber) 18%, transparent);
+  color: var(--amber);
+}
+
+.desktop-shell .rate-btn.active.rate-poor {
+  border-color: transparent;
+  background: color-mix(in srgb, var(--rose) 14%, transparent);
+  color: var(--rose);
+}
+
+/* Task tabs: one strip above the two-card work area of the figure and slide
+   pages. The strip is auto-height; the work grid keeps the remaining space. */
+.task-page {
+  display: grid;
+  min-width: 0;
+  min-height: 0;
+  grid-template-rows: auto minmax(0, 1fr);
+  gap: 10px;
+}
+
+.task-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+  padding: 0 2px;
+}
+
+.task-tab {
+  display: inline-flex;
+  height: 30px;
+  max-width: 220px;
+  align-items: center;
+  gap: 6px;
+  padding: 0 6px 0 12px;
+  border: 1px solid var(--hairline);
+  border-radius: var(--r-pill);
+  background: var(--card);
+  color: var(--text-2);
+  font-size: 12.5px;
+  font-weight: 550;
+  cursor: pointer;
+  user-select: none;
+  transition: background 160ms ease, color 160ms ease, border-color 160ms ease;
+}
+
+.task-tab:hover {
+  color: var(--text-1);
+}
+
+.task-tab.active {
+  border-color: color-mix(in srgb, var(--accent) 45%, transparent);
+  background: var(--accent-soft);
+  color: var(--accent-ink);
+}
+
+.task-tab:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.task-tab-label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.task-tab-dot {
+  width: 7px;
+  height: 7px;
+  flex: none;
+  border-radius: 50%;
+  background: var(--text-3);
+}
+
+.task-tab-dot.running,
+.task-tab-dot.queued {
+  background: var(--amber);
+  animation: task-pulse 1.2s ease-in-out infinite;
+}
+
+.task-tab-dot.succeeded {
+  background: var(--accent);
+}
+
+.task-tab-dot.failed {
+  background: var(--rose);
+}
+
+@keyframes task-pulse {
+  50% {
+    opacity: 0.35;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .task-tab-dot.running,
+  .task-tab-dot.queued {
+    animation: none;
+  }
+}
+
+.task-tab-close {
+  display: inline-grid;
+  width: 18px;
+  height: 18px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 14px;
+  line-height: 1;
+  opacity: 0.55;
+  cursor: pointer;
+}
+
+.task-tab-close:hover {
+  background: color-mix(in srgb, currentColor 14%, transparent);
+  opacity: 1;
+}
+
+.task-tab-add {
+  display: inline-grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px dashed color-mix(in srgb, var(--text-3) 55%, transparent);
+  border-radius: 50%;
+  background: transparent;
+  color: var(--text-2);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+}
+
+.task-tab-add:hover:not(:disabled) {
+  border-color: var(--accent);
+  color: var(--accent-ink);
+}
+
+.task-tab-add:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
 .desktop-shell .download-button {
   min-height: 30px;
   padding: 0 13px;
@@ -2019,6 +2200,23 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+/* The user's rating, shown next to the status pill with the same colours as
+   the rate buttons on the result card. */
+.hc-rating.hc-rating-good {
+  background: color-mix(in srgb, var(--accent) 16%, transparent);
+  color: var(--accent-ink);
+}
+
+.hc-rating.hc-rating-fair {
+  background: color-mix(in srgb, var(--amber) 18%, transparent);
+  color: var(--amber);
+}
+
+.hc-rating.hc-rating-poor {
+  background: color-mix(in srgb, var(--rose) 14%, transparent);
+  color: var(--rose);
 }
 
 .hc-title {

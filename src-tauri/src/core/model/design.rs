@@ -3,7 +3,7 @@ use serde_json::{json, Value};
 use crate::core::config::ModelProfile;
 use crate::core::net::{
     data_url, model_error, model_http_error, normalize_base_url, post_json_with_retries,
-    post_sse_with_retries, require_api_key, PostOptions, SseObserver, SseSignal,
+    post_sse_with_retries, require_api_key, SseObserver, SseSignal,
 };
 use crate::error::AppResult;
 
@@ -168,7 +168,6 @@ impl DesignClient {
         system_prompt: &str,
         user_prompt: &str,
         images: &[ImageInput],
-        timeout_seconds: Option<u64>,
         proxy_url: Option<&str>,
         sink: Option<DeltaSink<'_>>,
     ) -> AppResult<String> {
@@ -179,28 +178,12 @@ impl DesignClient {
         };
         match protocol {
             "openai_chat" => {
-                Self::openai_chat(
-                    profile,
-                    system_prompt,
-                    user_prompt,
-                    images,
-                    timeout_seconds,
-                    proxy_url,
-                    sink,
-                )
-                .await
+                Self::openai_chat(profile, system_prompt, user_prompt, images, proxy_url, sink)
+                    .await
             }
             "openai_responses" => {
-                Self::openai_responses(
-                    profile,
-                    system_prompt,
-                    user_prompt,
-                    images,
-                    timeout_seconds,
-                    proxy_url,
-                    sink,
-                )
-                .await
+                Self::openai_responses(profile, system_prompt, user_prompt, images, proxy_url, sink)
+                    .await
             }
             "anthropic_messages" => {
                 Self::anthropic_messages(
@@ -208,7 +191,6 @@ impl DesignClient {
                     system_prompt,
                     user_prompt,
                     images,
-                    timeout_seconds,
                     proxy_url,
                     sink,
                 )
@@ -223,7 +205,6 @@ impl DesignClient {
         system_prompt: &str,
         user_prompt: &str,
         images: &[ImageInput],
-        timeout_seconds: Option<u64>,
         proxy_url: Option<&str>,
         sink: Option<DeltaSink<'_>>,
     ) -> AppResult<String> {
@@ -254,14 +235,13 @@ impl DesignClient {
                 &url,
                 &payload,
                 Self::bearer(profile)?,
-                timeout_seconds,
                 proxy_url,
                 sink,
             )
             .await?;
             return collect_stream_text("openai_chat", &events);
         }
-        let data = Self::post(profile, &url, &payload, timeout_seconds, proxy_url).await?;
+        let data = Self::post(profile, &url, &payload, proxy_url).await?;
         if let Some(error) = upstream_error_message(&data) {
             return Err(model_error(format!(
                 "模型在 HTTP 200 中返回错误对象: {error}"
@@ -283,7 +263,6 @@ impl DesignClient {
         system_prompt: &str,
         user_prompt: &str,
         images: &[ImageInput],
-        timeout_seconds: Option<u64>,
         proxy_url: Option<&str>,
         sink: Option<DeltaSink<'_>>,
     ) -> AppResult<String> {
@@ -312,14 +291,13 @@ impl DesignClient {
                 &url,
                 &payload,
                 Self::bearer(profile)?,
-                timeout_seconds,
                 proxy_url,
                 sink,
             )
             .await?;
             return collect_stream_text("openai_responses", &events);
         }
-        let data = Self::post(profile, &url, &payload, timeout_seconds, proxy_url).await?;
+        let data = Self::post(profile, &url, &payload, proxy_url).await?;
         if let Some(error) = upstream_error_message(&data) {
             return Err(model_error(format!(
                 "模型在 HTTP 200 中返回错误对象: {error}"
@@ -354,7 +332,6 @@ impl DesignClient {
         system_prompt: &str,
         user_prompt: &str,
         images: &[ImageInput],
-        timeout_seconds: Option<u64>,
         proxy_url: Option<&str>,
         sink: Option<DeltaSink<'_>>,
     ) -> AppResult<String> {
@@ -396,7 +373,6 @@ impl DesignClient {
                 &url,
                 &payload,
                 headers,
-                timeout_seconds,
                 proxy_url,
                 sink,
             )
@@ -405,18 +381,8 @@ impl DesignClient {
         }
         let mut last_empty_detail = String::new();
         for _ in 0..EMPTY_TEXT_RETRY_ATTEMPTS {
-            let outcome = post_json_with_retries(
-                profile,
-                &url,
-                &payload,
-                headers.clone(),
-                PostOptions {
-                    timeout_seconds,
-                    proxy_url,
-                    ..Default::default()
-                },
-            )
-            .await?;
+            let outcome =
+                post_json_with_retries(profile, &url, &payload, headers.clone(), proxy_url).await?;
             if outcome.status >= 400 {
                 return Err(model_http_error(
                     profile,
@@ -462,21 +428,11 @@ impl DesignClient {
         profile: &ModelProfile,
         url: &str,
         payload: &Value,
-        timeout_seconds: Option<u64>,
         proxy_url: Option<&str>,
     ) -> AppResult<Value> {
-        let outcome = post_json_with_retries(
-            profile,
-            url,
-            payload,
-            Self::bearer(profile)?,
-            PostOptions {
-                timeout_seconds,
-                proxy_url,
-                ..Default::default()
-            },
-        )
-        .await?;
+        let outcome =
+            post_json_with_retries(profile, url, payload, Self::bearer(profile)?, proxy_url)
+                .await?;
         if outcome.status >= 400 {
             return Err(model_http_error(
                 profile,
@@ -504,7 +460,6 @@ impl DesignClient {
         url: &str,
         payload: &Value,
         headers: Vec<(String, String)>,
-        timeout_seconds: Option<u64>,
         proxy_url: Option<&str>,
         sink: Option<DeltaSink<'_>>,
     ) -> AppResult<Vec<Value>> {
@@ -521,19 +476,8 @@ impl DesignClient {
         let observer: Option<SseObserver<'_>> = forward
             .as_ref()
             .map(|forward| forward as &(dyn Fn(SseSignal<'_>) + Send + Sync));
-        let outcome = post_sse_with_retries(
-            profile,
-            url,
-            payload,
-            headers,
-            PostOptions {
-                timeout_seconds,
-                proxy_url,
-                ..Default::default()
-            },
-            observer,
-        )
-        .await?;
+        let outcome =
+            post_sse_with_retries(profile, url, payload, headers, proxy_url, observer).await?;
         if outcome.status >= 400 {
             return Err(model_http_error(
                 profile,

@@ -4,8 +4,7 @@ use serde_json::{json, Value};
 
 use crate::core::config::ModelProfile;
 use crate::core::net::{
-    build_client, model_error, normalize_base_url, post_json_with_retries, require_api_key,
-    PostOptions,
+    build_model_client, model_error, normalize_base_url, post_json_with_retries, require_api_key,
 };
 use crate::error::AppResult;
 
@@ -53,8 +52,8 @@ impl SearchClient {
         } else {
             format!("{base}/html/?q={encoded}")
         };
-        let timeout = profile.timeout_seconds.max(1) as u64;
-        let client = build_client(timeout, proxy_url)?;
+        let timeout = profile.request_timeout();
+        let client = build_model_client(timeout, proxy_url)?;
         let mut request = client
             .get(&url)
             .header("User-Agent", "Mozilla/5.0 dreampaper visual asset search");
@@ -108,10 +107,7 @@ impl SearchClient {
             &format!("{base}/search"),
             &payload,
             vec![],
-            PostOptions {
-                proxy_url,
-                ..Default::default()
-            },
+            proxy_url,
         )
         .await?;
         if outcome.status >= 400 {
@@ -187,10 +183,7 @@ impl SearchClient {
                 "Authorization".to_string(),
                 format!("Bearer {}", require_api_key(profile)?),
             )],
-            PostOptions {
-                proxy_url,
-                ..Default::default()
-            },
+            proxy_url,
         )
         .await?;
         if outcome.status >= 400 {

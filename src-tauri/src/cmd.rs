@@ -199,6 +199,16 @@ pub fn delete_job(state: State<'_, AppState>, id: String) -> AppResult<()> {
     state.core().delete_job(id)
 }
 
+/// 优/良/差 on a finished job; `rating: null` clears it.
+#[tauri::command]
+pub fn rate_job(
+    state: State<'_, AppState>,
+    id: String,
+    rating: Option<String>,
+) -> AppResult<JobRecord> {
+    state.core().rate_job(id, rating)
+}
+
 #[tauri::command]
 pub fn save_asset(state: State<'_, AppState>, asset_id: String, path: String) -> AppResult<()> {
     state

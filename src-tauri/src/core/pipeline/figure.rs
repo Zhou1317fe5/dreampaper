@@ -3,13 +3,20 @@ use serde_json::{Map, Value};
 use std::path::{Path, PathBuf};
 
 use crate::core::config::{AppConfig, ModelProfile};
+use crate::core::memory::{Fingerprint, MemoryCase};
 use crate::core::model::design::ImageInput;
 use crate::core::model::implement::ImplementClient;
+use crate::core::pipeline::advisor::{AdvisorHook, AdvisorRun};
+use crate::core::pipeline::hook::{injected_summary, ContextHooks, Section, StaticContext};
 use crate::core::pipeline::runner::{parse_validate_or_fill, DesignCall, DesignStep};
 use crate::core::pipeline::{contract, validate};
-use crate::core::prompt::{compose_prompt, PromptStore};
+use crate::core::prompt::PromptStore;
 use crate::error::{AppError, AppResult};
 use crate::event::DesignSink;
+
+/// Stage keys the context hooks are registered against.
+pub const STAGE_STRUCTURE: &str = "paper_structure";
+pub const STAGE_DESIGN: &str = "paper_design";
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct PaperFigurePayload {
@@ -61,6 +68,16 @@ pub struct FigureRun<'a> {
     pub app_data: &'a Path,
     pub job_id: &'a str,
     pub design_log: DesignSink<'a>,
+    /// Recalled cases for the advisor step; empty means the step is skipped.
+    pub similar_cases: Vec<MemoryCase>,
+    pub fingerprint: Option<Fingerprint>,
+}
+
+/// What a figure run hands back: the image and the design product that the
+/// memory keeps as the job's case.
+pub struct FigureOutput {
+    pub image_b64: String,
+    pub design: Value,
 }
 
 fn save_design_diagnostic(
@@ -129,11 +146,58 @@ impl FigureRun<'_> {
         &self,
         payload: &PaperFigurePayload,
         stage: StageSink<'_>,
-    ) -> AppResult<String> {
+    ) -> AppResult<FigureOutput> {
         let proxy = self.config.proxy_url.as_deref();
 
         let system = self.prompts.load("global/system.md")?;
         let template_summary = serde_json::to_string_pretty(&self.template_metadata)?;
+
+        // Everything the stages share is a hook; the stage code only adds
+        // what is intrinsic to its own call (the task line, the plan it just
+        // produced). Contracts are registered per stage and always close the
+        // prompt.
+        let mut hooks = ContextHooks::default();
+        hooks.register(StaticContext::new(
+            "template-metadata",
+            &[STAGE_STRUCTURE, STAGE_DESIGN],
+            "Selected Template Metadata",
+            template_summary,
+        ));
+        hooks.register(
+            StaticContext::new(
+                "structure-contract",
+                &[STAGE_STRUCTURE],
+                "Output Contract",
+                contract::structure_plan(),
+            )
+            .contract(),
+        );
+        let user_context = serde_json::json!({
+            "Figure title": payload.figure_title.trim(),
+            "Section description": payload.section_description.trim(),
+            "Aspect ratio": payload.aspect_ratio,
+            "Layout fidelity": payload.layout_fidelity,
+            "Style strength": payload.style_strength,
+            "Custom prompt": payload.custom_prompt.clone().unwrap_or_else(|| "None".to_string()),
+        });
+        hooks.register(
+            StaticContext::new(
+                "content-inventory",
+                &[STAGE_DESIGN],
+                "User Input",
+                serde_json::to_string_pretty(&user_context)?,
+            )
+            .at(-5),
+        );
+        hooks.register(
+            StaticContext::new(
+                "paper-contract",
+                &[STAGE_DESIGN],
+                "Output Contract",
+                contract::paper(),
+            )
+            .contract(),
+        );
 
         stage("paper_structure_prompt", "拼接 template 结构分析 prompt");
         let structure_assets = self.prompts.load_all(&[
@@ -141,19 +205,17 @@ impl FigureRun<'_> {
             "global/figure_style.md",
             "modes/paper_figure/structure.md",
         ])?;
-        let structure_prompt = compose_prompt(
+        let structure_composed = hooks.compose(
+            STAGE_STRUCTURE,
             &structure_assets,
-            &[
-                ("Selected Template Metadata", template_summary.clone()),
-                (
-                    "Task",
-                    "Analyze the attached template figure image(s) only. \
-                     Return a reusable structure_plan JSON. Do not invent the user's research content."
-                        .to_string(),
-                ),
-                ("Output Contract", contract::structure_plan().to_string()),
-            ],
+            vec![Section::new(
+                "Task",
+                "Analyze the attached template figure image(s) only. \
+                 Return a reusable structure_plan JSON. Do not invent the user's research content.",
+            )
+            .at(10)],
         );
+        let structure_prompt = structure_composed.prompt;
 
         let structure_retry_count = std::sync::Mutex::new(0usize);
         let structure_app_data = self.app_data;
@@ -174,7 +236,6 @@ impl FigureRun<'_> {
             system_prompt: &system.content,
             user_prompt: &structure_prompt,
             images: &self.template_images,
-            timeout_seconds: None,
             proxy_url: proxy,
             response_sink: Some(&structure_retry_sink),
             log: Some(DesignStep {
@@ -199,7 +260,38 @@ impl FigureRun<'_> {
         })
         .await?;
 
-        stage("paper_prompt", "拼接内容填充与 implement prompt");
+        // The plan is stage-1 output, so it can only join the chain now.
+        hooks.register(
+            StaticContext::new(
+                "structure-plan",
+                &[STAGE_DESIGN],
+                "Structure Plan From Templates",
+                serde_json::to_string_pretty(&structure.value)?,
+            )
+            .at(-10),
+        );
+
+        if let Some(fingerprint) = self
+            .fingerprint
+            .as_ref()
+            .filter(|_| !self.similar_cases.is_empty())
+        {
+            stage(
+                "paper_advisor",
+                &format!("advisor 比对 {} 个相似历史案例", self.similar_cases.len()),
+            );
+            let advisor = AdvisorRun {
+                prompts: self.prompts,
+                profile: self.design_profile,
+                proxy_url: proxy,
+                design_log: self.design_log,
+            };
+            match advisor.advise(fingerprint, &self.similar_cases).await {
+                Some(advice) => hooks.register(AdvisorHook::new(&[STAGE_DESIGN], advice)),
+                None => stage("paper_advisor", "advisor 未给出可用建议，按无历史案例继续"),
+            }
+        }
+
         let design_assets = self.prompts.load_all(&[
             "global/system.md",
             "global/figure_style.md",
@@ -209,26 +301,15 @@ impl FigureRun<'_> {
             "modes/paper_figure/plot_rules.md",
             "modes/paper_figure/validator.md",
         ])?;
-        let user_context = serde_json::json!({
-            "Figure title": payload.figure_title.trim(),
-            "Section description": payload.section_description.trim(),
-            "Aspect ratio": payload.aspect_ratio,
-            "Layout fidelity": payload.layout_fidelity,
-            "Style strength": payload.style_strength,
-            "Custom prompt": payload.custom_prompt.clone().unwrap_or_else(|| "None".to_string()),
-        });
-        let design_prompt = compose_prompt(
-            &design_assets,
-            &[
-                (
-                    "Structure Plan From Templates",
-                    serde_json::to_string_pretty(&structure.value)?,
-                ),
-                ("User Input", serde_json::to_string_pretty(&user_context)?),
-                ("Selected Template Metadata", template_summary),
-                ("Output Contract", contract::paper().to_string()),
-            ],
+        let design_composed = hooks.compose(STAGE_DESIGN, &design_assets, Vec::new());
+        stage(
+            "paper_prompt",
+            &format!(
+                "拼接内容填充 prompt（注入 {}）",
+                injected_summary(&design_composed)
+            ),
         );
+        let design_prompt = design_composed.prompt;
 
         let no_images: Vec<ImageInput> = Vec::new();
         let retry_count = std::sync::Mutex::new(0usize);
@@ -250,7 +331,6 @@ impl FigureRun<'_> {
             system_prompt: &system.content,
             user_prompt: &design_prompt,
             images: &no_images,
-            timeout_seconds: None,
             proxy_url: proxy,
             response_sink: Some(&retry_sink),
             log: Some(DesignStep {
@@ -312,6 +392,12 @@ impl FigureRun<'_> {
         .await?;
 
         stage("paper_save", "保存生成图片");
-        Ok(image_b64)
+        Ok(FigureOutput {
+            image_b64,
+            design: serde_json::json!({
+                "structure_plan": structure.value,
+                "design": design.parsed,
+            }),
+        })
     }
 }

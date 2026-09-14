@@ -243,6 +243,7 @@ function ResultPane({
           }}
           onError={(message) => onMessage(message, 'error')}
           onOpenWorkbench={onOpenWorkbench}
+          onRated={onJob}
         />
       ) : (
         <div className="dp-empty">{emptyText}</div>

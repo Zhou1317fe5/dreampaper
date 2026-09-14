@@ -36,11 +36,30 @@ pub struct ModelProfile {
     pub api_key: Option<String>,
     pub api_version: Option<String>,
     pub headers: serde_json::Map<String, serde_json::Value>,
+    #[serde(default)]
     pub timeout_seconds: i64,
     pub max_retries: i64,
     pub output_defaults: serde_json::Map<String, serde_json::Value>,
     pub has_api_key: Option<bool>,
     pub api_key_hint: Option<String>,
+}
+
+impl ModelProfile {
+    pub fn request_timeout(&self) -> u64 {
+        if self.timeout_seconds > 0 {
+            self.timeout_seconds as u64
+        } else {
+            default_timeout_seconds(&self.role) as u64
+        }
+    }
+}
+
+fn default_timeout_seconds(role: &str) -> i64 {
+    match role {
+        "implement" => 600,
+        "search" => 15,
+        _ => 120,
+    }
 }
 
 pub struct ConfigService<'a> {
@@ -83,6 +102,9 @@ impl<'a> ConfigService<'a> {
         let mut config = self.load_private_config()?;
         ensure_search_profile(&mut config);
         config.proxy_url = normalize_proxy_url(config.proxy_url);
+        for profile in &mut config.model_profiles {
+            profile.timeout_seconds = profile.request_timeout() as i64;
+        }
         Ok(config)
     }
 
@@ -145,6 +167,7 @@ fn normalize_config(mut incoming: AppConfig, existing: Option<AppConfig>) -> App
     incoming.ppt_page_plan_concurrency = normalize_concurrency(incoming.ppt_page_plan_concurrency);
     incoming.ppt_image_concurrency = normalize_concurrency(incoming.ppt_image_concurrency);
     for profile in &mut incoming.model_profiles {
+        profile.timeout_seconds = profile.request_timeout() as i64;
         if profile.protocol == "banna2" {
             profile.protocol = "banana2".to_string();
         }
@@ -210,6 +233,7 @@ fn normalize_concurrency(value: Option<i64>) -> Option<i64> {
 
 fn public_config(mut config: AppConfig) -> AppConfig {
     for profile in &mut config.model_profiles {
+        profile.timeout_seconds = profile.request_timeout() as i64;
         profile.api_key_hint = profile.api_key.as_deref().map(mask_key);
         profile.has_api_key = Some(
             profile
@@ -259,7 +283,7 @@ fn default_search() -> ModelProfile {
         api_key: None,
         api_version: None,
         headers: serde_json::Map::new(),
-        timeout_seconds: 15,
+        timeout_seconds: default_timeout_seconds("search"),
         max_retries: 1,
         output_defaults,
         has_api_key: Some(false),
@@ -278,7 +302,7 @@ fn default_design() -> ModelProfile {
         api_key: None,
         api_version: None,
         headers: serde_json::Map::new(),
-        timeout_seconds: 120,
+        timeout_seconds: default_timeout_seconds("design"),
         max_retries: 2,
         output_defaults: serde_json::Map::new(),
         has_api_key: Some(false),
@@ -313,7 +337,7 @@ fn default_implement() -> ModelProfile {
         api_key: None,
         api_version: None,
         headers: serde_json::Map::new(),
-        timeout_seconds: 600,
+        timeout_seconds: default_timeout_seconds("implement"),
         max_retries: 3,
         output_defaults,
         has_api_key: Some(false),

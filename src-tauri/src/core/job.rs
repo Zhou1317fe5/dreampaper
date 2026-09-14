@@ -71,6 +71,10 @@ pub struct JobRecord {
     /// runs to tens of kilobytes, so list rows stay light the same way `payload`
     /// does.
     pub design_logs: Vec<JobDesignLog>,
+    /// The user's 优/良/差 tag on the finished result, kept on the job's
+    /// memory case. `None` until rated, or when the job never reached implement.
+    #[serde(default)]
+    pub rating: Option<String>,
 }
 
 pub struct JobService<'a> {
@@ -128,6 +132,7 @@ impl<'a> JobService<'a> {
                         .get::<_, Option<String>>(7)?
                         .and_then(|raw| serde_json::from_str(&raw).ok()),
                     design_logs: Vec::new(),
+                    rating: None,
                 })
             })
             .map_err(|error| match error {
@@ -140,6 +145,7 @@ impl<'a> JobService<'a> {
         record.images = self.images_for_job(&record.id)?;
         record.error = self.error_for_job(&record.id, &record.events)?;
         record.design_logs = self.design_logs_for_job(&record.id)?;
+        record.rating = self.rating_for_job(&record.id)?;
         Ok(record)
     }
 
@@ -165,6 +171,7 @@ impl<'a> JobService<'a> {
                 thumbnail: job_thumbnail(row.get(8)?),
                 payload: None,
                 design_logs: Vec::new(),
+                rating: None,
             })
         })?;
         let mut records = rows.collect::<Result<Vec<_>, _>>()?;
@@ -172,6 +179,7 @@ impl<'a> JobService<'a> {
             record.events = self.events_for_job(&record.id)?;
             record.images = self.images_for_job(&record.id)?;
             record.error = self.error_for_job(&record.id, &record.events)?;
+            record.rating = self.rating_for_job(&record.id)?;
         }
         Ok(records)
     }
@@ -224,6 +232,12 @@ impl<'a> JobService<'a> {
             params![job_id, step, label, status, content, now],
         )?;
         Ok(())
+    }
+
+    fn rating_for_job(&self, job_id: &str) -> AppResult<Option<String>> {
+        Ok(super::memory::MemoryService::new(self.store)
+            .rating(job_id)?
+            .map(|rating| rating.as_str().to_string()))
     }
 
     fn design_logs_for_job(&self, job_id: &str) -> AppResult<Vec<JobDesignLog>> {
@@ -367,6 +381,8 @@ impl<'a> JobService<'a> {
         )?;
         conn.execute("DELETE FROM jobs WHERE id = ?1", params![job_id])?;
         drop(conn);
+        // The case would otherwise keep advising from a job the user threw away.
+        super::memory::MemoryService::new(self.store).forget(job_id)?;
         for dir in ["outputs", "logs"] {
             let _ = std::fs::remove_dir_all(app_data.join(dir).join(job_id));
         }

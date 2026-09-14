@@ -77,6 +77,21 @@ Contract:
 Omit `diagram_spec` only for plot/chart. Omit `plot_spec` only for diagram/workflow/comparison/mechanism."#
 }
 
+/// `_advisor_contract`
+pub fn advisor() -> &'static str {
+    r#"Return strict JSON only:
+{
+  "advice": {
+    "reusable_layout": ["layout/expression patterns from the candidates that fit the new brief; empty if none"],
+    "term_mapping": [{"from": "term in the new brief", "to": "preferred label", "reason": "why"}],
+    "failure_modes_to_avoid": ["concrete failure modes seen in or likely from the candidates"],
+    "confidence": "high|medium|low",
+    "notes": "one short sentence on how similar the best candidate is"
+  }
+}
+Keep every list short (at most 6 items). Never copy candidate research content into the advice."#
+}
+
 pub fn template_analysis() -> &'static str {
     r##"Return strict JSON only with professional PPT master analysis:
 {
@@ -250,6 +265,13 @@ mod tests {
         assert!(!outline.contains("\"implement_prompt\":"));
         assert!(!single.contains("size="));
         assert!(single.contains("Do not put API output parameters"));
+    }
+
+    #[test]
+    fn advisor_contract_names_the_three_suggestion_kinds() {
+        for token in ["reusable_layout", "term_mapping", "failure_modes_to_avoid"] {
+            assert!(advisor().contains(token), "advisor contract missing {token}");
+        }
     }
 
     #[test]

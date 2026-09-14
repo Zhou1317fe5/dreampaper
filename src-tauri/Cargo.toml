@@ -49,6 +49,9 @@ tar = "0.4"
 # so an unoptimized image stack makes `tauri dev` look like the thumbnail cache
 # is broken. Only these dependencies are optimized; our own crate stays
 # debuggable and the release profile is untouched.
+[dev-dependencies]
+tokio = { version = "1", features = ["test-util", "net", "io-util"] }
+
 [profile.dev.package.image]
 opt-level = 3
 

@@ -26,6 +26,7 @@ export const desktopCopy = {
       releases: '查看 Releases',
       openFailed: '无法打开外部链接'
     },
+    tasks: { label: '任务页', add: '新建任务页', close: '关闭任务页', untitled: (n: number) => `任务 ${n}`, full: (max: number) => `最多同时打开 ${max} 个任务页` },
     recent: { title: '近期任务', empty: '还没有任务', failed: '失败', running: '进行中', done: '完成', untitled: '未命名任务', finishedAt: '完成于', delete: '删除', confirmDelete: '确认删除', deleteFailed: '删除任务失败', rerun: '重跑', rerunFailed: '重跑失败', rerunUnavailable: '该任务缺少原始输入，无法重跑' },
     history: {
       title: '历史记录',
@@ -43,7 +44,9 @@ export const desktopCopy = {
       earlier: '更早',
       stopped: '已停止',
       zoom: '放大图片',
-      closePreview: '关闭预览'
+      closePreview: '关闭预览',
+      ratingTitle: '用户评分',
+      rating: { good: '优', fair: '良', poor: '差' }
     },
     pane: {
       form: '参数',
@@ -151,6 +154,7 @@ export const desktopCopy = {
       releases: 'View Releases',
       openFailed: 'Failed to open external link'
     },
+    tasks: { label: 'Task tabs', add: 'New task tab', close: 'Close task tab', untitled: (n: number) => `Task ${n}`, full: (max: number) => `At most ${max} task tabs at once` },
     recent: { title: 'Recent jobs', empty: 'No jobs yet', failed: 'failed', running: 'running', done: 'done', untitled: 'Untitled task', finishedAt: 'finished at', delete: 'Delete', confirmDelete: 'Confirm', deleteFailed: 'Failed to delete job', rerun: 'Rerun', rerunFailed: 'Rerun failed', rerunUnavailable: 'Original input missing, cannot rerun' },
     history: {
       title: 'History',
@@ -168,7 +172,9 @@ export const desktopCopy = {
       earlier: 'Earlier',
       stopped: 'Stopped',
       zoom: 'Zoom image',
-      closePreview: 'Close preview'
+      closePreview: 'Close preview',
+      ratingTitle: 'Your rating',
+      rating: { good: 'Good', fair: 'Fair', poor: 'Poor' }
     },
     pane: {
       form: 'Parameters',

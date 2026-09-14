@@ -8,11 +8,12 @@ import {
   listenDesignLog,
   listTemplates,
   openArtifact,
+  rateJob,
   saveAsset,
   saveConfig,
   uploadAsset
 } from './api';
-import type { AppConfig, AssetUpload, JobRecord, ModelProfile, TemplateSummary } from './types';
+import type { AppConfig, AssetUpload, JobRating, JobRecord, ModelProfile, TemplateSummary } from './types';
 
 export type Lang = 'zh' | 'en';
 type UiMode = 'paper' | 'ppt' | 'settings';
@@ -86,10 +87,10 @@ export const copy = {
       noFile: '未选择',
       uploadedFiles: '已上传'
     },
-    settings: { design: 'Design', implement: 'Implement', search: 'Search', searchHint: '幻灯片视觉素材检索。duckduckgo_html 免密钥；tavily 填 API key；openai_chat 可用 Grok/OpenAI 兼容 search model。', proxyAndConcurrency: '代理与并发', proxy: '代理', proxyHint: '本地代理地址，例如 http://127.0.0.1:7890；留空表示不指定代理。', concurrency: '幻灯片并发', concurrencyHint: '留空表示跟随本次输入的幻灯片页数；实际并发不会超过页数。制图建议先设为 1，降低网关 502。', pagePlanConcurrency: '规划并发', imageConcurrency: '制图并发', defaultByPages: '默认=页数', size: '尺寸', quality: '质量', format: '格式', ratio: '比例', clarity: '清晰度', tendency: '倾向', version: '版本', timeout: '超时(秒)', timeoutHint: '同步出图可能较久，implement 建议 600–900。', retries: '重试次数', maxResults: '结果数', stream: '流式', streamOn: '开启', keySet: '密钥已配置', keyNone: '未配置密钥', notSet: '未设置' },
+    settings: { design: 'Design', implement: 'Implement', search: 'Search', searchHint: '幻灯片视觉素材检索。duckduckgo_html 免密钥；tavily 填 API key；openai_chat 可用 Grok/OpenAI 兼容 search model。', proxyAndConcurrency: '代理与并发', proxy: '代理', proxyHint: '本地代理地址，例如 http://127.0.0.1:7890；留空表示不指定代理。', concurrency: '幻灯片并发', concurrencyHint: '留空表示跟随本次输入的幻灯片页数；实际并发不会超过页数。制图建议先设为 1，降低网关 502。', pagePlanConcurrency: '规划并发', imageConcurrency: '制图并发', defaultByPages: '默认=页数', size: '尺寸', quality: '质量', format: '格式', ratio: '比例', clarity: '清晰度', tendency: '倾向', version: '版本', timeout: '超时(秒)', timeoutHint: '同步出图可能较久，implement 建议 600–900。', retries: '重试次数', maxResults: '结果数', stream: '流式', streamOn: '开启', keySet: '密钥已配置', keyNone: '未配置密钥', proxySet: '代理已配置', proxyNone: '未设置代理', notSet: '未设置' },
     paper: { title: '科研图', intro: '选择 template 作为 few-shot 风格参考。', figureTitle: '标题', description: '方法', ratio: '比例', fidelity: '布局', strength: '风格', custom: '约束', customHint: '可选，用于补充禁用元素、强调风格、文字限制或审稿要求。', generate: '生成', generating: '生成中…', search: '搜索', kind: '类型', inherited: '继承', submitted: '科研图任务已提交' },
     ppt: { title: '幻灯片', intro: '上传 template，分析母版，再批量生成页面。', template: '母版', pages: '页数', material: '资料', materialFile: '附件', materialHint: '可输入文字，也可上传 pdf、docx、txt、md、csv 等资料。', custom: '约束', customHint: '可选，用于补充页数结构、禁用元素、术语、颜色或展示重点。', generate: '生成', generating: '生成中…', submitted: '幻灯片任务已提交', uploading: '上传中...', uploaded: '已上传' },
-    result: { title: 'Result', waiting: '等待中', progress: '进度', current: '当前', step: '当前步骤', failed: '失败', completed: '完成', queued: '排队中', running: '运行中', cancelled: '已停止', preview: '预览', download: '下载', of: '/', elapsed: '已用时', stop: '停止任务', stopping: '停止中…', stopped: '任务已停止', stopFailed: '停止失败', saveFailed: '保存失败', previewFailed: '预览失败', editWorkbench: '在工作台编辑', errorTitle: '故障诊断', errorRole: '相关配置', errorProfile: '配置名称', errorModel: '模型', errorEndpoint: '请求地址', errorStatus: 'HTTP 状态', errorStage: '失败阶段', errorSuggestion: '处理建议', designLog: 'Design 分析日志', designLogHint: '每个步骤调用 design model 返回的原文', designLogEmpty: '该步骤没有返回内容', designLogStreaming: '接收中…' }
+    result: { title: 'Result', waiting: '等待中', progress: '进度', current: '当前', step: '当前步骤', failed: '失败', completed: '完成', queued: '排队中', running: '运行中', cancelled: '已停止', preview: '预览', download: '下载', of: '/', elapsed: '已用时', stop: '停止任务', stopping: '停止中…', stopped: '任务已停止', stopFailed: '停止失败', saveFailed: '保存失败', previewFailed: '预览失败', editWorkbench: '在工作台编辑', errorTitle: '故障诊断', errorRole: '相关配置', errorProfile: '配置名称', errorModel: '模型', errorEndpoint: '请求地址', errorStatus: 'HTTP 状态', errorStage: '失败阶段', errorSuggestion: '处理建议', designLog: 'Design 分析日志', designLogHint: '每个步骤调用 design model 返回的原文', designLogEmpty: '该步骤没有返回内容', designLogStreaming: '接收中…', rate: '评价本次结果', rateHint: '评价会记入案例库，后续相似任务由 advisor 参考', rateGood: '优', rateFair: '良', ratePoor: '差', rateFailed: '评分失败' }
   },
   en: {
     nav: { paper: 'Figure', ppt: 'Slide', settings: 'Settings' },
@@ -109,10 +110,10 @@ export const copy = {
       noFile: 'No file',
       uploadedFiles: 'Uploaded'
     },
-    settings: { design: 'Design', implement: 'Implement', search: 'Search', searchHint: 'Slide visual grounding search. duckduckgo_html needs no key; tavily needs API key; openai_chat is an OpenAI-compatible search model (e.g. Grok endpoint).', proxyAndConcurrency: 'Proxy & concurrency', proxy: 'Proxy', proxyHint: 'Local proxy URL, e.g. http://127.0.0.1:7890. Leave empty to disable explicit proxy.', concurrency: 'Slide concurrency', concurrencyHint: 'Leave empty to follow the current Slide page count; actual concurrency will not exceed pages. Prefer image concurrency = 1 to reduce 502s.', pagePlanConcurrency: 'Plan workers', imageConcurrency: 'Image workers', defaultByPages: 'default=pages', size: 'Size', quality: 'Quality', format: 'Format', ratio: 'Ratio', clarity: 'Sharpness', tendency: 'Quality', version: 'Version', timeout: 'Timeout (s)', timeoutHint: 'Sync image APIs can be slow; implement often needs 600–900s.', retries: 'Retries', maxResults: 'Results', stream: 'Stream', streamOn: 'On', keySet: 'Key set', keyNone: 'No key', notSet: 'Not set' },
+    settings: { design: 'Design', implement: 'Implement', search: 'Search', searchHint: 'Slide visual grounding search. duckduckgo_html needs no key; tavily needs API key; openai_chat is an OpenAI-compatible search model (e.g. Grok endpoint).', proxyAndConcurrency: 'Proxy & concurrency', proxy: 'Proxy', proxyHint: 'Local proxy URL, e.g. http://127.0.0.1:7890. Leave empty to disable explicit proxy.', concurrency: 'Slide concurrency', concurrencyHint: 'Leave empty to follow the current Slide page count; actual concurrency will not exceed pages. Prefer image concurrency = 1 to reduce 502s.', pagePlanConcurrency: 'Plan workers', imageConcurrency: 'Image workers', defaultByPages: 'default=pages', size: 'Size', quality: 'Quality', format: 'Format', ratio: 'Ratio', clarity: 'Sharpness', tendency: 'Quality', version: 'Version', timeout: 'Timeout (s)', timeoutHint: 'Sync image APIs can be slow; implement often needs 600–900s.', retries: 'Retries', maxResults: 'Results', stream: 'Stream', streamOn: 'On', keySet: 'Key set', keyNone: 'No key', proxySet: 'Proxy set', proxyNone: 'No proxy', notSet: 'Not set' },
     paper: { title: 'Figure', intro: 'Choose templates as few-shot visual references.', figureTitle: 'Title', description: 'Method', ratio: 'Ratio', fidelity: 'Layout', strength: 'Style', custom: 'Rules', customHint: 'Optional constraints for banned elements, style emphasis, text limits, or review requirements.', generate: 'Generate', generating: 'Generating…', search: 'Search', kind: 'Type', inherited: 'Template', submitted: 'Figure job submitted' },
     ppt: { title: 'Slide', intro: 'Upload a template, analyze the master, then generate pages.', template: 'Master', pages: 'Pages', material: 'Material', materialFile: 'Files', materialHint: 'Enter text or upload pdf, docx, txt, md, csv, and other common materials.', custom: 'Rules', customHint: 'Optional constraints for page structure, banned elements, terms, colors, or focus.', generate: 'Generate', generating: 'Generating…', submitted: 'Slide job submitted', uploading: 'Uploading...', uploaded: 'Uploaded' },
-    result: { title: 'Result', waiting: 'Waiting', progress: 'Progress', current: 'Current', step: 'Current step', failed: 'Failed', completed: 'Completed', queued: 'Queued', running: 'Running', cancelled: 'Stopped', preview: 'Preview', download: 'Download', of: '/', elapsed: 'Elapsed', stop: 'Stop job', stopping: 'Stopping…', stopped: 'Job stopped', stopFailed: 'Stop failed', saveFailed: 'Save failed', previewFailed: 'Preview failed', editWorkbench: 'Edit in workbench', errorTitle: 'Failure diagnosis', errorRole: 'Related configuration', errorProfile: 'Profile', errorModel: 'Model', errorEndpoint: 'Endpoint', errorStatus: 'HTTP status', errorStage: 'Failed stage', errorSuggestion: 'Suggested action', designLog: 'Design analysis log', designLogHint: 'Raw design-model output per step', designLogEmpty: 'This step returned nothing', designLogStreaming: 'Receiving…' }
+    result: { title: 'Result', waiting: 'Waiting', progress: 'Progress', current: 'Current', step: 'Current step', failed: 'Failed', completed: 'Completed', queued: 'Queued', running: 'Running', cancelled: 'Stopped', preview: 'Preview', download: 'Download', of: '/', elapsed: 'Elapsed', stop: 'Stop job', stopping: 'Stopping…', stopped: 'Job stopped', stopFailed: 'Stop failed', saveFailed: 'Save failed', previewFailed: 'Preview failed', editWorkbench: 'Edit in workbench', errorTitle: 'Failure diagnosis', errorRole: 'Related configuration', errorProfile: 'Profile', errorModel: 'Model', errorEndpoint: 'Endpoint', errorStatus: 'HTTP status', errorStage: 'Failed stage', errorSuggestion: 'Suggested action', designLog: 'Design analysis log', designLogHint: 'Raw design-model output per step', designLogEmpty: 'This step returned nothing', designLogStreaming: 'Receiving…', rate: 'Rate this result', rateHint: 'Stored with the case; the advisor weighs it on similar future tasks', rateGood: 'Good', rateFair: 'Fair', ratePoor: 'Poor', rateFailed: 'Rating failed' }
   }
 } as const;
 
@@ -121,14 +122,17 @@ const PAPER_STAGE_WEIGHTS: Record<string, number> = {
   started: 8,
   paper_validate: 12,
   paper_templates: 16,
+  paper_memory: 18,
   paper_structure_prompt: 20,
   paper_structure: 32,
   paper_structure_parse: 38,
+  paper_advisor: 41,
   paper_prompt: 44,
   paper_design: 58,
   paper_parse: 68,
   paper_implement: 86,
   paper_save: 94,
+  memory_record: 97,
   completed: 100,
   failed: 100
 };
@@ -139,15 +143,19 @@ const PPT_STAGE_WEIGHTS: Record<string, number> = {
   ppt_validate: 10,
   ppt_template: 14,
   ppt_material: 18,
+  ppt_memory: 20,
   ppt_visual_assets: 22,
   ppt_analyze: 30,
   ppt_parse_template: 36,
+  ppt_advisor: 38,
   ppt_outline_prompt: 40,
   ppt_outline: 48,
   ppt_parse_outline: 52,
   ppt_page_plan_queue: 56,
   ppt_merge_pages: 72,
   ppt_implement_queue: 76,
+  ppt_save: 95,
+  memory_record: 97,
   completed: 100,
   failed: 100
 };
@@ -492,6 +500,8 @@ export function Settings({
       <SettingsSection
         title={t.settings.proxyAndConcurrency}
         summary={config.proxy_url || t.settings.notSet}
+        badge={config.proxy_url ? t.settings.proxySet : t.settings.proxyNone}
+        badgeTone={config.proxy_url ? 'ok' : 'warn'}
         open={open.includes('runtime')}
         onToggle={() => toggle('runtime')}
       >
@@ -1019,13 +1029,16 @@ export function JobPanel({
   t,
   onCancelled,
   onError,
-  onOpenWorkbench
+  onOpenWorkbench,
+  onRated
 }: {
   job: JobRecord;
   t: typeof copy[Lang];
   onCancelled?: (job: JobRecord) => void;
   onError?: (message: string) => void;
   onOpenWorkbench?: (assetId: string) => void;
+  /** Receives the refreshed record after a 优/良/差 tag is saved. */
+  onRated?: (job: JobRecord) => void;
 }) {
   const images = useMemo(() => job.images || [], [job.images]);
   const events = job.events || [];
@@ -1040,6 +1053,21 @@ export function JobPanel({
   const elapsed = useElapsedSeconds(job);
   const settled = isJobSettled(job.status);
   const canStop = Boolean(onCancelled) && desktopAvailable() && !settled;
+  const [rating, setRating] = useState(false);
+  const canRate = Boolean(onRated) && desktopAvailable() && job.status === 'succeeded';
+
+  async function rate(next: JobRating) {
+    if (!onRated || rating) return;
+    setRating(true);
+    try {
+      // Clicking the active tag clears it.
+      onRated(await rateJob(job.id, job.rating === next ? null : next));
+    } catch (error) {
+      onError?.(error instanceof Error ? error.message : t.result.rateFailed);
+    } finally {
+      setRating(false);
+    }
+  }
 
   useEffect(() => {
     setStepAnimKey((key) => key + 1);
@@ -1148,6 +1176,23 @@ export function JobPanel({
           </div>
         )}
       </div>
+      {canRate && (
+        <div className="rate-row" role="group" aria-label={t.result.rate} title={t.result.rateHint}>
+          <span className="rate-label">{t.result.rate}</span>
+          {(['good', 'fair', 'poor'] as JobRating[]).map((value) => (
+            <button
+              key={value}
+              type="button"
+              className={`rate-btn rate-${value}${job.rating === value ? ' active' : ''}`}
+              aria-pressed={job.rating === value}
+              disabled={rating}
+              onClick={() => void rate(value)}
+            >
+              {value === 'good' ? t.result.rateGood : value === 'fair' ? t.result.rateFair : t.result.ratePoor}
+            </button>
+          ))}
+        </div>
+      )}
       {images.length > 0 && (
         <div className="result-grid">
           {images.map((image) => (
@@ -1172,30 +1217,35 @@ export function JobPanel({
               </a>
               <div className="result-card-footer">
                 <span>{image.name}</span>
-                {onOpenWorkbench && image.asset_id && (
-                  <button type="button" className="download-button" onClick={() => onOpenWorkbench(image.asset_id!)}>
-                    {t.result.editWorkbench}
-                  </button>
-                )}
-                {desktopAvailable() ? (
-                  <button
-                    type="button"
-                    className="download-button"
-                    onClick={async () => {
-                      const assetId = image.asset_id ?? image.url.split('/').pop();
-                      if (!assetId) return;
-                      try {
-                        await saveAsset(assetId, image.name);
-                      } catch (error) {
-                        onError?.(error instanceof Error ? error.message : t.result.saveFailed);
-                      }
-                    }}
-                  >
-                    {t.result.download}
-                  </button>
-                ) : (
-                  <a className="download-button" href={image.url} download={image.name}>{t.result.download}</a>
-                )}
+                {/* One row, equal height: the workbench button hugs the left
+                    edge and the download button the right, whatever their
+                    label widths. */}
+                <div className="result-card-actions">
+                  {onOpenWorkbench && image.asset_id && (
+                    <button type="button" className="download-button" onClick={() => onOpenWorkbench(image.asset_id!)}>
+                      {t.result.editWorkbench}
+                    </button>
+                  )}
+                  {desktopAvailable() ? (
+                    <button
+                      type="button"
+                      className="download-button result-download"
+                      onClick={async () => {
+                        const assetId = image.asset_id ?? image.url.split('/').pop();
+                        if (!assetId) return;
+                        try {
+                          await saveAsset(assetId, image.name);
+                        } catch (error) {
+                          onError?.(error instanceof Error ? error.message : t.result.saveFailed);
+                        }
+                      }}
+                    >
+                      {t.result.download}
+                    </button>
+                  ) : (
+                    <a className="download-button result-download" href={image.url} download={image.name}>{t.result.download}</a>
+                  )}
+                </div>
               </div>
             </div>
           ))}

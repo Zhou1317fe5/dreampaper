@@ -107,7 +107,11 @@ export interface JobRecord {
   payload?: { mode: string; payload: unknown } | null;
   /** Only get_job carries these; list rows leave them empty. */
   design_logs?: JobDesignLog[];
+  /** 优 / 良 / 差 tag on a finished job; null until the user rates it. */
+  rating?: JobRating | null;
 }
+
+export type JobRating = 'good' | 'fair' | 'poor';
 
 /** Live counterpart of JobDesignLog, pushed on `job://design` as a step runs. */
 export interface DesignLogEvent {

@@ -58,6 +58,10 @@ const EMBEDDED_PROMPTS: &[(&str, &str)] = &[
         "styles/academic_ppt.md",
         include_str!("../../../prompts/styles/academic_ppt.md"),
     ),
+    (
+        "roles/advisor.md",
+        include_str!("../../../prompts/roles/advisor.md"),
+    ),
 ];
 
 #[derive(Clone, Debug)]
