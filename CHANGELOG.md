@@ -2,7 +2,7 @@
 
 版本号遵循 `主版本.次版本.修订号`。安装包由 `v*` tag 触发 CI 构建产出，见 [Releases](https://github.com/dream-rec/dreampaper/releases)。
 
-## 0.2.0（未发布）
+## v0.2.0
 
 工作台全功能落地：OCR 文字修复、裁剪与离线 OCR，并把「阶段 Hook + 案例记忆 + advisor 角色」补齐为显式机制，加入任务评分与多任务页。
 

@@ -34,23 +34,14 @@
 ---
 
 ## 更新日志
-**未发布**
+**v0.2.0**
+- 工作台：生成图片目前可直接在工作台进行编辑，边界修复文字乱码，字体不统一，颜色存在色度差等问题，支持无损导出；
+- 离线 OCR：纯 Rust 辅助进程 + ONNX Runtime 在本机运行 PP-OCRv6，模型首次使用时下载并逐文件校验，图片与识别结果不出本机；
 - 阶段 Hook：上下文注入显式化为可插拔的 Hook 链，进度日志列出每阶段注入项；
 - 历史案例记忆：design 产物入库并以 CJK 二元组做 FTS5 召回，同模式相似任务最多取 3 条；
 - advisor 角色：比对相似案例，输出可复用版式、术语映射与失败模式，注入设计阶段；
 - 任务评分：成功后可标 优 / 良 / 差，写入案例记录供 advisor 参考；
 - 多任务页：科研图与幻灯片各可开最多 8 个相互隔离的任务页；
-- 结果卡片「前往工作台编辑」与「下载」等高并贴齐左右边界。
-
-**v0.1.3**
-- 优化历史数据管理页面，可查看完整历史数据记录，一键重试；
-- 生图流程透明日志，design model分析内容log 伴随任务进度流式输出；
-- 自动检查更新、深浅主题切换；
-- 修复了若干bug，流畅度优化。
-
-| 历史数据 | 日志显示 |
-| --- | --- | 
-| ![history](examples/desktop/history.jpg) | ![log](examples/desktop/log.jpg) |
 
 ## 效果展示
 
@@ -60,9 +51,17 @@
 | --- | --- | 
 | ![desktop1](examples/desktop/figure.jpg) | ![desktop2](examples/desktop/slide.jpg) |
 
+| 工作台 | 
+| --- | 
+| ![workbench](examples/desktop/workbench.jpg) |
+
 | 模版库 | 设置页 |
 | --- | --- | 
 | ![desktop3](examples/desktop/templates.jpg) | ![fig2](examples/desktop/settings.jpg) |
+
+| 历史数据 | 日志显示 |
+| --- | --- | 
+| ![history](examples/desktop/history.jpg) | ![log](examples/desktop/log.jpg) |
 
 ### Web UI
 

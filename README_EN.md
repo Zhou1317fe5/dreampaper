@@ -35,7 +35,9 @@
 
 ## What's new
 
-**Unreleased**
+**v0.2.0**
+- Workbench: fix garbled text, mixed fonts and off-color fills right on the generated image — box-select a region to sample the background color and get an editable text layer, crop by whole pixels, export lossless PNG at source resolution
+- Offline OCR: a pure-Rust sidecar process with ONNX Runtime runs PP-OCRv6 locally; models are downloaded on first use and verified per-file, and nothing ever leaves the machine
 - Stage hooks: context injection is now an explicit, pluggable hook chain; the progress log names what each stage was injected with
 - Case memory: design products are stored and recalled through CJK-bigram FTS5, up to 3 same-mode matches per task
 - Advisor role: compares the recalled cases and injects reusable layouts, term mappings and failure modes to avoid
@@ -98,6 +100,14 @@ The bundles are **not code-signed** (no developer certificate purchased), so the
 - **Windows**: SmartScreen shows "Windows protected your PC". Click "More info" → "Run anyway".
 - The **Windows portable** build needs the WebView2 runtime. Windows 11 and Windows 10 21H2+ ship with it; on older systems install the
   [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) first, or use the installer (which handles it).
+
+### Workbench (desktop)
+
+The **Workbench**, below History in the left nav, fixes garbled text or typos in generated images: open an image from a result card, history or disk, box-select the faulty region to cover it with the sampled background color and recognize the text into an editable layer, then adjust wording and layout, crop on whole source pixels, and export a lossless PNG at the source resolution. Source images are always read-only; each image's edits live in their own project and can be restored any time.
+
+- **OCR is fully offline**: the engine (pure-Rust sidecar + ONNX Runtime) ships with the installer; the PP-OCRv6 medium detection/recognition models and the text-orientation classifier (about 133 MiB, sources and checksums pinned in the app) download on first use, and afterwards neither images nor results leave the machine. The settings page shows the engine version and can update or remove the models.
+- Without the models, solid-color patching, cropping and manual text still work.
+- Workbench data lives under `workbench/` (projects and source snapshots) and `ocr/` (models) in the app data directory; the settings page reports usage and offers a safe cleanup that only drops unreferenced snapshots.
 
 The desktop build stores config and outputs in the OS app-data directory rather than `~/.dreampaper/`:
 
