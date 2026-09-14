@@ -2,10 +2,9 @@
 //!
 //! The native engine (Rust sidecar + ONNX Runtime) ships with the app; only
 //! the models are fetched on first use from the URLs pinned in `MANIFEST`
-//! together with their exact size and SHA-256. The official det/rec archives
-//! are downloaded as-is and verified, then the ONNX files and configs are
-//! extracted and verified again against their own digests; the recogniser
-//! dictionary is derived from the rec config and verified the same way. A
+//! together with their exact size and SHA-256. Mirrors must serve identical
+//! ONNX files and configs; the recogniser dictionary is derived from the rec
+//! config and verified against its own pinned digest. A
 //! package counts as installed only after every file passed and
 //! `installed.json` was written atomically, so a half download or a bad
 //! extraction is never mistaken for a model. Downloads resume from a `.part`
@@ -25,7 +24,9 @@ use crate::error::{AppError, AppResult};
 #[derive(Deserialize)]
 pub struct OcrDownload {
     pub name: &'static str,
-    pub url: &'static str,
+    pub url: String,
+    #[serde(default)]
+    pub mirrors: Vec<String>,
     pub bytes: u64,
     pub sha256: &'static str,
 }
@@ -201,7 +202,9 @@ impl OcrPackages {
             sources: MANIFEST
                 .downloads
                 .iter()
-                .map(|file| file.url.to_string())
+                .flat_map(|file| {
+                    std::iter::once(file.url.clone()).chain(file.mirrors.iter().cloned())
+                })
                 .collect(),
         }
     }
@@ -301,8 +304,8 @@ impl OcrPackages {
                     *error_slot.lock().unwrap_or_else(|p| p.into_inner()) = Some(error.message);
                 }
             }
-            running.store(false, Ordering::SeqCst);
             *progress.lock().unwrap_or_else(|p| p.into_inner()) = final_state.clone();
+            running.store(false, Ordering::SeqCst);
             emit(final_state);
         });
         Ok(())
@@ -399,6 +402,7 @@ async fn run_install(
     let client = crate::core::net::build_client(6 * 3600, proxy_url)?;
 
     for download in &MANIFEST.downloads {
+        check_cancel(cancel)?;
         let target = dir.join(download.name);
         let part = dir.join(format!("{}.part", download.name));
         if std::fs::metadata(&target).is_ok_and(|meta| meta.len() == download.bytes)
@@ -407,7 +411,7 @@ async fn run_install(
             overall_done += download.bytes;
             continue;
         }
-        download_file(
+        download_verified(
             &client,
             download,
             &part,
@@ -426,7 +430,7 @@ async fn run_install(
             state: "verifying".into(),
             message: None,
         });
-        verify_download(&part, download)?;
+        check_cancel(cancel)?;
         super::asset::rename_replace(&part, &target)?;
         overall_done += download.bytes;
     }
@@ -447,6 +451,7 @@ async fn run_install(
         .await
         .map_err(|error| AppError::new("ocr_install_failed", error.to_string()))??;
 
+    check_cancel(cancel)?;
     commit_marker(app_data)?;
     // The archives were only needed to produce the verified files.
     for download in &MANIFEST.downloads {
@@ -658,9 +663,82 @@ fn push_code_point(out: &mut String, chars: &mut std::str::Chars<'_>, digits: us
     }
 }
 
+fn check_cancel(cancel: &AtomicBool) -> AppResult<()> {
+    if cancel.load(Ordering::SeqCst) {
+        Err(AppError::new("ocr_install_cancelled", "下载已取消"))
+    } else {
+        Ok(())
+    }
+}
+
+async fn cancellable<T>(
+    future: impl std::future::Future<Output = T>,
+    cancel: &AtomicBool,
+) -> AppResult<T> {
+    check_cancel(cancel)?;
+    tokio::pin!(future);
+    loop {
+        tokio::select! {
+            result = &mut future => {
+                check_cancel(cancel)?;
+                return Ok(result);
+            }
+            _ = tokio::time::sleep(std::time::Duration::from_millis(50)) => check_cancel(cancel)?,
+        }
+    }
+}
+
+async fn download_verified(
+    client: &reqwest::Client,
+    file: &OcrDownload,
+    part: &Path,
+    overall_done: u64,
+    overall_total: u64,
+    cancel: &AtomicBool,
+    report: &(dyn Fn(OcrProgress) + Send + Sync),
+) -> AppResult<()> {
+    let mut errors = Vec::new();
+    for url in std::iter::once(&file.url).chain(&file.mirrors) {
+        check_cancel(cancel)?;
+        let result = download_file(
+            client,
+            file,
+            url,
+            part,
+            overall_done,
+            overall_total,
+            cancel,
+            report,
+        )
+        .await
+        .and_then(|()| verify_download(part, file));
+        match result {
+            Ok(()) => return check_cancel(cancel),
+            Err(error)
+                if matches!(
+                    error.code.as_str(),
+                    "ocr_download_failed" | "ocr_size_mismatch" | "ocr_digest_mismatch"
+                ) =>
+            {
+                let host = reqwest::Url::parse(url)
+                    .ok()
+                    .and_then(|url| url.host_str().map(str::to_owned))
+                    .unwrap_or_default();
+                errors.push(format!("{host}: {}", error.message));
+            }
+            Err(error) => return Err(error),
+        }
+    }
+    Err(AppError::new(
+        "ocr_download_failed",
+        format!("{} 所有下载源失败：{}", file.name, errors.join("；")),
+    ))
+}
+
 async fn download_file(
     client: &reqwest::Client,
     file: &OcrDownload,
+    url: &str,
     part: &Path,
     overall_done: u64,
     overall_total: u64,
@@ -676,19 +754,22 @@ async fn download_file(
         let _ = std::fs::remove_file(part);
         existing = 0;
     }
-    let mut request = client.get(file.url);
+    check_cancel(cancel)?;
+    let mut request = client.get(url);
     if existing > 0 {
         request = request.header(reqwest::header::RANGE, format!("bytes={existing}-"));
     }
-    let response = request.send().await.map_err(|error| {
-        AppError::new(
-            "ocr_download_failed",
-            format!(
-                "下载失败：{}",
-                crate::core::net::describe_transport_error(&error)
-            ),
-        )
-    })?;
+    let response = cancellable(request.send(), cancel)
+        .await?
+        .map_err(|error| {
+            AppError::new(
+                "ocr_download_failed",
+                format!(
+                    "下载失败：{}",
+                    crate::core::net::describe_transport_error(&error)
+                ),
+            )
+        })?;
     let status = response.status();
     let resumed = status == reqwest::StatusCode::PARTIAL_CONTENT;
     if !(status.is_success() || resumed) {
@@ -696,6 +777,18 @@ async fn download_file(
             "ocr_download_failed",
             format!("下载失败：HTTP {}", status.as_u16()),
         ));
+    }
+    if resumed {
+        let range = response
+            .headers()
+            .get(reqwest::header::CONTENT_RANGE)
+            .and_then(|value| value.to_str().ok());
+        if !valid_range(range, existing, file.bytes) {
+            return Err(AppError::new(
+                "ocr_download_failed",
+                "下载源返回了无效的续传范围",
+            ));
+        }
     }
     if existing > 0 && !resumed {
         let _ = std::fs::remove_file(part);
@@ -723,10 +816,8 @@ async fn download_file(
     let mut received = existing;
     let mut last_report = std::time::Instant::now();
     let mut stream = response.bytes_stream();
-    while let Some(chunk) = stream.next().await {
-        if cancel.load(Ordering::SeqCst) {
-            return Err(AppError::new("ocr_install_cancelled", "下载已取消"));
-        }
+    let mut reported = false;
+    while let Some(chunk) = cancellable(stream.next(), cancel).await? {
         let chunk = chunk.map_err(|error| {
             AppError::new(
                 "ocr_download_failed",
@@ -744,7 +835,8 @@ async fn download_file(
                 format!("{} 下载数据超过清单大小", file.name),
             ));
         }
-        if last_report.elapsed().as_millis() >= 150 {
+        if !reported || last_report.elapsed().as_millis() >= 150 {
+            reported = true;
             last_report = std::time::Instant::now();
             report(OcrProgress {
                 file: file.name.to_string(),
@@ -757,8 +849,25 @@ async fn download_file(
             });
         }
     }
+    check_cancel(cancel)?;
     output.sync_all()?;
     Ok(())
+}
+
+fn valid_range(header: Option<&str>, start: u64, total: u64) -> bool {
+    let Some((range, size)) = header
+        .and_then(|h| h.strip_prefix("bytes "))
+        .and_then(|h| h.split_once('/'))
+    else {
+        return false;
+    };
+    let Some((first, last)) = range.split_once('-') else {
+        return false;
+    };
+    start < total
+        && first.parse::<u64>().ok() == Some(start)
+        && total.checked_sub(1) == last.parse::<u64>().ok()
+        && size.parse::<u64>().ok() == Some(total)
 }
 
 fn sha256_file(path: &Path) -> AppResult<String> {
@@ -777,16 +886,22 @@ fn sha256_file(path: &Path) -> AppResult<String> {
 }
 
 #[cfg(test)]
+#[path = "ocr/tests.rs"]
+mod download_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
     fn manifest_is_consistent() {
         let total: u64 = MANIFEST.downloads.iter().map(|f| f.bytes).sum();
-        assert_eq!(total, 139_347_772);
+        assert_eq!(total, 139_324_814);
         for download in &MANIFEST.downloads {
             assert_eq!(download.sha256.len(), 64);
-            assert!(download.url.starts_with("https://"));
+            assert!(std::iter::once(&download.url)
+                .chain(&download.mirrors)
+                .all(|url| url.starts_with("https://")));
         }
         for file in &MANIFEST.files {
             assert_eq!(file.sha256.len(), 64);
@@ -847,7 +962,7 @@ mod tests {
             let client = crate::core::net::build_client(60, proxy.as_deref()).unwrap();
             for download in &MANIFEST.downloads {
                 let response = client
-                    .get(download.url)
+                    .get(&download.url)
                     .header(reqwest::header::RANGE, "bytes=0-1023")
                     .send()
                     .await
@@ -924,7 +1039,7 @@ mod tests {
         let status = packages.status(&dir);
         assert!(status.installed);
         assert_eq!(status.installed_bytes, 139_399_761);
-        assert_eq!(status.download_bytes, 139_347_772);
+        assert_eq!(status.download_bytes, 139_324_814);
         assert!(packages.installed_file(&dir, "det.onnx").is_ok());
         assert_eq!(packages.model_paths(&dir).unwrap().len(), 4);
         assert_eq!(

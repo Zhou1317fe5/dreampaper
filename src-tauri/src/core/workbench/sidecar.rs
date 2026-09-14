@@ -553,7 +553,7 @@ mod tests {
     /// Whole host path against the real sidecar, runtime and models. Runs
     /// only when the environment points at them:
     /// `DREAMPAPER_OCR_SIDECAR`, `DREAMPAPER_OCR_RUNTIME`,
-    /// `DREAMPAPER_OCR_SEED` (dir with det.tar, rec.tar, cls.onnx) and
+    /// `DREAMPAPER_OCR_SEED` (dir with manifest downloads) and
     /// `DREAMPAPER_OCR_SAMPLE` (the 1200×800 gate sample).
     #[test]
     fn end_to_end_recognises_the_gate_sample_when_the_engine_is_present() {
@@ -577,7 +577,8 @@ mod tests {
         // Seed the verified downloads, then let the installer derive the files.
         let package = super::super::ocr::package_dir(&dir);
         std::fs::create_dir_all(&package).unwrap();
-        for name in ["det.tar", "rec.tar", "cls.onnx"] {
+        for download in &super::super::ocr::MANIFEST.downloads {
+            let name = download.name;
             std::fs::copy(Path::new(&seed).join(name), package.join(name)).unwrap();
         }
         super::super::ocr::materialize_files(&package).unwrap();

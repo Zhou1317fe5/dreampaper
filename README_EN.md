@@ -100,7 +100,7 @@ There is no commercial signing certificate: Windows executables are unsigned; ma
 - **Windows**: SmartScreen shows "Windows protected your PC". Click "More info" → "Run anyway".
 - The **Windows portable** build requires [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/). Install it if missing, or use the installer. Keep the main EXE, OCR sidecar, `ort/`, fonts and other files together.
 
-All four artifacts include the OCR engine, but not the models. Download the approximately 133 MiB model package in Settings once; after checksum verification, recognition works offline without Python or a separate ONNX Runtime installation. Release CI validates actual installed/extracted packages and creates only a draft after all four pass.
+All four artifacts include the OCR engine, but not the models. Download the approximately 133 MiB model package in Settings once; detection/recognition files fall back between PaddlePaddle's official ModelScope and Hugging Face mirrors, with pinned file sizes and SHA-256 verification. Recognition then works offline without Python or a separate ONNX Runtime installation. Release CI validates actual installed/extracted packages and creates only a draft after all four pass.
 
 ### Desktop builds
 

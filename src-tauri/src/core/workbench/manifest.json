@@ -6,16 +6,32 @@
   "rec_model": "PP-OCRv6_medium_rec",
   "downloads": [
     {
-      "name": "det.tar",
-      "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_medium_det_onnx_infer.tar",
-      "bytes": 62044160,
-      "sha256": "c5adb0b15de1b1838934eba1dd72e7529e7d80132216c6ee6d26eba6fa054fcf"
+      "name": "det.onnx",
+      "url": "https://www.modelscope.cn/models/PaddlePaddle/PP-OCRv6_medium_det_onnx/resolve/master/inference.onnx",
+      "mirrors": ["https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_det_onnx/resolve/61323801669c338b7891481ec7bac61ce31b576a/inference.onnx"],
+      "bytes": 62032837,
+      "sha256": "eb13b44b25bb36f89528b68720af8a61d9cf381176107f465db1757b65d086e1"
     },
     {
-      "name": "rec.tar",
-      "url": "https://paddle-model-ecology.bj.bcebos.com/paddlex/official_inference_model/paddle3.0.0/PP-OCRv6_medium_rec_onnx_infer.tar",
-      "bytes": 76718080,
-      "sha256": "d8cc46c7163c83a151aef8fce5856b965860df90a875029216d605b0f607eaec"
+      "name": "det.yml",
+      "url": "https://www.modelscope.cn/models/PaddlePaddle/PP-OCRv6_medium_det_onnx/resolve/master/inference.yml",
+      "mirrors": ["https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_det_onnx/resolve/61323801669c338b7891481ec7bac61ce31b576a/inference.yml"],
+      "bytes": 886,
+      "sha256": "7298d5ead546584af2504d03355f881ac7a7bc0eb1e282d3e159277c1d0af871"
+    },
+    {
+      "name": "rec.onnx",
+      "url": "https://www.modelscope.cn/models/PaddlePaddle/PP-OCRv6_medium_rec_onnx/resolve/master/inference.onnx",
+      "mirrors": ["https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/resolve/50c7eacafc52fa7bcf4194e8cd08e46f8558504b/inference.onnx"],
+      "bytes": 76554979,
+      "sha256": "9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba"
+    },
+    {
+      "name": "rec.yml",
+      "url": "https://www.modelscope.cn/models/PaddlePaddle/PP-OCRv6_medium_rec_onnx/resolve/master/inference.yml",
+      "mirrors": ["https://huggingface.co/PaddlePaddle/PP-OCRv6_medium_rec_onnx/resolve/50c7eacafc52fa7bcf4194e8cd08e46f8558504b/inference.yml"],
+      "bytes": 150580,
+      "sha256": "991b700facf5b50a7de193468207d5f4255b538dde0d312ae3b7c7a9b6873129"
     },
     {
       "name": "cls.onnx",
@@ -27,25 +43,25 @@
   "files": [
     {
       "name": "det.onnx",
-      "source": { "kind": "tar_member", "download": "det.tar", "member": "PP-OCRv6_medium_det_onnx_infer/inference.onnx" },
+      "source": { "kind": "download", "download": "det.onnx" },
       "bytes": 62032837,
       "sha256": "eb13b44b25bb36f89528b68720af8a61d9cf381176107f465db1757b65d086e1"
     },
     {
       "name": "det.yml",
-      "source": { "kind": "tar_member", "download": "det.tar", "member": "PP-OCRv6_medium_det_onnx_infer/inference.yml" },
+      "source": { "kind": "download", "download": "det.yml" },
       "bytes": 886,
       "sha256": "7298d5ead546584af2504d03355f881ac7a7bc0eb1e282d3e159277c1d0af871"
     },
     {
       "name": "rec.onnx",
-      "source": { "kind": "tar_member", "download": "rec.tar", "member": "PP-OCRv6_medium_rec_onnx_infer/inference.onnx" },
+      "source": { "kind": "download", "download": "rec.onnx" },
       "bytes": 76554979,
       "sha256": "9c09abf0957f7968c7586464b7397b84ad2387a0497a351af40e9acc71b673ba"
     },
     {
       "name": "rec.yml",
-      "source": { "kind": "tar_member", "download": "rec.tar", "member": "PP-OCRv6_medium_rec_onnx_infer/inference.yml" },
+      "source": { "kind": "download", "download": "rec.yml" },
       "bytes": 150580,
       "sha256": "991b700facf5b50a7de193468207d5f4255b538dde0d312ae3b7c7a9b6873129"
     },
