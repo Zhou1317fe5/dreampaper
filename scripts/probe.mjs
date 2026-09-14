@@ -1,4 +1,4 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { execFileSync, spawnSync, spawn as spawnProcess } from 'node:child_process';
@@ -75,7 +75,11 @@ try {
       try {
         await spawn(executable, ['--ocr-probe', mode, work], { cwd: work, env });
       } finally {
-        cpSync(work, join(reports, kind), { recursive: true, filter: (path) => basename(path) !== 'data' });
+        const saved = join(reports, kind);
+        mkdirSync(saved, { recursive: true });
+        for (const name of readdirSync(work, { withFileTypes: true }).filter((entry) => entry.isFile()).map((entry) => entry.name)) {
+          copyFileSync(join(work, name), join(saved, name));
+        }
       }
       const data = JSON.parse(readFileSync(report, 'utf8'));
       if (!data.ok || data.version !== version) throw new Error(`门禁失败 ${kind}/${mode}: ${JSON.stringify(data)}`);
