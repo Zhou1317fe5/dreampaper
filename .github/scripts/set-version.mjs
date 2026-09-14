@@ -30,3 +30,8 @@ patch("src-tauri/Cargo.toml", /^(\[package\][\s\S]*?^version\s*=\s*)"[^"]*"/m);
 
 patch("package.json", topLevelVersion);
 
+
+const lock = JSON.parse(readFileSync("package-lock.json", "utf8"));
+lock.version = version;
+lock.packages[""].version = version;
+writeFileSync("package-lock.json", JSON.stringify(lock, null, 2) + "\n");

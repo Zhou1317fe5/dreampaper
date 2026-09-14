@@ -1,7 +1,13 @@
 {
   "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
   "bundle": {
+    "resources": {
+      "runtime/ort/licenses/": "licenses/ocr/",
+      "runtime/ort/manifest.json": "ort/manifest.json",
+      "runtime/ort/sidecar.json": "ort/sidecar.json"
+    },
     "macOS": {
+      "minimumSystemVersion": "13.0",
       "frameworks": ["runtime/ort/libonnxruntime.dylib"]
     }
   }

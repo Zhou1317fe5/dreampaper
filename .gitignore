@@ -53,6 +53,8 @@ src-tauri/gen/schemas/
 
 # CI 归集的待发布安装包
 release-artifacts/
+release-reports/
+release-notes.md
 
 # OCR 辅助进程与 ONNX Runtime 的暂存产物（由 scripts/sidecar.mjs 生成）
 src-tauri/binaries/

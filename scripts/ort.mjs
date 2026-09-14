@@ -1,10 +1,9 @@
-import { createWriteStream } from 'node:fs';
-import { access, readFile, writeFile } from 'node:fs/promises';
-import { resolve } from 'node:path';
-import { spawn } from 'node:child_process';
+import { copyFileSync, existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { join, resolve } from 'node:path';
+import { execFileSync, spawnSync } from 'node:child_process';
+import { availableParallelism } from 'node:os';
+import { digest, filesIn, locked, root, targetInfo, targets, verifyRuntime } from './runtime.mjs';
 
-const VERSION = '1.29.0';
-const COMMIT = '2e2543fbe9fae542f921d47a72d21d5a4ef0b710';
 const PATCHES = [
   {
     file: 'onnxruntime/core/mlas/lib/qlutgemm.cpp',
@@ -22,92 +21,98 @@ const PATCHES = [
     compatible: 'auto ptr_result = graph->node_ptrs.insert(node);\n  auto ptr_it = ptr_result.first;\n  bool ptr_inserted = ptr_result.second;'
   }
 ];
-const arch = process.argv[2] ?? (process.arch === 'x64' ? 'x86_64' : process.arch);
-if (process.platform !== 'darwin') throw new Error('此脚本仅构建 macOS ONNX Runtime');
-if (!['x86_64', 'arm64'].includes(arch)) throw new Error(`不支持的架构：${arch}`);
-
-const root = process.cwd();
-const source = resolve(root, `src-tauri/target/gate/onnxruntime-${VERSION}`);
-const tools = resolve(root, 'src-tauri/target/gate/tools/bin');
+const args = process.argv.slice(2);
+const explicit = args.indexOf('--target');
+const triple = explicit >= 0 ? args[explicit + 1] : Object.keys(targets).find((key) => {
+  const info = targetInfo(key);
+  return info.platform === process.platform && info.arch === process.arch;
+});
+const info = targetInfo(triple);
+if (info.platform !== process.platform || info.arch !== process.arch) throw new Error('ORT 必须在目标平台原生构建');
+const arch = info.arch === 'x64' ? 'x86_64' : 'arm64';
+const windows = info.platform === 'win32';
+const source = resolve(root, `src-tauri/target/gate/onnxruntime-${locked.version}`);
 const build = resolve(root, `src-tauri/target/gate/ort-build-${arch}`);
-const log = resolve(root, `src-tauri/target/gate/ort-build-${arch}.log`);
-for (const path of [source, `${tools}/python`, `${tools}/cmake`, `${tools}/ctest`, `${tools}/ninja`]) {
-  await access(path);
+const destination = resolve(root, 'src-tauri/runtime', triple);
+const tools = resolve(root, 'src-tauri/target/gate/tools/bin');
+const python = process.env.ORT_PYTHON || (existsSync(join(tools, 'python')) ? join(tools, 'python') : 'python');
+const cmake = existsSync(join(tools, 'cmake')) ? join(tools, 'cmake') : 'cmake';
+const ctest = existsSync(join(tools, 'ctest')) ? join(tools, 'ctest') : 'ctest';
+const env = { ...process.env, ...(windows ? {} : { MACOSX_DEPLOYMENT_TARGET: '13.0' }) };
+if (!existsSync(join(source, '.git'))) {
+  mkdirSync(source, { recursive: true });
+  run('git', ['init', source]);
+  run('git', ['-C', source, 'remote', 'add', 'origin', 'https://github.com/microsoft/onnxruntime.git']);
+  run('git', ['-C', source, 'fetch', '--depth', '1', 'origin', locked.commit]);
+  run('git', ['-C', source, 'checkout', '--detach', 'FETCH_HEAD']);
 }
-const head = (await capture('git', ['-C', source, 'rev-parse', 'HEAD'])).trim();
-if (head !== COMMIT) throw new Error(`ORT 源码提交不匹配：${head}`);
-
+if (capture('git', ['-C', source, 'rev-parse', 'HEAD']).trim() !== locked.commit) throw new Error('ORT 源码提交不匹配');
 for (const patch of PATCHES) {
-  const file = resolve(source, patch.file);
-  const current = await readFile(file, 'utf8');
-  const originalCount = count(current, patch.original);
-  const compatibleCount = count(current, patch.compatible);
-  if (originalCount === 1 && compatibleCount === 0) {
-    await writeFile(file, current.replace(patch.original, patch.compatible));
-  } else if (originalCount !== 0 || compatibleCount !== 1) {
+  const path = join(source, patch.file);
+  const text = readFileSync(path, 'utf8');
+  if (text.split(patch.original).length === 2 && !text.includes(patch.compatible)) {
+    writeFileSync(path, text.replace(patch.original, patch.compatible));
+  } else if (text.includes(patch.original) || text.split(patch.compatible).length !== 2) {
     throw new Error(`ORT 兼容补丁上下文不匹配：${patch.file}`);
   }
 }
-
-const args = [
-  `${source}/tools/ci_build/build.py`,
-  '--build_dir', build,
-  '--config', 'Release',
-  '--update', '--build',
-  '--build_shared_lib',
-  '--skip_tests',
-  '--skip_pip_install',
-  '--skip_submodule_sync',
-  '--compile_no_warning_as_error',
-  '--no_telemetry',
-  '--parallel', '6',
-  '--cmake_generator', 'Ninja',
-  '--cmake_path', `${tools}/cmake`,
-  '--ctest_path', `${tools}/ctest`,
-  '--osx_arch', arch,
-  '--apple_deploy_target', '13.0',
-  '--cmake_extra_defines',
-  'CMAKE_OSX_DEPLOYMENT_TARGET=13.0',
-  'CMAKE_BUILD_TYPE=Release'
+const buildArgs = [
+  join(source, 'tools/ci_build/build.py'), '--build_dir', build,
+  '--config', 'Release', '--update', '--build', '--build_shared_lib',
+  '--skip_tests', '--skip_pip_install', '--compile_no_warning_as_error', '--no_telemetry',
+  '--parallel', String(Math.min(6, availableParallelism())),
+  '--cmake_path', cmake, '--ctest_path', ctest,
+  '--cmake_generator', windows ? 'Visual Studio 17 2022' : 'Ninja',
+  ...(windows ? ['--enable_msvc_static_runtime'] : ['--osx_arch', arch, '--apple_deploy_target', '13.0']),
+  '--cmake_extra_defines', 'CMAKE_BUILD_TYPE=Release',
+  ...(windows ? [] : ['CMAKE_OSX_DEPLOYMENT_TARGET=13.0'])
 ];
-
-const output = createWriteStream(log, { flags: 'w' });
-const code = await run(`${tools}/python`, args, {
-  ...process.env,
-  PATH: `${tools}:${process.env.PATH ?? ''}`,
-  MACOSX_DEPLOYMENT_TARGET: '13.0'
-}, output);
-output.end();
-if (code !== 0) throw new Error(`ORT 构建失败，日志：${log}`);
-
-const dylib = `${build}/Release/libonnxruntime.dylib`;
-await access(dylib);
-console.log(`ORT_BUILD_OK ${dylib}`);
-console.log(await capture('shasum', ['-a', '256', dylib]));
-console.log(await capture('otool', ['-L', dylib]));
-
-function count(text, value) {
-  return text.split(value).length - 1;
+const toolchain = {
+  python: capture(python, ['--version']).trim(),
+  cmake: capture(cmake, ['--version']).trim(),
+  compiler: windows ? process.env.VCToolsVersion : capture('clang', ['--version']).trim()
+};
+run(python, buildArgs);
+const outputs = [join(build, 'Release', 'Release'), join(build, 'Release')].filter((dir) => existsSync(join(dir, info.library)));
+if (outputs.length !== 1) throw new Error(`ORT 构建产物必须唯一：${outputs}`);
+const output = outputs[0];
+rmSync(destination, { recursive: true, force: true });
+mkdirSync(join(destination, 'licenses'), { recursive: true });
+for (const name of readdirSync(output)) {
+  if ((windows && name.endsWith('.dll')) || name === info.library) {
+    copyFileSync(realpathSync(join(output, name)), join(destination, name));
+  }
 }
-
-function run(command, args, env, stream) {
-  return new Promise((resolveRun, reject) => {
-    const child = spawn(command, args, { env, stdio: ['ignore', 'pipe', 'pipe'] });
-    child.stdout.pipe(stream, { end: false });
-    child.stderr.pipe(stream, { end: false });
-    child.on('error', reject);
-    child.on('exit', (code) => resolveRun(code ?? 1));
-  });
+for (const name of ['LICENSE', 'ThirdPartyNotices.txt']) copyFileSync(join(source, name), join(destination, 'licenses', name));
+copyFileSync(join(root, 'src-tauri/ocr/THIRD_PARTY.md'), join(destination, 'licenses/OCR.md'));
+let inspection;
+if (windows) {
+  inspection = capture('dumpbin', ['/DEPENDENTS', join(destination, info.library)]);
+  if (/VCRUNTIME|MSVCP/i.test(inspection)) throw new Error('ORT 未静态链接 MSVC 运行时');
+} else {
+  inspection = capture('otool', ['-L', join(destination, info.library)]);
+  const buildVersion = capture('vtool', ['-show-build', join(destination, info.library)]);
+  const minimum = [...buildVersion.matchAll(/minos\s+(\d+(?:\.\d+)*)/g)].map((match) => match[1]);
+  if (!minimum.length || minimum.some((v) => Number(v.split('.')[0]) > 13 || (Number(v.split('.')[0]) === 13 && Number(v.split('.')[1] || 0) > 0))) {
+    throw new Error(`ORT 最低系统高于 macOS 13.0：${buildVersion}`);
+  }
+  inspection += buildVersion;
 }
+writeFileSync(join(destination, 'manifest.json'), JSON.stringify({
+  version: locked.version, commit: locked.commit, triple,
+  recipe_sha256: digest(join(root, 'scripts/ort.mjs')).sha256,
+  deployment_target: windows ? null : '13.0', toolchain, build_args: buildArgs,
+  inspection,
+  files: filesIn(destination).map((name) => ({ name, ...digest(join(destination, name)) }))
+}, null, 2) + '\n');
+verifyRuntime(destination, triple);
+console.log(`ORT_BUILD_OK ${destination}`);
 
-function capture(command, args) {
-  return new Promise((resolveRun, reject) => {
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
-    let stdout = '';
-    let stderr = '';
-    child.stdout.setEncoding('utf8').on('data', (chunk) => { stdout += chunk; });
-    child.stderr.setEncoding('utf8').on('data', (chunk) => { stderr += chunk; });
-    child.on('error', reject);
-    child.on('exit', (code) => code === 0 ? resolveRun(stdout) : reject(new Error(stderr || `${command} 退出：${code}`)));
-  });
+function capture(command, commandArgs) {
+  return execFileSync(command, commandArgs, { encoding: 'utf8', env });
+}
+function run(command, commandArgs) {
+  const result = spawnSync(command, commandArgs, { stdio: 'inherit', env });
+  if (result.error) throw result.error;
+  if (result.status !== 0) throw new Error(`${command} 退出码 ${result.status}`);
 }

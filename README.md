@@ -94,18 +94,19 @@
 | 文件 | 平台 |
 | --- | --- |
 | `dreampaper-*-setup.exe` | Windows 安装版（创建桌面快捷方式） |
-| `dreampaper-*-portable.exe` | Windows 便携版（免安装） |
+| `dreampaper-*-portable.zip` | Windows 便携版（完整解压后运行，勿单独移动 EXE） |
 | `dreampaper-*-x64-mac.dmg` | macOS Intel |
 | `dreampaper-*-arm64-mac.dmg` | macOS Apple Silicon |
 
 ### 首次打开
 
-安装包**未做代码签名**（未购买开发者证书），系统会拦一次：
+未购买商业开发者证书：Windows 未做商业代码签名，macOS 使用 ad-hoc 签名、未做 Developer ID 公证，系统可能提示：
 
 - **macOS**：双击提示「无法验证开发者」。右键点 App → 选「打开」→ 再点一次「打开」。只需操作一次。
 - **Windows**：SmartScreen 提示「已保护你的电脑」。点「更多信息」→「仍要运行」。
-- **Windows 便携版**依赖系统的 WebView2 运行时。Win11 与 Win10 21H2 及以上已内置；更旧的系统请先装
-  [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)，或改用安装版（会自动处理）。
+- **Windows 便携版**依赖系统已有 [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/)。如果缺少，请先安装它，或改用安装版；ZIP 中的主程序、OCR 辅助程序、`ort/`、字体等必须保持完整。
+
+四类产物都随包提供 OCR 推理引擎，不内置模型。首次在设置页下载约 133 MiB 模型，经摘要校验后即可离线识别；无需安装 Python 或 ONNX Runtime。引擎/模型不可用时，手工文字、取色修补和裁剪仍可使用。发布流水线必须对四类最终产物执行真实下载和推理门禁，全部通过后才生成草稿，不自动公开。
 
 桌面版的配置与产物落在系统应用数据目录，而非 `~/.dreampaper/`：
 
@@ -165,6 +166,29 @@ npm run dev
 ```
 
 打开 http://127.0.0.1:5173
+
+---
+
+## 桌面端构建与发布
+
+原生构建要求 Node.js 22、Rust 和对应平台开发工具（Windows 为 Visual Studio 2022 C++，macOS 为 Xcode）。ORT 构建另需 Python 3.12、CMake 4.1.2、Ninja 1.13.0，这些仅用于构建，不随应用分发。
+
+```bash
+npm ci
+python -m pip install cmake==4.1.2 ninja==1.13.0
+npm run gate:ort
+npm run sidecar
+cargo test --locked --manifest-path src-tauri/Cargo.toml
+npm run tauri:build
+```
+
+`gate:ort` 在当前架构从锁定提交构建 CPU 运行时，生成逐文件清单；`sidecar` 严格验证后暂存完整引擎，因此必须先于主程序测试执行。无运行时下载 URL 的平台也可在 CI 原生构建，禁止缺少引擎时降级出包。
+
+GitHub Actions 按 Windows x64、macOS Intel / ARM 三平台构建，并从最终 setup 安装目录、portable ZIP 解压目录、DMG 复制出的 App 执行门禁。手动运行只上传测试产物；`v*` tag 触发的流程在全部通过后生成一个 Release 草稿。运行时来源清单及推理报告保存在 Actions artifacts。
+
+macOS 最终 DMG 由 `scripts/bundle.mjs` 封装；仅 OCR 辅助程序具有 ad-hoc 动态库加载例外，主程序保留默认 Hardened Runtime。不得以 Tauri 中间 App 代替该最终包分发。
+
+macOS 部署目标为 13.0；现代 CI runner 的门禁通过不等同于已完成 macOS 13.0 或最低 Windows 系统的实机测试。签名与最低系统验证限制必须保留在发布说明中。
 
 ---
 

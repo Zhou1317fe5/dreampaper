@@ -1,11 +1,8 @@
 name: Release
 
-# 打 v* tag 触发。四个安装包必须走 CI：本机无法构建 Windows，
-# 且 macOS 双架构需要两台不同架构的 runner。
 on:
   push:
-    tags:
-      - "v*"
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
@@ -13,133 +10,160 @@ on:
         required: true
 
 permissions:
-  contents: write
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
-  build:
-    name: ${{ matrix.label }}
+  runtime:
+    name: ORT ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 120
     strategy:
-      # 一个平台失败不影响其他平台产包，便于单独重跑
       fail-fast: false
       matrix:
         include:
-          - os: windows-latest
-            label: Windows (setup + portable)
+          - os: windows-2022
             target: x86_64-pc-windows-msvc
-          # macos-13 已于 2025-12 彻底下线，标签不存在会直接开不了机。
-          # macos-15-intel 是 Actions 最后一版 x86_64 镜像，供到 2027-08。
+          - os: macos-15-intel
+            target: x86_64-apple-darwin
+          - os: macos-14
+            target: aarch64-apple-darwin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12.11'
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
+      - name: 安装 ORT 构建工具
+        run: python -m pip install cmake==4.1.2 ninja==1.13.0
+      - uses: actions/cache@v4
+        id: ort
+        with:
+          path: src-tauri/runtime/${{ matrix.target }}
+          key: ort-${{ matrix.os }}-${{ matrix.target }}-${{ hashFiles('scripts/ort.mjs', 'scripts/runtime.mjs', 'src-tauri/runtime/runtime.json', 'src-tauri/ocr/THIRD_PARTY.md', '.github/workflows/release.yml') }}
+      - name: 原生构建锁定 ORT
+        if: steps.ort.outputs.cache-hit != 'true'
+        run: node scripts/ort.mjs --target ${{ matrix.target }}
+      - name: 校验运行时清单
+        shell: bash
+        env:
+          TARGET: ${{ matrix.target }}
+        run: node --input-type=module -e "import {verifyRuntime} from './scripts/runtime.mjs'; verifyRuntime('src-tauri/runtime/'+process.env.TARGET,process.env.TARGET)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ort-${{ matrix.target }}
+          path: src-tauri/runtime/${{ matrix.target }}/
+          if-no-files-found: error
+
+  build:
+    needs: runtime
+    name: ${{ matrix.label }}
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 100
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-2022
+            label: Windows (setup + portable ZIP)
+            target: x86_64-pc-windows-msvc
           - os: macos-15-intel
             label: macOS Intel
             target: x86_64-apple-darwin
-          - os: macos-14 # Apple Silicon runner
+          - os: macos-14
             label: macOS Apple Silicon
             target: aarch64-apple-darwin
-
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '13.0'
+      RUSTFLAGS: ${{ matrix.target == 'x86_64-pc-windows-msvc' && '-C target-feature=+crt-static' || '' }}
     steps:
       - uses: actions/checkout@v4
-
-      - name: 解析版本号
-        id: version
-        shell: bash
-        run: |
-          if [ -n "${{ github.event.inputs.version }}" ]; then
-            version="${{ github.event.inputs.version }}"
-          else
-            version="${GITHUB_REF_NAME#v}"
-          fi
-          echo "version=$version" >> "$GITHUB_OUTPUT"
-          echo "构建版本 $version"
-
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
-
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: dtolnay/rust-toolchain@1.96.1
         with:
           targets: ${{ matrix.target }}
-
-      # Rust 编译是这条流水线的大头，缓存按 target 分键
+      - uses: ilammy/msvc-dev-cmd@v1
+        if: runner.os == 'Windows'
+        with:
+          arch: x64
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: |
             src-tauri
             src-tauri/ocr
           key: ${{ matrix.target }}
-
-      - name: 安装前端依赖
-        run: npm ci
-
-      - name: 运行 Rust 单元测试
-        run: cargo test --manifest-path src-tauri/Cargo.toml
-
-      - name: 运行 OCR 辅助进程单元测试
-        run: cargo test --manifest-path src-tauri/ocr/Cargo.toml
-
-      # 构建纯 Rust OCR 辅助进程并暂存 ONNX Runtime。运行时来自 src-tauri/runtime/runtime.json
-      # 登记的自构建产物（按 SHA-256 校验）。尚未登记的平台会让脚本直接失败；
-      # DREAMPAPER_ALLOW_MISSING_RUNTIME=1 只是过渡期逃生口，产出的安装包内 OCR 引擎会显示不可用。
-      - name: 构建 OCR 辅助进程与运行时
-        shell: bash
-        env:
-          DREAMPAPER_ALLOW_MISSING_RUNTIME: ${{ vars.DREAMPAPER_ALLOW_MISSING_RUNTIME || '' }}
-        run: node scripts/sidecar.mjs --target ${{ matrix.target }}
-
-      # 安装包内显示的版本必须跟 tag 一致，否则用户装完看到的还是 0.1.0
-      - name: 对齐 tag 与包内版本号
-        shell: bash
-        run: node .github/scripts/set-version.mjs "${{ steps.version.outputs.version }}"
-
-      - name: 构建安装包
-        shell: bash
-        env:
-          # 未购证书，做 ad-hoc 签名：不能消除 Gatekeeper 提示，
-          # 但能避免「已损坏，无法打开」这类更糟的报错。
-          APPLE_SIGNING_IDENTITY: ${{ startsWith(matrix.os, 'macos') && '-' || '' }}
-        run: npx tauri build --target ${{ matrix.target }}
-
-      - name: 归集并重命名产物
-        id: collect
-        shell: bash
-        run: bash .github/scripts/collect-artifacts.sh "${{ matrix.target }}" "${{ steps.version.outputs.version }}"
-
-      - name: 上传到 Release
-        if: startsWith(github.ref, 'refs/tags/v')
-        uses: softprops/action-gh-release@v2
+      - uses: actions/download-artifact@v4
         with:
-          files: release-artifacts/*
-          draft: true
-          fail_on_unmatched_files: true
-          body: |
-            ## DreamPaper ${{ steps.version.outputs.version }}
-
-            | 文件 | 平台 |
-            | --- | --- |
-            | `dreampaper-${{ steps.version.outputs.version }}-setup.exe` | Windows 安装版（创建桌面快捷方式） |
-            | `dreampaper-${{ steps.version.outputs.version }}-portable.exe` | Windows 便携版（免安装，需系统已有 WebView2） |
-            | `dreampaper-${{ steps.version.outputs.version }}-x64-mac.dmg` | macOS Intel |
-            | `dreampaper-${{ steps.version.outputs.version }}-arm64-mac.dmg` | macOS Apple Silicon |
-
-            ### 首次打开
-
-            安装包**未做代码签名**（未购买证书），因此：
-
-            - **macOS**：双击会提示「无法验证开发者」。请右键点击 App → 选择「打开」→ 再次点「打开」。只需操作一次。
-            - **Windows**：SmartScreen 会提示「已保护你的电脑」。点「更多信息」→「仍要运行」。
-            - **Windows 便携版**依赖系统的 WebView2 运行时。Win11 与 Win10 21H2 及以上已内置；更旧的系统请先装
-              [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) 或改用安装版。
-
-            ### 开源协议
-
-            本项目采用 [PolyForm Noncommercial License 1.0.0](https://github.com/${{ github.repository }}/blob/main/LICENSE)，
-            **允许非商业使用，禁止商业使用**。下载并使用安装包即视为接受该协议。
-
-      # 非 tag 触发（手动试跑）时不发 Release，只留构建产物供下载检查
-      - name: 上传构建产物（试跑）
-        if: ${{ !startsWith(github.ref, 'refs/tags/v') }}
+          name: ort-${{ matrix.target }}
+          path: src-tauri/runtime/${{ matrix.target }}/
+      - name: 对齐版本
+        id: version
+        shell: bash
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          version="${INPUT_VERSION:-${GITHUB_REF_NAME#v}}"
+          node .github/scripts/set-version.mjs "$version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+      - run: npm ci
+      - name: 暂存完整 OCR 引擎
+        run: node scripts/sidecar.mjs --target ${{ matrix.target }}
+      - run: node --test scripts/runtime.test.mjs
+      - run: npm test
+      - run: npx tsc -b
+      - run: cargo test --locked --manifest-path src-tauri/Cargo.toml
+      - run: cargo test --locked --manifest-path src-tauri/ocr/Cargo.toml
+      - name: 构建最终安装包
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ runner.os == 'macOS' && '-' || '' }}
+        run: npx tauri build --ci --target ${{ matrix.target }} --bundles ${{ runner.os == 'macOS' && 'app' || 'nsis' }}
+      - name: 归集四类产物
+        run: node scripts/bundle.mjs ${{ matrix.target }} ${{ steps.version.outputs.version }}
+      - name: 最终产物真实下载与离线 OCR 门禁
+        run: node scripts/probe.mjs ${{ matrix.target }} ${{ steps.version.outputs.version }}
+      - name: 保存门禁证据
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: evidence-${{ matrix.target }}
+          path: release-reports/
+          if-no-files-found: warn
+      - name: 上传已验收产物
         uses: actions/upload-artifact@v4
         with:
           name: dreampaper-${{ matrix.target }}
           path: release-artifacts/*
           if-no-files-found: error
+
+  draft:
+    needs: build
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: dreampaper-*
+          path: release-artifacts
+          merge-multiple: true
+      - name: 校验完整产物并生成发布草稿
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node scripts/draft.mjs

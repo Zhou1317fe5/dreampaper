@@ -2,6 +2,7 @@ mod cmd;
 mod core;
 mod error;
 mod event;
+mod probe;
 mod protocol;
 mod state;
 mod window;
@@ -9,6 +10,9 @@ mod window;
 use tauri::Manager;
 
 pub fn run() {
+    if let Some(code) = probe::run_if_requested() {
+        std::process::exit(code);
+    }
     let app = tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_opener::init())

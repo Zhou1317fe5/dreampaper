@@ -88,18 +88,29 @@ Prefer not to set up Python? Grab the [latest release](../../releases/latest). T
 | File | Platform |
 | --- | --- |
 | `dreampaper-*-setup.exe` | Windows installer (creates a desktop shortcut) |
-| `dreampaper-*-portable.exe` | Windows portable (no install) |
+| `dreampaper-*-portable.zip` | Windows portable (extract the complete directory; do not move the EXE alone) |
 | `dreampaper-*-x64-mac.dmg` | macOS Intel |
 | `dreampaper-*-arm64-mac.dmg` | macOS Apple Silicon |
 
 ### First launch
 
-The bundles are **not code-signed** (no developer certificate purchased), so the OS will block them once:
+There is no commercial signing certificate: Windows executables are unsigned; macOS uses ad-hoc signing without Developer ID notarization. The OS may show a warning:
 
 - **macOS**: double-clicking reports an unverified developer. Right-click the app → Open → Open again. One time only.
 - **Windows**: SmartScreen shows "Windows protected your PC". Click "More info" → "Run anyway".
-- The **Windows portable** build needs the WebView2 runtime. Windows 11 and Windows 10 21H2+ ship with it; on older systems install the
-  [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/) first, or use the installer (which handles it).
+- The **Windows portable** build requires [WebView2 Runtime](https://developer.microsoft.com/microsoft-edge/webview2/). Install it if missing, or use the installer. Keep the main EXE, OCR sidecar, `ort/`, fonts and other files together.
+
+All four artifacts include the OCR engine, but not the models. Download the approximately 133 MiB model package in Settings once; after checksum verification, recognition works offline without Python or a separate ONNX Runtime installation. Release CI validates actual installed/extracted packages and creates only a draft after all four pass.
+
+### Desktop builds
+
+Build on the target platform with Node.js 22, Rust and Visual Studio 2022 C++ (Windows) or Xcode (macOS). Install Python 3.12, `cmake==4.1.2` and `ninja==1.13.0` for the ORT build only; these tools are not shipped. Run `npm ci`, `npm run gate:ort`, `npm run sidecar`, then the Rust tests and `npm run tauri:build`. The engine must be staged before Tauri tests compile.
+
+CI builds CPU ORT from a pinned commit on each platform and verifies its per-build file manifest before packaging. Missing engines cannot be bypassed. Manual workflow runs upload artifacts only; tag runs create a draft after all gates pass. Runtime manifests and OCR reports are available as Actions artifacts.
+
+The final DMG is assembled by `scripts/bundle.mjs`, which grants the ad-hoc library-loading exception only to the OCR sidecar and re-signs the outer app. The main executable retains Hardened Runtime; do not distribute the intermediate Tauri app instead.
+
+The macOS deployment target is 13.0. Passing on modern CI runners does not establish minimum-version compatibility; macOS 13.0 and the minimum Windows version require separate installed-package testing.
 
 ### Workbench (desktop)
 

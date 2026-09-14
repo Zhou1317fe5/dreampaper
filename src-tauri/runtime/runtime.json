@@ -1,28 +1,6 @@
 {
   "version": "1.29.0",
   "commit": "2e2543fbe9fae542f921d47a72d21d5a4ef0b710",
-  "build": "scripts/ort.mjs（CPU-only shared Release，关闭遥测；macOS 部署目标 13.0）",
-  "runtimes": {
-    "x86_64-apple-darwin": {
-      "file": "libonnxruntime.dylib",
-      "bytes": 32440376,
-      "sha256": "9705cdd546cb3de27576afb1ff3b48f5c3a4391c1e4fa3ff7e92bf036ab75f42",
-      "url": null,
-      "note": "2026-09-06 本机自构建并通过 P2/E1 探针；发布前需上传到固定地址并填入 url"
-    },
-    "aarch64-apple-darwin": {
-      "file": "libonnxruntime.dylib",
-      "bytes": null,
-      "sha256": null,
-      "url": null,
-      "note": "尚未构建：需在 Apple Silicon 机器或 CI 上运行 scripts/ort.mjs arm64"
-    },
-    "x86_64-pc-windows-msvc": {
-      "file": "onnxruntime.dll",
-      "bytes": null,
-      "sha256": null,
-      "url": null,
-      "note": "尚未构建：需在 Windows 上按 build.py --build_shared_lib --skip_tests --no_telemetry 自构建"
-    }
-  }
+  "build": "scripts/ort.mjs：对应平台原生构建 CPU-only shared Release，关闭遥测；macOS 部署目标 13.0，Windows 静态链接 MSVC 运行时",
+  "verification": "每次构建生成独立 manifest.json，记录源码、配方 SHA-256、目标、工具链和逐文件大小与摘要；同次 CI artifact 交付打包步骤，禁止空摘要或缺失引擎"
 }

@@ -457,9 +457,22 @@ async fn run_install(
     Ok(())
 }
 
-/// Write `installed.json` for the current manifest. Only valid after every
-/// file in `MANIFEST.files` was produced and verified.
+pub(crate) fn verify_installed(app_data: &Path) -> AppResult<()> {
+    let directory = package_dir(app_data);
+    for file in &MANIFEST.files {
+        let path = directory.join(file.name);
+        if std::fs::metadata(&path)?.len() != file.bytes || sha256_file(&path)? != file.sha256 {
+            return Err(AppError::new(
+                "ocr_digest_mismatch",
+                format!("{} 校验失败", file.name),
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(crate) fn commit_marker(app_data: &Path) -> AppResult<()> {
+    verify_installed(app_data)?;
     let marker = InstalledMarker {
         version: MANIFEST.version.to_string(),
         files: MANIFEST
@@ -925,6 +938,23 @@ mod tests {
         assert!(!is_installed(&dir));
         assert!(!pkg.exists());
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn invalid_digest_cannot_commit_an_installed_marker() {
+        let dir = super::super::asset::tests::temp_dir("ocr-digest");
+        let package = package_dir(&dir);
+        std::fs::create_dir_all(&package).unwrap();
+        for file in &MANIFEST.files {
+            std::fs::File::create(package.join(file.name))
+                .unwrap()
+                .set_len(file.bytes)
+                .unwrap();
+        }
+        assert_eq!(commit_marker(&dir).unwrap_err().code, "ocr_digest_mismatch");
+        assert!(!is_installed(&dir));
+        assert!(!marker_path(&dir).exists());
+        std::fs::remove_dir_all(dir).unwrap();
     }
 
     #[test]
